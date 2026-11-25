@@ -217,6 +217,12 @@ const (
 // on until they change.
 const checksHold = time.Hour
 
+// failedRetry is how soon a poll that failed may run again. Most failures are
+// a moment's (a 502, a dropped connection), and the app shows the repository
+// as not refreshed until a poll succeeds; the background service backs off a
+// repository that keeps failing.
+const failedRetry = 5 * time.Second
+
 // How a poll reads the open pull requests. Most polls are incremental: they
 // read the pull requests updated since the cursor, newest first and of any
 // state, so one that closed or merged is seen and leaves the cache. A full
@@ -742,7 +748,13 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 			p.cache.Settling = max(p.cache.Settling, 1)
 		}
 		snapshot.Rate = p.visibleRate()
-		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.ResetIfExhausted())
+		// The caller backs off a repository that keeps failing; a rate limit
+		// waits at least a minute here too.
+		retry := failedRetry
+		if errors.Is(err, errRateLimit) {
+			retry = time.Minute
+		}
+		snapshot.NextPoll = maxTime(now.Add(retry), p.ResetIfExhausted())
 	} else {
 		interval := 30 * time.Second
 		same := unchanged(cache.Snapshot.PullRequests, snapshot.PullRequests)

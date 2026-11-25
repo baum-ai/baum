@@ -81,8 +81,12 @@ export function CodeTab({
   if (files.length === 0)
     return <p className="text-base text-secondary">This pull request changes no files.</p>;
   return (
-    <div className="grid min-w-0 gap-6 @3xl:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]">
-      <nav ref={fileList} aria-label="Changed files" className="min-w-0 space-y-3">
+    <div className="grid min-w-0 gap-6 @lg:grid-cols-[13rem_minmax(0,1fr)] @3xl:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]">
+      <nav
+        ref={fileList}
+        aria-label="Changed files"
+        className="min-w-0 space-y-3 self-start @max-3xl:-m-1 @max-3xl:max-h-[max(8rem,calc(100vh-22rem))] @max-3xl:overflow-y-auto @max-3xl:p-1 @max-3xl:scroll-py-1 @max-lg:max-h-[22vh] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-(--text-tertiary)"
+      >
         <SegmentedControl<FileGrouping>
           label="Group files by"
           value={grouping}

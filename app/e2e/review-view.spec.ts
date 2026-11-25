@@ -552,6 +552,48 @@ test("Files changed names the open file once, in its diff's header", async ({ pa
   await expect(file.getByText("oss/internal/uiserver/remote.go", { exact: true })).toHaveCount(1);
 });
 
+for (const [width, height] of [
+  [1280, 860],
+  [720, 480],
+] as const) {
+  test(`Files changed reveals the selected diff at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: width === 720 ? "dark" : "light" });
+    await open(page, `${PR7}&pane=tile&tile=code`);
+    const files = page.getByRole("navigation", { name: "Changed files" });
+    const path = "oss/internal/uiserver/remote.go";
+    await files
+      .getByRole("button", { name: /^remote\.go/ })
+      .first()
+      .click();
+    const diff = page.getByRole("article", { name: `${path} diff` });
+    const header = diff.getByText(path, { exact: true });
+    await expect(header).toBeVisible();
+    if (SHOTS) {
+      mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({
+        path: join(SHOTS, `file-selected-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await expect(header).toBeInViewport();
+    await page.keyboard.press("j");
+    await expect(diff).toHaveCount(0);
+    await page.keyboard.press("k");
+    await expect(header).toBeInViewport();
+    await expect(page).toHaveURL(/tile_item=oss%2Finternal%2Fuiserver%2Fremote\.go/);
+
+    // A row lower in the scrollable list still opens a diff in view.
+    await files
+      .getByRole("button", { name: /^remote_test\.go/ })
+      .first()
+      .click();
+    const laterPath = "oss/internal/uiserver/remote_test.go";
+    const laterDiff = page.getByRole("article", { name: `${laterPath} diff` });
+    await expect(laterDiff.getByText(laterPath, { exact: true })).toBeInViewport();
+  });
+}
+
 test("every pull request opens on the rail, with no setting to choose a page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, "repository=acme%2Fdemo&pr=7");

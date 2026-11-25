@@ -274,7 +274,11 @@ that one.
 
 Buttons the tour's copy names, such as **Ask** or **Focus session**, are drawn
 as those buttons but are not controls: the pointer neither hovers nor presses
-them.
+them. The welcome fits the viewport and makes room for its controls in short
+windows by shrinking the illustration. The review step keeps the action bar
+clear by using the space below or above it. If a card's copy needs more
+space, it scrolls between the heading and the navigation buttons and can take
+keyboard focus.
 
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
@@ -829,9 +833,10 @@ is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
 returns to the page it was opened from (the inbox it was opened in, whose
 address the pull request or group keeps as `inbox=<id>`, or Pull requests with
 the filter kept; a link with no inbox goes to the first one); on a session's or job's transcript the same keys return to
-Sessions or Jobs. Analytics has no keys of its own beyond Tab: its controls
-are native buttons (its window, chart and breakdown toggles are pressed
-buttons in a group), and its charts' bars take the focus for their tooltips.
+Sessions or Jobs. Use Tab to reach the Analytics controls and chart bars, which
+show tooltips on focus. Its window, chart and breakdown toggles are groups of
+native buttons with pressed states. The Breakdown table takes focus when it overflows,
+and the left and right arrow keys scroll it horizontally.
 
 The PR page header keeps buttons at its end: **Earlier questions** when the
 pull request has some, **Ask**, **Approve** for an open
@@ -873,7 +878,10 @@ repository's pull requests.
 An inbox's queue (`?inbox=<id>` on the app root, `src/up-next.tsx`) is a split view: a list of
 what waits on the person, grouped by what they do about it, beside the panel
 of the selected pull request. The page uses the shared palette in both themes; its list and
-panel scroll on their own, and below 760px the list stacks above the panel.
+panel scroll on their own. The queue takes less width below 760px so the
+selected pull request remains beside it at the smallest desktop window.
+Selecting a different pull request starts its panel at the top. Below
+560px of available space the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
 flags only: **Review** (their review is requested, or someone else's pull
 request is assigned to them), **Clone** (such a pull request whose repository
@@ -972,9 +980,10 @@ branch are counted at the foot of the panel, as a link to Sessions
 peek and its reply where it takes one, as a click on it does (with several,
 each by its agent's name).
 
-Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
-away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
-request until its head moves. A snooze selects the next pull request and shows
+The panel's Snooze menu stays within the window, opening above its button
+when there is too little room below. Snooze offers 1 hour, this afternoon
+(3 PM, while that is more than an hour away), tomorrow morning (9 AM) and
+**Until it changes**, which hides the pull request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
 member of their stack, offer Snooze too. A stack's or group's row offers
@@ -1108,7 +1117,10 @@ A Help button at the right of the sidebar's baum title opens a help menu
 Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
 what happened, what to attach with a preview, then **Open issue**, which opens
 a new issue in baum-ai/baum on GitHub; see the
-[desktop README](../desktop/README.md#report-a-problem)), and **Open the docs** opens https://docs.usebaum.com/ in a new
+[desktop README](../desktop/README.md#report-a-problem)). The report form scrolls
+above its actions in short windows. Opening it from Diagnostics temporarily
+replaces that dialog and returns focus to its **Report a problem** button when
+the form closes. **Open the docs** opens https://docs.usebaum.com/ in a new
 window (the desktop app hands it to the browser). The `?` key opens the same
 menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
 the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
@@ -1452,7 +1464,8 @@ Cached discovery keeps the inbox readable when refresh fails;
 one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
-is old. Refresh asks
+is old, and one pull request's details failing to read
+(`metadata_unavailable`) does not count as its repository failing to refresh. Refresh asks
 GitHub through the local server, which gives up on a repository once GitHub
 has not answered for 45 s and answers it as not refreshed (stale, with
 the error, and with whatever it read before), which the app names in the
@@ -1717,7 +1730,9 @@ stacked by harness or by model (each session under its main model; the top
 four named, the rest as Other), with a legend that shows each harness's or
 model maker's logo and a table behind "Show as a table"; a breakdown
 by agent, model or repository (sessions, prompts, tool calls, failed share, active
-time, tokens, cost at API prices); pull requests, yours or the team's (one
+time, tokens, cost at API prices), with a visible scrollbar when its columns
+overflow. Tab to the overflowing table and use the arrow keys to reach its
+hidden columns. Other cards cover pull requests, yours or the team's (one
 switch), created and shipped as bars side by side, then the merge rate and the
 median time to merge as lines on their own axes (left and right) beneath, by day over 7 days and by week otherwise, read
 from the pull requests the Timeline's feature log keeps (a repository it does
@@ -2992,7 +3007,12 @@ builds the rail's model (the sections and the file list) from it.
   title, then a row of views, each with its count and disabled (never hidden)
   when the section has nothing for it: **Overview** (its gist, then its body block by
   block, then its risks: prose at reading width, points as hairline lines that
-  open to a detail and the files they cite, a note with a left rule, and tile
+  open to a detail and the files they cite (in a block where some point has a
+  `tone`, every line leads with a mark in its tone's colour: a dot for `new`,
+  `good` and `muted`, a filled square for `bad`, a hollow one for `missing`
+  and a grey ring for plain), a note with a left
+  rule (a note's `kind` puts its icon and word before the text: a caveat in
+  the caution colour, a decision, unchanged or a follow-up), and tile
   blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
   label; a table cell `{text, was}` strikes the old value and marks its row
   Changed, and a flow whose
@@ -3029,8 +3049,10 @@ builds the rail's model (the sections and the file list) from it.
   and `Enter` or `Space` opens the row they are on. A section with nothing but its
   Overview keeps one column. The full review's check
   callouts and line counts are not shown.
-- **Files changed** (`code-tab.tsx`) lists every changed file in a list beside
-  the open file, under a switch, **Group files by**, with three modes. **Type**
+- **Files changed** (`code-tab.tsx`) lists every changed file beside the open
+  file, or above it when the review pane is narrow. The list scrolls on its own
+  in smaller panes so opening a file keeps its diff in view. **Group files by**
+  has three modes. **Type**
   groups them as code, tests, docs, config and generated (folded, and a
   generated file's diff waits for Show the diff). **Folder** groups them by
   directory, a directory with no file of its own and one directory joined to it
@@ -3144,7 +3166,12 @@ their bullets and numbers.
   api/tiles`). It reads sizes from the layout and from the frame's messages
   only, never animation frames, ResizeObserver or tight timers, so it works
   in a hidden window, and tells the daemon it is alive every 2 seconds while
-  it draws (reporting the job abandoned if its page goes away). Where the
+  it draws (reporting the job abandoned if its page goes away). A frame
+  with no `hello` after 5 seconds is sent a `ping`: one that neither answers
+  within 2 seconds nor finished loading is stuck in its script and is
+  reported as `hang` (Chromium runs the frame apart from the page, so the
+  page's heartbeat would not stop), after which the job draws no more
+  frames; one that answers is `no_hello`. Where the
   desktop shell declares `window.__BAUM_DESKTOP__.checkWindow`, the main
   page opens the shell's check window (`open_check_window`, which loads
   `?page=tile-check`, the runner alone) on a `tile_check` event and closes it

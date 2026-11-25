@@ -587,52 +587,60 @@ describe("custom tiles on the page", () => {
     expect(tileFace(noDigest).kind).toBe("unavailable");
   });
 
-  it("mount frames in a browser, and in a desktop shell only when it says it is safe", () => {
-    const fake = (fields: Record<string, unknown>) =>
-      ({ navigator: { userAgent: "", platform: "" }, ...fields }) as unknown as Window;
-    const shell = { __TAURI_INTERNALS__: {} };
-    // A browser, declaration or not (a page cannot be made a shell).
-    expect(framesAllowedHere(fake({}))).toBe(true);
-    expect(framesAllowedHere(fake({ __BAUM_DESKTOP__: { tileFrames: false } }))).toBe(true);
-    // A shell that declares it.
-    expect(framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: { tileFrames: true } }))).toBe(
-      true,
-    );
-    // A shell that declares nothing, or anything else.
-    for (const declared of [
-      undefined,
-      null,
-      true,
-      "tileFrames",
-      {},
-      { tileFrames: false },
-      { tileFrames: "true" },
-      { tileFrames: 1 },
-      Object.create({ tileFrames: true }),
-    ])
-      expect(
-        framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: declared })),
-        String(declared),
-      ).toBe(false);
-  });
+  it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+    "mount frames in a browser, and in a desktop shell (%s) only when it says it is safe",
+    (bridge) => {
+      const fake = (fields: Record<string, unknown>) =>
+        ({ navigator: { userAgent: "", platform: "" }, ...fields }) as unknown as Window;
+      const shell = { [bridge]: {} };
+      // A browser, declaration or not (a page cannot be made a shell).
+      expect(framesAllowedHere(fake({}))).toBe(true);
+      expect(framesAllowedHere(fake({ __BAUM_DESKTOP__: { tileFrames: false } }))).toBe(true);
+      // A shell that declares it.
+      expect(framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: { tileFrames: true } }))).toBe(
+        true,
+      );
+      // A shell that declares nothing, or anything else.
+      for (const declared of [
+        undefined,
+        null,
+        true,
+        "tileFrames",
+        {},
+        { tileFrames: false },
+        { tileFrames: "true" },
+        { tileFrames: 1 },
+        Object.create({ tileFrames: true }),
+      ])
+        expect(
+          framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: declared })),
+          String(declared),
+        ).toBe(false);
+    },
+  );
 
-  it("say so in a shell that has not declared it", () => {
-    const win = window as Window & { __TAURI_INTERNALS__?: unknown };
-    win.__TAURI_INTERNALS__ = {};
-    try {
-      const { container } = (() => {
-        const container = document.createElement("div");
-        document.body.append(container);
-        root = createRoot(container);
-        act(() => root!.render(<TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />));
-        return { container };
-      })();
-      expect(container.textContent).toBe(NOT_IN_THIS_SHELL);
-      expect(container.querySelector("iframe")).toBeNull();
-    } finally {
-      delete win.__TAURI_INTERNALS__;
-    }
-  });
+  it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+    "say so in a shell (%s) that has not declared it",
+    (bridge) => {
+      const win = window as unknown as Record<string, unknown>;
+      win[bridge] = {};
+      try {
+        const { container } = (() => {
+          const container = document.createElement("div");
+          document.body.append(container);
+          root = createRoot(container);
+          act(() =>
+            root!.render(<TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />),
+          );
+          return { container };
+        })();
+        expect(container.textContent).toBe(NOT_IN_THIS_SHELL);
+        expect(container.querySelector("iframe")).toBeNull();
+      } finally {
+        delete win[bridge];
+      }
+    },
+  );
 });
 
 describe("the first-show preflight", () => {

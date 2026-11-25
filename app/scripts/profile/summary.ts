@@ -253,7 +253,7 @@ export function summarise(profile: Profile): string {
         .map(([key, value]) => `${key}: ${value}`)
         .join("; ") +
       ".",
-    "Weston renders in software: script, style, layout and React times are realistic, " +
+    "Chromium renders in software under Xvfb: script, style, layout and React times are realistic, " +
       "paint and composite times are not.",
   ];
   if (profile.partial) lines.push("", `**Partial: ${profile.partial}**`);

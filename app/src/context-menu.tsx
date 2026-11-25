@@ -1,4 +1,5 @@
 import { MAC } from "./shortcuts";
+import { useTopLayer } from "./top-layer";
 import {
   useEffect,
   useId,
@@ -87,6 +88,7 @@ function moveMenuFocus(event: KeyboardEvent): boolean {
 export function useMenuFocus(open: boolean, close: () => void) {
   const ref = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
+  useTopLayer(ref, open);
   useLayoutEffect(() => {
     if (!open) return;
     opener.current = document.activeElement;
@@ -283,6 +285,8 @@ function ContextMenu({
     giveBack();
   };
   const choices = () => [...(ref.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
+  // Raised again when it moves to another target, over what opened since.
+  useTopLayer(ref, `${x},${y}`);
   // Kept inside the window, measured before it is painted: under its button,
   // its right edge on the button's, or above the button when there is no
   // room below.
@@ -393,7 +397,7 @@ function ContextMenu({
       ref={ref}
       id={id}
       aria-label={label ? `Actions for ${label}` : "Actions"}
-      className="context-menu fixed z-50 w-max max-w-[320px] min-w-[200px]"
+      className="context-menu fixed w-max max-w-[320px] min-w-[200px]"
       style={{ left: at.left, top: at.top }}
       onKeyDown={keys}
       onContextMenu={(event) => {

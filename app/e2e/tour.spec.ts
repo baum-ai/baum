@@ -121,6 +121,65 @@ test("the tour walks the Inbox, a pull request and the other pages", async ({ pa
   }
 });
 
+test("the review tour leaves the review actions clickable in a short window", async ({ page }) => {
+  const base = await home(page);
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto(`${base}?tour=1`);
+  const card = page.locator(".tour-card");
+  await card.getByRole("button", { name: "Start the tour" }).click();
+  await card.getByRole("button", { name: "Next" }).click();
+  await expect(card.getByRole("heading")).toHaveText("A pull request's review");
+  const actions = page.locator('[data-tour="review-actions"]');
+  await expect(actions.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  const hitActions = () =>
+    actions.evaluate((bar) => {
+      const buttons = [...bar.querySelectorAll('[aria-keyshortcuts="a"], [aria-keyshortcuts="m"]')];
+      return (
+        buttons.length === 2 &&
+        buttons.every((button) => {
+          const { x, y, width, height } = button.getBoundingClientRect();
+          return button.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+        })
+      );
+    });
+  await expect.poll(hitActions).toBe(true);
+  // A wrapped title can move the toolbar closer to the bottom of the window.
+  await page.getByRole("heading", { level: 1 }).evaluate((heading) => {
+    heading.append(" with complete control over session context");
+  });
+  await expect.poll(hitActions, { timeout: 5000 }).toBe(true);
+  for (const name of ["Back", "Next", "Close the tour"]) {
+    await card.getByRole("button", { name, exact: true }).click({ trial: true });
+  }
+});
+
+test("the welcome and its actions fit when the window is zoomed in", async ({ page }) => {
+  const base = await home(page);
+  await page.goto(`${base}?tour=1`);
+  const card = page.getByRole("dialog", { name: "You're all set!" });
+  await expect(card).toBeVisible();
+  // The desktop's 720 × 480 minimum window at 200% zoom.
+  await page.setViewportSize({ width: 360, height: 240 });
+  await expect(card).toBeInViewport({ ratio: 0.99, timeout: 5000 });
+  await card.getByRole("button", { name: "Close the tour" }).click({ trial: true });
+  await card.getByRole("button", { name: "Skip" }).click({ trial: true });
+  await card.getByRole("button", { name: "Start the tour" }).click();
+  await expect(page.getByRole("dialog", { name: "Your Inbox" })).toBeInViewport({ ratio: 0.99 });
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  const review = page.getByRole("dialog", { name: "A pull request's review" });
+  const copy = review.locator("p");
+  await expect(copy).toHaveAttribute("tabindex", "0");
+  await review.getByRole("button", { name: "Back" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(copy).toBeFocused();
+  await page.keyboard.press("End");
+  await expect.poll(() => copy.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await page.keyboard.press("ArrowRight");
+  const timeline = page.getByRole("dialog", { name: "Timeline" });
+  await expect(timeline).toBeVisible();
+  expect(await timeline.locator("p").evaluate((element) => element.scrollTop)).toBe(0);
+});
+
 test("with no pull requests of its own, the tour shows the sample project", async ({ page }) => {
   test.slow();
   const base = await home(page);

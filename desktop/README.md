@@ -102,7 +102,13 @@ when the window is created, so each page load on the main window also pushes the
 current theme with a best-effort `eval` as the load starts (logged if it fails),
 and the page applies the live one right after. The tray panel keeps the theme
 saved at startup until its page applies the current one. Without a saved theme the
-screens follow the system's light or dark.
+screens follow the system's light or dark. In the Electron shell the main
+window's background colour is the screens' page surface under the active theme
+(`windowBackground` in `electron/main/theme.ts`), updated when the theme or the
+system's appearance changes, so a dark theme opens without a white flash. The
+daemon's launch page, which shows for a moment between the connecting screen
+and the application, paints the application's canvas colour and shows its
+status only when the launch is slow or fails.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
@@ -768,214 +774,294 @@ does when the window loses focus.
 
 ## What pages may do
 
-- The window loads only the bundled screens and the attached daemon's origin.
-  Of the bundled files it shows exactly `/` and `/index.html`, and
-  `/setup.html` only while the app shows the setup screen; any other path,
-  including other spellings the asset server maps to a page (`/setup`,
-  `/setup.html/`, percent-encoded names), is refused. The bundled pages'
-  content security policy has `frame-ancestors 'none'`.
-  Every other navigation is refused and nothing happens: other hosts, other
-  loopback servers, other schemes (`about:`, `data:`, `blob:`, `file:`,
-  `mailto:` and the rest) and any URL with a user name or password. A
-  navigation never opens the default browser. On macOS and Linux the webview
-  asks the same handler (`navigation::decide`) about a navigation in any frame
-  of the page and passes only its URL, so an embedded frame could otherwise
-  open the browser at an address carrying data it read. On Windows wry asks
-  only about the page's own navigations (`NavigationStarting`), and the
-  page's `frame-src` alone governs its frames. Debug builds log a refused
-  navigation's scheme and host.
+This section describes the Electron shell (`electron/`). Where the Tauri
+shell (`src/`, shipped until the bridge release) differs, a note says so.
+
+- The window loads only the bundled screens and the attached daemon's origin
+  (`electron/main/navigation.ts`'s `decide`). Of the bundled files it shows
+  exactly `/` and `/index.html`, and `/setup.html` only while the app shows
+  the setup screen; any other path, including other spellings the asset
+  server maps to a page (`/setup`, `/setup.html/`, percent-encoded names), is
+  refused. The bundled pages' content security policy has
+  `frame-ancestors 'none'`. Every other navigation is refused and nothing
+  happens: other hosts, other loopback servers, other schemes (`about:`,
+  `data:`, `blob:`, `file:`, `mailto:` and the rest) and any URL with a user
+  name or password. A navigation never opens the default browser.
+- The guard (`electron/main/windows.ts`) checks every navigation twice.
+  Electron asks it about the page's own navigations and redirects
+  (`will-navigate`, `will-redirect`) and about every frame's
+  (`will-frame-navigate`): a frame navigating itself, a page setting a
+  frame's `src` and a new frame alike. A session filter (`webRequest`) then
+  refuses every frame load of a guarded window that the guard does not
+  allow, at the network, so a load the events miss is refused too. A `data:`
+  or `blob:` frame is refused. `about:blank` and `about:srcdoc` frames load
+  nothing from the network and are not asked about: they take the page's
+  origin and content security policy, which governs them. Unpackaged apps
+  log a refused navigation's or frame load's scheme and host.
 - Links to other sites open in the default browser as new-window requests
-  (`target="_blank"` links and `window.open`, `navigation::decide_new_window`):
-  `http` and `https` URLs of hosts other than loopback ones, without a user
-  name or password, go to the browser, and no window ever opens. A sandboxed
-  frame can ask only with `allow-popups`. WebKitGTK lets a page ask only while
-  the person interacts with it; WebView2 (whose pop-up blocker is off in an
-  embedded webview) and WKWebView (where wry leaves
-  `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
-  any time, so the app opens the browser at most once a second
-  (`navigation::OpenLimit`) and drops the rest.
-- WKWebView asks the navigation handler about a `target="_blank"` click
-  before it asks for a new window, and wry passes the handler only the URL,
-  so the shell refuses the click as it would a frame's navigation and WebKit
-  never asks for the window. So the app opens links through the `open_link`
-  command instead (`src/links.rs`), which the daemon's pages and the setup
-  screen may call. It opens the same URLs as a new-window request, under the
-  same once-a-second limit, and Tauri's command bridge is in the page's main
-  frame only on macOS and Linux, so a frame cannot call it there. The shell
-  declares it as `openLinks: true` (below); the app
-  (`app/src/outside-links.ts`) then turns a person's click on any link to
-  another site, `target="_blank"` or not, into the command, and its own
-  `openExternal` calls it too. With an older shell, which does not declare
-  it, the app opens outside links as new-window requests and turns a click on
-  a same-window link into one, so no link is dead. Setup
-  opens GitHub's device page a few seconds after a sign-in starts, when it can
-  no longer ask for a window, through the `open` action of
-  `github_connection`, which opens that fixed address whatever the page
-  passes.
-- Before the page's own scripts run, the main window (and the check window,
-  below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
-  replaced (`src/declaration.rs`), with three fields. `openLinks` says
-  whether the page opens links to other sites with `open_link`; it is `true`
-  in the main window and `false` in the check window, which may call no
-  command. `checkWindow` says whether
-  the page can open the tile check window; it is `true` on Linux only (see
-  Tile check window). `tileFrames` says whether the page may embed
-  sandboxed frames of untrusted content served from the daemon's origin. It
-  is `true` on Linux and macOS, where the shell refuses every navigation of a
-  frame away from the app and Tauri injects its scripts, including the
-  command bridge, into the main frame only. On Linux
-  `just desktop::navigation-check` shows that a sandboxed frame at the
-  daemon's origin sees neither the declaration nor the bridge, and that none
-  of its attempts to call a command (`__TAURI_INTERNALS__`, `window.ipc`,
-  WebKit's `ipc` message handler with a guessed or no invoke key, `fetch` to
-  `ipc://localhost` and `http://ipc.localhost`) runs one. It is `false` on
-  Windows, where Tauri injects its scripts into every frame and WebView2 asks
-  the shell only about the page's own navigations, until the same check has
-  been made on a Windows machine; the constant's comment says what to check.
-  WKWebView injects the declaration into the main frame only, as WebKitGTK
-  does; that is known from the APIs Tauri uses on macOS, not yet run there.
-- Tauri treats the daemon's pages as remote. One capability names them,
-  `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
-  `choose_repository`, the native folder picker the Repositories page's Browse
-  button opens, which changes nothing and returns only the chosen folder. The
-  page registers it through the daemon's own API. It also allows the zoom
-  commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
-  offered levels, `save_theme` (shape-checked, see First run), and the updater's
-  (`update_state`, `check_for_updates`, `install_update`, `cancel_update` and
-  `dismiss_update_notice`): a page can read the state, start a check, install only an update the app has already
-  downloaded and verified, and record that a notice was closed. It also
-  allows `save_tile_type`, which Settings › Tile library's Export calls: it
+  (`target="_blank"` links and `window.open`, `decideNewWindow`): `http` and
+  `https` URLs of hosts other than loopback ones, without a user name or
+  password, go to the browser, and no window ever opens. Electron does not
+  say which frame asked for a new window, so the guard cannot tell a page's
+  request from a frame's. A tile frame is sandboxed without `allow-popups`,
+  so Chromium refuses its requests before the shell is asked. Electron lets
+  a script ask at any time, so the app opens the browser at most once a
+  second (`OpenLimit`) and drops the rest. The check window and the tray
+  panel open nothing.
+- The app opens links through the `open_link` command
+  (`electron/main/links.ts`), which the daemon's pages and the setup screen
+  may call. It opens the same URLs as a new-window request, under the same
+  once-a-second limit. The shell declares it as `openLinks: true` (below);
+  the app (`app/src/outside-links.ts`) then turns a person's click on any
+  link to another site, `target="_blank"` or not, into the command, and its
+  own `openExternal` calls it too. With an older shell, which does not
+  declare it, the app opens outside links as new-window requests and turns a
+  click on a same-window link into one, so no link is dead. Setup opens
+  GitHub's device page a few seconds after a sign-in starts, when it can no
+  longer ask for a window, through the `open` action of `github_connection`,
+  which opens that fixed address whatever the page passes. The Tauri shell
+  added the command because WKWebView refuses a `target="_blank"` click as a
+  navigation before it asks for a window.
+- Before the page's own scripts run, the preload (`electron/preload/`)
+  defines `window.__BAUM_DESKTOP__` in the main frame of the main window and
+  of the check window (below), a frozen object that cannot be replaced, with
+  three fields. `openLinks` says whether the page opens links to other sites
+  with `open_link`; it is `true` in the main window and `false` in the check
+  window, which may call no command. `checkWindow` says whether the page can
+  open the tile check window; it is `true` on every platform (see Tile check
+  window). `tileFrames` says whether the page may embed sandboxed frames of
+  untrusted content served from the daemon's origin. It is `true` on every
+  platform: the shell refuses every navigation of a frame away from the app,
+  and Electron runs the preload, and so the command bridge and the
+  declaration, in the main frame only (`nodeIntegrationInSubFrames: false`).
+  The Tauri shell declares `tileFrames` on Linux and macOS and `checkWindow`
+  on Linux only (`src/declaration.rs`).
+- No page reaches Node.js or Electron: every window has context isolation,
+  a sandboxed renderer and preload, no Node.js integration and no
+  `<webview>`, and no web contents the app did not set up opens a window or
+  attaches a webview. Pages of the app's origins may ask for notifications
+  and clipboard writes; every other permission, and every request from
+  another origin, is refused.
+- Commands go over one IPC channel. The guard (`electron/main/bridge.ts`)
+  runs one only when it comes from the main frame of one of the app's own
+  command windows (the main window and the tray panel; never the check
+  window), at a page whose role, resolved from the window and the frame's
+  origin and path, the command table (`electron/main/commands.ts`) allows.
+  A refusal says only that the command is not allowed. The Tauri shell
+  grants the same commands through capability files (`capabilities/`).
+- The daemon's pages (`daemon-pages`, the attached daemon's origin in the
+  main window) may call CLI and hook status, installation and removal, plus
+  `choose_repository`, the native folder picker the Repositories page's
+  Browse button opens, which changes nothing and returns only the chosen
+  folder. The page registers it through the daemon's own API. They may also
+  call the zoom commands (`zoom_state`, `set_zoom` and `step_zoom`), which
+  accept only the offered levels, `save_theme` (shape-checked, see First
+  run), and the updater's (`update_state`, `check_for_updates`,
+  `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
+  read the state, start a check, install only an update the app has already
+  downloaded and verified, and record that a notice was closed. They may
+  call `save_tile_type`, which Settings › Tile library's Export calls: it
   opens the native save dialog for `<name>.baumtile.json` and writes the
   exported file only where the person chose, refusing a name that is not a
-  tile type's or a file over 3 MiB, and `open_check_window` and
-  `close_check_window` (see Tile check window), and `open_link` (see above).
-  They can call no other Tauri
-  command or
-  plugin.
-  `withGlobalTauri` is off.
-- The bundled screens have two capabilities, for the main window's bundled
-  origin only: `connecting-screen` allows the app's `connection` and
-  `reconnect` commands, and `setup-screen` the setup commands
-  (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
-  `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`) and `open_link`. Both also allow `step_zoom`
-  for the zoom shortcuts. Every change they make runs in the
-  Rust side and only when the user requests it in setup or Settings;
-  replacing a different baum also requires the confirmed path. Daemon pages
-  share `setup_state`, the four CLI and hook install/removal commands,
-  `update_hooks` and `choose_repository`. GitHub connection, repository registration, review
-  settings and finishing setup remain restricted to the bundled setup screen.
-- The opener plugin is used only from Rust, to open links in the browser. Its
-  click script (`open_js_links_on_click`) is off: it would call the plugin from
-  the page, which no page may do, and swallow the click. The
-  dialog and updater plugins are used only from Rust too (see Updates); the
-  app's own updater commands wrap the latter. No
-  page is granted any plugin's commands.
+  tile type's or a file over 3 MiB; `open_check_window` and
+  `close_check_window` (see Tile check window); and `open_link` (see above).
+  They can call no other command.
+- The bundled screens have two roles, for the main window's bundled origin
+  only: `connecting-screen` may call `connection` and `reconnect`, and
+  `setup-screen` the setup commands (`setup_state`, `install_command`,
+  `uninstall_command`, `install_hooks`, `uninstall_hooks`, `update_hooks`,
+  `choose_repository`, `add_repository`, `review_settings`,
+  `save_review_settings`, `github_connection`, `repositories` and
+  `finish_setup`) and `open_link`. Both may call `step_zoom` for the zoom
+  shortcuts. Every change they make runs in the main process and only when
+  the user requests it in setup or Settings; replacing a different baum also
+  requires the confirmed path. Daemon pages share `setup_state`, the four
+  CLI and hook install/removal commands, `update_hooks` and
+  `choose_repository`. GitHub connection, repository registration, review
+  settings and finishing setup remain restricted to the bundled setup
+  screen. The tray panel's page (`tray-panel`, macOS and Windows) may call
+  only its own commands.
+- The main process alone opens the browser (`shell.openExternal`) and shows
+  dialogs and notifications. In the Tauri shell the opener, dialog and
+  updater plugins are used only from Rust, the opener's click script is
+  off, and no page is granted any plugin's commands.
 
 The app itself makes no network requests other than loopback requests to the
 daemon and the update checks below. Outside its own configuration and data
 directories it writes only what the user installs through setup or Settings: the `baum` link
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
-agent marketplace plugin installations. Notifications use the operating system's
-notification service (`notify-rust`) only from Rust.
+agent marketplace plugin installations. Notifications use the operating
+system's notification service from the main process only.
 
 ## Tile check window
 
 The daemon's page checks a custom tile by rendering it in a second window,
-`tile-check` (`src/check_window.rs`), so that a tile whose script never
-yields stalls that window and not the main one. The person never sees it:
-it is hidden, 1280×900, has no decorations, cannot take focus and stays out
-of the taskbar. WebKitGTK still runs a hidden window's page, but with timers
-slowed to about once a second and no animation frames.
+the tile check window (`electron/main/check-window.ts` and
+`check-window-electron.ts`), so that a tile whose script never yields stalls
+that window and not the main one. The person never sees it: it is hidden,
+1280×900, has no frame, cannot take focus and stays out of the taskbar. Its
+timers are not throttled, so its page runs as a visible one does
+(`document.visibilityState` is `visible` and animation frames run).
 
 - The main window's daemon page opens it with `open_check_window` (no
   arguments; it does nothing when the window is open) and closes it with
   `close_check_window` (no arguments), when a check hangs or after the window
   has been idle. Only the main window can call them; a close returns once the
   window is gone, so an open right after it builds a new one. The shell also
-  closes it when the main window starts loading another page and when the app
-  detaches from the daemon, including a window still being built then.
+  closes it when the main window starts loading another page it allows and
+  when the app starts attaching again or detaches; an open still waiting
+  behind a close then builds nothing.
 - It loads `/s/<namespace>/?page=tile-check` at the origin of the daemon page
-  the main window shows, under the main window's navigation rules
-  (`navigation::decide`, without the setup screen). It never opens the
-  browser: every request for a new window is refused.
-- Its capability, `tile-check`, names only this window and grants no
-  command: the page reports its results to the daemon over HTTP. It shares
-  the main window's cookies and storage.
-- WebKitGTK gives it a web process of its own. Destroying a window leaves a
-  spinning web process at full CPU, so on Linux `close_check_window` first
-  ends the window's web process (`webkit_web_view_terminate_web_process`,
-  through the `webkit2gtk` crate at the version wry uses) and then destroys
-  the window. Before that it asks the page to close
-  (`webkit_web_view_try_close`) and waits 200 ms: a page that still answers
+  the main window shows, under the main window's navigation rules (`decide`,
+  without the setup screen, and the same network check of frame loads). It
+  never opens the browser: every request for a new window is refused.
+- It is not one of the app's command windows, so the guard refuses every
+  command its page calls; the page reports its results to the daemon over
+  HTTP.
+- It runs in a session of its own, in memory (`check-window`), so Chromium
+  never runs its page or its tiles in a process the main window uses.
+  Chromium runs sandboxed frames apart from their page, in one process per
+  site that every window of a session shares, so in the main window's
+  session a tile spinning in the check window would stall the main window's
+  tiles and could not be ended alone. The session gets the default
+  session's guards (permissions, the network check of frame loads; no
+  window attaches a webview). Before each load the shell copies the cookies
+  the default session holds for the daemon's host into it, with their
+  attributes (the daemon's session cookie is HttpOnly, `SameSite=Strict` and
+  scoped to `/s/<namespace>/`), so the page is signed in as the main
+  window's is, and it empties the session when the window closes. The check
+  page reads nothing the main window keeps in `localStorage` or
+  `sessionStorage`: its runner gets its jobs and the app's appearance from
+  the daemon.
+- `close_check_window` first asks the page to close (as closing a window
+  does, so its `pagehide` runs) and waits 200 ms: a page that still answers
   unloads, and a check it was drawing is reported abandoned and ends as
   unavailable rather than as a hang that blocks its tile type (the main
-  window loading another page closes the window mid-check). A page that
-  never yields ignores the request and its process is ended after the wait.
-- It is offered (`checkWindow`) on Linux only. On macOS WKWebView likely gives
-  it a separate web content process, but has no public call to end one, so
-  until that is checked the app runs its checks in the main window there. On
-  Windows the page embeds no tile frames, so there is nothing to check.
+  window loading another page closes the window mid-check). It then ends the
+  window's renderer (`forcefullyCrashRenderer`) unless another window's page
+  runs there, destroys the window, and ends any other process only the
+  window's frames used, if it is still one of the app's renderers. A page
+  that never yields ignores the request and is ended after the wait.
+- It is offered (`checkWindow`) on every platform: the process model is
+  Chromium's everywhere. The Tauri shell offers it on Linux only, where
+  WebKitGTK gives it a web process of its own that the shell ends with
+  `webkit_web_view_terminate_web_process`; on macOS it runs the checks in the
+  main window, and on Windows the page embeds no tile frames.
 
-`just desktop::check-window-check` checks it on Linux: it builds a small Tauri
-app with `src/check_window.rs`, `src/navigation.rs`, `src/declaration.rs`, the
-`daemon-pages` capability (granting only the two commands) and the
-`tile-check` capability (`tests/check-window`), under a virtual display in
-Docker. A mock daemon's main page opens the window, whose page holds a
-sandboxed frame that spins. It fails unless the check window runs in a web
-process other than the main window's, the main window's 100 ms heartbeat
-never stops for a second while the frame spins, the spinning process's CPU
-use drops within a second of `close_check_window` and the process is gone a
-second later, a second open while the window is open loads nothing, a window
-opened again after closing works, an open right after a close builds a new
-window, and the check page can call neither
-command, sees the same declaration, and cannot navigate to another site. It
-takes a few minutes and is not part of CI.
+The shell harness (Checking navigation, below) checks it on Linux: a mock
+daemon's main page opens the window, whose page holds a sandboxed frame that
+spins. It fails unless the check window's page and its tile run in processes
+the main window's page and tiles do not use, the main window's 100 ms
+heartbeat never stops for a second while the frame spins, the spinning
+process's CPU use drops within a second of `close_check_window` and the
+process is gone a second later, a second open while the window is open loads
+nothing, a window opened again after closing works, an open right after a
+close builds a new window, the main window loading another page closes it,
+closing leaves no cookie in the check window's session, every check page
+request carries the daemon's HttpOnly session cookie, and the check page
+sees the main window's script cookies and the declaration with
+`openLinks: false`, can call no command (`open_check_window`,
+`close_check_window`, `zoom_state`, `open_link`), and cannot navigate to or
+open another site. It also fails unless the main window's own tile runs in
+a process apart from its page, and a tile spinning in the main window
+leaves the page's heartbeat running.
 
-Before turning `checkWindow` on for macOS, a person checks on a Mac, with a
-debug build and a page that calls the commands from the Web Inspector:
+Because Chromium runs a tile's frame apart from the check page, a tile that
+loops before it says hello leaves the check page running: the daemon's
+missing-heartbeat timer never fires, and the runner itself reports the
+hang (a frame with no hello in 5 s that does not answer the kit's `ping`
+within 2 s and never finished loading; see "Render check" in
+`oss/ARCHITECTURE.md`). `tests/shell/check-runner.spec.ts` checks that path
+end to end with the app's own check host and runner, bundled from
+`oss/app/src` with React and `api.ts` stubbed, and the kit's real bootstrap
+in the frame: the main page opens the check window on a `tile_check` event,
+the runner claims the job from the mock daemon and draws a frame that
+spins, and the spec fails unless the frame runs in a process apart from the
+check page, the check page's heartbeat keeps running while it spins, the
+report reaching the mock holds `hang` (not `no_hello` or `timeout`), the
+`hung` the mock then sends closes the check window, the spinning process's
+CPU use drops within 2 seconds of the report and the process is gone, and
+the main window's 100 ms heartbeat never stops for a second.
 
-1. After `open_check_window`, Activity Monitor shows a second web content
-   process for the app.
-2. In the check window's page (open its inspector from the Develop menu),
+On macOS and Windows a person checks, before a release that changes the
+check window, with an unpackaged app started with
+`--remote-debugging-port=9222` and the main window's page inspected from
+`chrome://inspect` in Chrome or Edge:
+
+1. `await baumDesktop.invoke("open_check_window")`: Activity Monitor (macOS)
+   or Task Manager's details (Windows) shows a new renderer process.
+2. In the check window's page (also listed in `chrome://inspect`),
    `setTimeout(() => { for (;;) {} }, 1000)`: the main window stays
    responsive and its timers keep running.
-3. `close_check_window`: the spinning process's CPU use drops within a second
-   and the process ends.
-4. A hidden (or out of sight) check window still runs timers, and one opened
-   again after closing works.
-
-On Windows the check window stays off with tile frames (`tileFrames`); the
-same steps apply before either is turned on there.
+3. `await baumDesktop.invoke("close_check_window")` in the main window: the
+   spinning process's CPU use drops within a second and the process ends.
+4. A window opened again after closing works.
 
 ### Checking navigation
 
-`just desktop::navigation-check` checks the Linux webview: it builds a small
-Tauri window with `src/navigation.rs`, `src/declaration.rs` and the
-`daemon-pages` capability (`tests/navigation`), loads a mock daemon's page
-with and without the daemon's Content-Security-Policy, and clicks with a real
-pointer under a virtual display in Docker. It fails if a sandboxed frame's
-navigation is not refused, if a frame reaches the new-window handler or runs
-an app command, if a frame sees `__BAUM_DESKTOP__`, if any request reaches
-another server, or if the page's own links, commands or declaration stop
-working. It takes a few minutes and is not part of CI.
+`just desktop::electron-shell-test` (in the `desktop-electron` container;
+`pnpm build && pnpm test:shell` in `oss/desktop` elsewhere, which needs
+Xvfb) runs the harness in `tests/shell`, and CI runs it on Linux for every
+change to the desktop app. It launches the built shell with Playwright under
+a virtual display, with a home of its own, attached through the real attach
+path to a mock daemon: a fake `baum` (`BAUM_DESKTOP_BAUM`) answers `baum
+daemon ensure --json` with the mock's status and leaves a private credential.
+Another site (`attacker.example`, which Chromium resolves to 127.0.0.1 there)
+and another loopback server record any request that reaches them, and
+`shell.openExternal` is recorded instead of opening a browser. The mock
+serves each page with the daemon's Content-Security-Policy or with none, as
+Vite's development server sends none, so nothing but the shell stops a
+frame. Clicks are real pointer input. An unpackaged app run with
+`BAUM_DESKTOP_LOG_COMMANDS=1` logs each command it runs and for which role,
+so the harness can tell the page's calls from a frame's. It fails if:
 
-macOS and Windows need a person. Run a debug build of the app (`just
-desktop::dev` on macOS; on Windows, `cargo tauri dev` in `oss/desktop` with
-the frontend served as `desktop::dev` does). Its page comes from the Vite
-server, which sends no Content-Security-Policy, so nothing but the shell
-stops a frame. Open the Web Inspector on the main window (Cmd+Option+I on
-macOS, Ctrl+Shift+I on Windows) and, in its console:
+- a sandboxed frame, with the frame route's policy or only
+  `sandbox allow-scripts`, sees `baumDesktop` or `__BAUM_DESKTOP__`, reaches
+  the page's (`parent.baumDesktop` must throw), finds `require`, `process`,
+  `ipcRenderer` or another shell's bridge, or makes a command run, by any
+  call or by posting the page a message shaped like one;
+- a frame navigating itself (location, meta refresh, a real click on a
+  same-window link), a `target="_blank"` or `target="_top"` click, a
+  `window.open` click or loop, a form submitted to the top or to itself, a
+  nested frame or the page setting a frame's `src` makes any request to
+  another site or local server, opens the browser, or moves the page; and,
+  without the daemon's policy, if the guard did not refuse the navigation
+  itself;
+- with `will-frame-navigate` taken away, the network check does not refuse a
+  frame navigating itself and a frame the page inserts;
+- the page's own `target="_blank"` link does not open the browser exactly
+  once, a same-window link to another site is not refused, or a link to the
+  daemon's own page does not navigate;
+- `open_link` does not open a link once, a second within the second is not
+  dropped, or a `file:`, `data:`, `javascript:`, loopback or userinfo URL is
+  not refused; `window.open` in a burst opens more than once, every 100 ms
+  for 2.5 s fewer than two or more than three times, or opens such a URL;
+- the main frame navigates to another site, another local server, `file:`,
+  `data:` or a URL with a user name, or a `javascript:` URL moves it;
+- a frame in the setup screen or the connecting screen sees the bridge or
+  the declaration while the screen's own calls run;
+- any check of the check window above fails.
+
+The tray panel exists on macOS and Windows only, so the harness does not
+check it; its window loads only `tray.html` and refuses every navigation and
+new window.
+
+Electron's preload, its navigation events and Chromium's sandbox behave the
+same on macOS and Windows, but a release that changes the shell is checked
+there by a person too, with an unpackaged app started with
+`--remote-debugging-port=9222` and its pages inspected from `chrome://inspect`
+in Chrome or Edge. Its page comes from the Vite server under
+`desktop::dev`, which sends no Content-Security-Policy, so nothing but the
+shell stops a frame. In the main window's console:
 
 1. `Object.assign(document.createElement("a"), { href: "https://example.com/?same-window" }).click()`:
    nothing happens and no browser opens (the click is a script's).
 2. Load a frame from the page's own origin, which the shell allows, and drive
    it:
-   `const f = document.createElement("iframe"); f.sandbox = "allow-scripts allow-same-origin"; f.src = "/connecting.html"; document.body.append(f)`.
+   `const f = document.createElement("iframe"); f.sandbox = "allow-scripts allow-same-origin"; f.src = location.href; document.body.append(f)`.
    Once it has loaded, `f.contentWindow.location.href = "https://example.com/?frame"`:
-   no browser opens. On Windows the frame may show the site, since the shell
-   is not asked about frames there; on macOS it stays.
-3. Reload the frame (`f.src = "/connecting.html"`), then
+   the frame stays and no browser opens.
+3. Reload the frame (`f.src = location.href`), then
    `f.contentDocument.head.insertAdjacentHTML("beforeend", "<meta http-equiv=refresh content='0;url=https://example.com/?refresh'>")`:
    no browser opens.
 4. Reload it, then
@@ -985,26 +1071,54 @@ macOS, Ctrl+Shift+I on Windows) and, in its console:
 5. Click links to other sites as a person does: "Open on GitHub" in a pull
    request's menu, a link in a review's Markdown, the docs in the `?` menu, the
    release notes link of an update notice. Each opens the default browser,
-   once, and a debug build logs no refused navigation for it.
+   once, and the app logs no refused navigation for it.
 6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
    browser opens once at most.
 7. In setup's GitHub step (first run, with a fresh configuration directory),
    sign in: the browser opens GitHub's device page about five seconds later.
-8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the window
-   freezes (see SECURITY.md); the tray menu still answers, and quitting from
-   it and starting the app again recovers.
+8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the frame
+   is same-origin here, so it runs in the page's process and the window
+   freezes; the tray menu still answers, and quitting from it and starting
+   the app again recovers. A sandboxed tile frame (no `allow-same-origin`)
+   runs in a process of its own and leaves the window running (see
+   SECURITY.md).
+
+The Tauri shell was checked on Linux by WebKitGTK harnesses
+(`tests/navigation` and `tests/check-window`, now in git history only) and by
+hand on macOS and Windows with the same steps in the Web Inspector.
 
 ## Updates
 
 A release build checks for a newer release about 30 seconds after it starts
 and then once a day (by the wall clock, so a computer that slept through the
-day checks when it wakes). A full release (1.2.3) reads `latest.json` from
-the latest GitHub release of baum-ai/baum, which is never a pre-release, so it
-updates only to full releases. A release candidate (1.2.3-rc.1) reads
-`latest.json` from the `desktop-rc-updates` pre-release instead, which every
-release, candidate or full, replaces (see Releases), so it updates to the
-next candidate or to a newer full release, whichever came last. Local and snapshot builds (version 0.0.0) and debug
-builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
+day checks when it wakes). electron-updater (`electron/main/updater-electron.ts`)
+reads the release's update file from a feed, a GitHub release's downloads:
+`latest-mac.yml`, `latest-linux.yml` or `latest-linux-arm64.yml`, which give
+the version and the size and SHA-512 of each file. A full release (1.2.3)
+reads the latest GitHub release of baum-ai/baum, which is never a
+pre-release, so it updates only to full releases. A release candidate
+(1.2.3-rc.1) reads the `desktop-rc-updates` pre-release instead, which every
+release, candidate or full, replaces (see Releases), so it updates to the next
+candidate or to a newer full release, whichever came last. The files an
+update file lists are fetched from their own release through
+`https://downloads.usebaum.com/update/vVERSION/FILE`, which counts the
+download. Local and snapshot builds (version 0.0.0) and unpackaged builds
+never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
+
+Every downloaded file must also carry a minisign signature from the release
+key, made for the version being installed, or it is deleted and never
+installed. The signature is `FILE.sig` on the same release (the base64 of a
+minisign signature file whose trusted comment says `version:VERSION`, as
+`scripts/updater-sign.sh` writes it); the app reads it from
+`https://github.com/baum-ai/baum/releases/download/vVERSION/FILE.sig` and
+checks it with the release key's public half, `RELEASE_PUBLIC_KEY` in
+`electron/main/updater.ts` (also `plugins.updater.pubkey` in
+`tauri.conf.json`). Electron's BoringSSL has no BLAKE2b, so
+`electron/main/minisign.ts` brings its own, tested against signatures the
+minisign tool made. The file is checked again just before it is installed.
+electron-updater's own checks come on top: the SHA-512 from the update file
+and, on macOS, Squirrel.Mac's check that the update is signed by the same
+Developer ID as the app.
 
 The updater never opens a dialog. Settings → **This computer** shows the
 app's version and the updater's state in its first card (`update_state`):
@@ -1023,53 +1137,161 @@ looking at This computer is remembered until the app quits
 daemon does not bring it back; a newer version does. The page reads the
 state every minute, and every second while the updater works.
 
-- The macOS app, the Linux AppImage and the Windows installer update
-  themselves. The app downloads the update in the background; the download
-  must carry a signature from the release key whose public half is
-  `plugins.updater.pubkey` in `tauri.conf.json`, made for the version the
-  manifest announces (`requireSignedVersion`), or it is discarded. A download
-  that receives nothing for two minutes is abandoned until the next check.
-  **Update and restart** (`install_update`) installs it: while the daemon
-  runs a generation job (`baum daemon status`, then `GET /api/jobs`, every
-  15 seconds; queued jobs survive a restart), the card says how many it
-  waits for and offers **Cancel** (`cancel_update`), then the app installs
-  the update and restarts. On Windows the app stops the daemon first, and
-  the installer (whose hook stops it too) closes the app, updates it for the
-  current user and starts it again; the updated app refreshes its copy of
-  `baum.exe` and starts the daemon. An updated AppImage refreshes its copy of
-  `baum` in the data directory on the next start, renaming the new file into
-  place, so a daemon still running the old copy keeps it until the updated
-  app's `baum daemon ensure` replaces that daemon.
-- A deb install, or any copy the updater cannot replace (an AppImage in a
-  directory the user cannot write, an app on a read-only volume), only says
-  that a new version exists and links to its release page. Updating it is
-  the user's job, as with any package. A version whose installation failed
-  is remembered (`desktop.json`'s `updates` section in the app's config
-  directory) and from then on only offered this way.
+What each copy does with an update:
+
+| Copy | electron-updater's updater | The app |
+| --- | --- | --- |
+| macOS app the user can replace | Squirrel.Mac (`latest-mac.yml`, the zip) | downloads and installs |
+| macOS app on its disk image, translocated, or in a folder the user cannot write | Squirrel.Mac | announces |
+| AppImage in a folder the user can write | AppImage (`latest-linux.yml`, the AppImage) | downloads and installs |
+| AppImage in a folder the user cannot write | AppImage | announces |
+| deb, or any other Linux copy that is not an AppImage | deb (checks only) | announces |
+| Windows install (not released) | NSIS (`latest.yml`) | downloads and installs |
+
+The app picks the updater itself: an AppImage is a copy whose AppImage
+runtime set `APPIMAGE`. electron-updater would otherwise go by a
+`package-type` file the deb leaves in the shared unpacked app, and would not
+check outside an AppImage unless forced into its development mode.
+
+- Where the app installs updates, it downloads the update in the background,
+  as a whole file. A download that receives nothing for two minutes is
+  abandoned until the next check. **Update and restart** (`install_update`)
+  installs it: while the daemon runs a generation job (`baum daemon status`,
+  then `GET /api/jobs`, every 15 seconds; queued jobs survive a restart), the
+  card says how many it waits for and offers **Cancel** (`cancel_update`),
+  then the app quits and the update is installed and started. Quitting for
+  an update closes the window and the tray panel rather than hiding them,
+  and releases the single-instance lock, since the updated AppImage starts
+  before the old one has quit; Squirrel.Mac and the Windows installer start
+  the updated app once it has. On Windows the app stops the daemon first,
+  and the installer (whose hook stops it too) updates the app for the
+  current user; the updated app refreshes its copy of `baum.exe` and starts
+  the daemon. An updated AppImage refreshes its copy of `baum` in the data
+  directory on the next start, renaming the new file into place, so a daemon
+  still running the old copy keeps it until the updated app's
+  `baum daemon ensure` replaces that daemon.
+- Where it only announces updates, Settings says that a new version exists
+  and links to its release page. Updating a deb is the user's job, as with
+  any package. A version whose installation failed, or whose download was
+  rejected (a signature that does not verify, or one made for another
+  version), is remembered in `desktop.json`'s `updates` section
+  (`failed_installs`, `rejected_downloads`) and from then on only announced.
 - Restarting the app does not stop the daemon. The first client to run the
   new `baum` replaces an older daemon, as after any upgrade.
+
+electron-updater keeps its downloads in the user's cache directory
+(`@baumdesktop-updater`, from `app-update.yml` in the app's resources, which
+names nothing else the app uses: it sets the feed itself).
+
+A test build, whose version is a `test` pre-release such as 1.2.3-test.1,
+reads `BAUM_DESKTOP_UPDATE_FEED` (a feed URL; the signature is read beside
+the file there) and `BAUM_DESKTOP_UPDATE_PUBKEY` (a public key in the
+release key's format) for end-to-end tests (`just desktop::bridge-test`).
+Every other version ignores them, and the release workflow refuses to
+release a test version, so an installed app only ever trusts the release key.
+
+## Electron shell (in progress)
+
+An Electron shell in `electron/` is replacing the Tauri one. The Tauri shell
+(`src/`) stays the shipped app until the migration's bridge release. So far
+the Electron shell:
+
+- Opens the main window on the setup screen or the connecting screen.
+- Attaches to the daemon as described in "Attaching to the daemon", and
+  loads the daemon's pages.
+- Hides the window when it is closed, and keeps a single instance. Where no
+  tray is showing, closing the window asks "Quit baum?" instead.
+- Applies the rules in "What pages may do".
+- Runs first-run setup and "Command Line and Hooks…", and runs the stable
+  copy of `baum` where the app keeps one.
+- Shows the tray, its menu and, on macOS and Windows, its panel. On macOS it
+  also sets the window's menu bar; on Linux and Windows the window has none.
+- Reads the daemon's event stream once, for the tray, the notifications and
+  the health check, which waits 30 seconds while the stream is open.
+- Shows notifications, with their toggles in both menus.
+- Zooms with the shortcuts and Settings, and applies the saved theme before
+  the first paint. The preload asks the main process for the theme.
+- Opens links to other sites in the browser, at most once a second.
+- Saves tile type files, keeps start at login and the AppImage's menu entry
+  current, and quits with or without stopping background reviews.
+- Opens the tile check window, on every platform (see Tile check window).
+- Checks for updates and installs them (see Updates).
+
+- `electron/main/` runs in Node.js in the main process.
+- `electron/preload/` runs sandboxed in each window's main frame. It exposes
+  `window.baumDesktop.invoke` and the `__BAUM_DESKTOP__` declaration.
+- Every command goes over one IPC channel. `electron/main/bridge.ts` runs a
+  command only from the main frame of the app's own windows, and only if
+  `electron/main/commands.ts` allows it for the page's role.
+- The bundled screens are served from `dist/` as `app://bundle`. The tray panel has its own origin, `app://tray`, so the window's zoom does not scale it.
+- Before each request that carries the credential, the app checks that the
+  daemon's process (the status's `pid`) still runs as the user. Once it has
+  gone, another user's process could take its loopback port, so the check
+  counts as failed without a request. A status without a `pid` is not
+  checked.
+- Only the main frame of a page on the app's own origins gets the
+  notification and clipboard-write permissions; frames inside a page, and
+  opaque origins, never do.
+- The app keeps Tauri's identifier (`com.usebaum.desktop`), so it uses the
+  same `desktop.json`. Chromium's files go in `chromium/` under the same
+  folder.
+- In the app, `desktopShell()` (`../app/src/desktop/native.ts`) finds either
+  shell's bridge.
+
+Releases and snapshots ship this shell (see Releases); `just desktop::bundle`
+builds its Linux bundles.
+
+Checks, runs and Linux bundles happen in the `desktop-electron` Docker
+service, whose image (`Dockerfile`) is the release's Linux build image:
+
+```sh
+just desktop::electron-check       # format check, typecheck and unit tests
+just desktop::electron-shell-test  # the harness in tests/shell (see Checking navigation)
+just desktop::electron-fmt         # format
+```
+
+To run the app under Xvfb against a real daemon, first build `dist/` and the
+bundled `baum` (`just desktop::frontend`, `just desktop::sidecar`). Then, from
+the repository root:
+
+```sh
+BAUM_OP_RUN=0 ./dev-compose.sh run --rm --no-deps desktop-electron sh -c \
+  'pnpm build && HOME=$(mktemp -d) BAUM_DESKTOP_BAUM=/oss/desktop/binaries/baum-x86_64-unknown-linux-gnu \
+   BAUM_DESKTOP_SCREENSHOT=/oss/desktop/build/shot.png \
+   xvfb-run -a node_modules/.bin/electron . --no-sandbox --enable-logging'
+```
+
+`BAUM_DESKTOP_SCREENSHOT` applies only to an unpackaged app. It saves what the
+window shows a few seconds after each page load. `BAUM_DESKTOP_LOG_LINKS=1`,
+also only for an unpackaged app, logs the links the app would open instead of
+opening a browser. Stop the daemon afterwards with `baum daemon stop`.
 
 ## Development
 
 `just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
 Desktop check, test, build, bundle, run and dev recipes build that frontend first.
-Rust builds and checks run in the `desktop-test` Docker service (Rust, the
-WebKitGTK and GTK development packages, and the Tauri CLI). The bundled
-binary is built in `oss-test`. From the repository root:
+The Electron app's builds, bundles and runs (`run`, `isolated`, `profile`, and
+the build half of `dev`) happen in the `desktop-electron` Docker service
+(`Dockerfile`) or the `desktop-isolated` service built on it. The Tauri
+shell's Rust builds and checks (`check`, `test`) run in the `desktop-test`
+service (`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development
+packages, and the Tauri CLI) until that shell is removed. The bundled binary
+is built in `oss-test`. From the repository root:
 
 ```sh
 just desktop::check         # cargo fmt --check, clippy -D warnings, tests, updater-test
 just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
-just desktop::build         # Linux bundle (deb by default) in target/release/bundle
-just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
-just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
+just desktop::build         # unpacked Linux app (electron-builder --dir) in target/electron-builder
+just desktop::bundle        # the release's Linux deb, AppImage and latest-linux.yml in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG and zip in target/local-dmg (--install also installs it)
+just desktop::notices       # regenerate ../third_party/electron.txt (Electron's and npm packages' licences)
 just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
 just desktop::profile       # time a scripted journey in the headless app (see Profiling)
-just desktop::dev           # native host app, with Vite hot reload in Docker
+just desktop::dev           # the app on the host, with its build and Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
 
@@ -1087,10 +1309,19 @@ BAUM_RELAY_URL=https://… just desktop::isolated mobile
 An instance's home stays between runs under
 `${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/desktop-homes/<name>`; delete the
 folder to start again. Its container is `baum-desktop-<name>`, and only one
-can run per name. The `desktop-isolated` image adds gnome-keyring on a D-Bus
-session, so sign-in can store credentials, plus git, ssh and sqlite3. The
-first run installs Claude Code into the home and copies `~/.gitconfig` with
-commit signing turned off, since the signing key is not there.
+can run per name. The container bundles the app's main process (`pnpm
+build`) and runs the unpackaged app from this checkout with `electron .`,
+on this display through Chromium's Wayland backend
+(`--ozone-platform=wayland`, the Wayland socket mounted). Electron runs with
+`--no-sandbox` there, and only there: a container has no user namespaces for
+Chromium's sandbox, and the app's renderers keep their sandboxed preload
+either way. The `desktop-isolated` image (`isolated.Dockerfile`) is the
+`desktop-electron` image plus gnome-keyring on a D-Bus session, so sign-in
+can store credentials, git, ssh, sqlite3, ImageMagick for screenshots and
+Electron's chromedriver for profiling. The first run installs Claude Code
+into the home and copies `~/.gitconfig` with commit signing turned off, since
+the signing key is not there. Each start removes the home's stale
+single-instance lock, which names the container that took it.
 
 `--copy-data`, when the instance has no data yet, copies this machine's
 repositories, reviews and settings with consistent SQLite snapshots. It
@@ -1136,14 +1367,16 @@ just desktop::isolated perf2 --seed-data=7 --headless
 ```
 
 `--headless` runs the instance without a display of yours: the container
-starts its own headless Weston (`BAUM_ISOLATED_WIDTH` × `BAUM_ISOLATED_HEIGHT`,
-1440 × 900 by default) and the app draws there, so agents can run the real
-WebKitGTK app with no window on your screen and no Wayland session at all.
-`just desktop::isolated-screenshot <name> [out.png]` saves what it shows.
-Weston's headless backend renders with Pixman, in software, and has no input
-seat (GDK logs `gdk_seat_get_keyboard` assertions, which are harmless here),
-so JavaScript, layout and React costs are realistic and painting and
-compositing costs are not.
+starts its own Xvfb (display `:99`, `BAUM_ISOLATED_WIDTH` ×
+`BAUM_ISOLATED_HEIGHT`, 1440 × 900 by default) and the app draws there
+through Chromium's X11 backend, so agents can run the real app with no
+window on your screen and no Wayland session at all.
+`just desktop::isolated-screenshot <name> [out.png]` saves what Xvfb's
+screen shows (ImageMagick's `import -window root`). Xvfb has no GPU, so
+Chromium rasterises and composites in software: JavaScript, layout and React
+costs are realistic and painting and compositing costs are not. Chromium
+logs that it cannot reach the system D-Bus, which the container does not
+have; that is harmless.
 
 `BAUM_FRONTEND_MODE=profile` before any recipe that builds the frontend
 (`isolated`, `run`, `build`) builds the profiling build
@@ -1161,15 +1394,21 @@ renders and reacts, for people and agents tuning it. It builds the profiling
 frontend, the viewer and the sidecar (which stay the profiling build until
 another recipe builds them), starts a `--headless` isolated instance
 (`profile` unless `--name` says otherwise) and, inside its container, runs
-`../app/scripts/profile/run.ts` with Node. The runner starts
-`WebKitWebDriver` (Ubuntu's `webkit2gtk-driver`, pinned to the version of
-the app's WebKitGTK), which launches the app's debug build with
-`TAURI_WEBVIEW_AUTOMATION=true`, so WebDriver drives the real main webview
-from the connecting screen on to the daemon's page. Key presses are WebKit's
-own synthesized events, which reach the page without an input seat, and the
-collector records them as interactions. The runner marks the instance set up
-(`desktop.json`), so it opens on the Inbox rather than first-run setup, and
-closes the first-run tour if it shows.
+`../app/scripts/profile/run.ts` with Node, after bundling the app's main
+process (`pnpm build`). The runner starts Electron's own chromedriver (the
+one Electron publishes with each release, at the Electron version
+`package.json` pins, which `../app/scripts/profile/electron.test.ts` checks
+against `isolated.Dockerfile`), which launches the unpackaged app from this
+checkout with `electron --app=/oss/desktop`, so WebDriver drives the real
+main window from the connecting screen on to the daemon's page: the same
+Chromium users run, on every platform. chromedriver finds the app's DevTools
+port through the user data directory it is given, which is the app's
+Chromium folder (`chromium/` beside `desktop.json`), since the app sets its
+own before Chromium starts. Key presses are Chromium's own input events, and
+the collector records them as interactions. The runner marks the instance
+set up (`desktop.json`), so it opens on the Inbox rather than first-run
+setup, and closes the first-run tour if it shows. Every measured run also
+records a CPU profile (below).
 
 ```sh
 just desktop::profile jk --runs 10                  # seeded dataset, seed 1
@@ -1188,12 +1427,12 @@ get what they had; a seeded home is never mixed with copied data
 `isolated`, the copy made once per instance: this machine's data shows how
 the app behaves on it, but differs between machines and changes over time.
 The summary's environment line says which data a profile ran on (the seed
-and the dataset's digest), the WebKitGTK package version and the CPUs.
+and the dataset's digest), the Electron and Chromium versions and the CPUs.
 `--runs N` (5 by default) sets the measured runs,
 after one warm-up whose numbers are kept apart. The recipe checks the
 scenario and the options before it builds anything. `--run-timeout S`
 (600 by default) fails a run, the launch or the preparation that takes
-longer, as a hung WebKitWebDriver would, with a message saying so. The container runs on
+longer, as a hung chromedriver or app would, with a message saying so. The container runs on
 `BAUM_DEV_CPUSET`, like every development container, and the summary names
 the CPUs it had. The scenarios:
 
@@ -1267,7 +1506,7 @@ window's storage (the last inbox shown, the sidebar, the session panel),
 and puts them back before every run, from the settings page, which holds
 neither; typed filters (which the daemon keeps) go back to none, and the
 filter scenario also clears its own after each run. What it cannot put
-back: the daemon's and WebKit's caches, which the warm-up fills, a new day
+back: the daemon's and Chromium's caches, which the warm-up fills, a new day
 starting (the Inbox's record of the day starts empty then), and anything a
 journey asks the daemon to do, which none of these does. Profiling clears
 an instance's typed filters.
@@ -1277,9 +1516,9 @@ so its JavaScript heap and React state start clean, then resets the
 collector: relaunching would add some ten seconds a run and change nothing a
 page reload does not. Cold start must launch, so each run quits the app and
 starts it again; the daemon keeps running between launches, as it does for a
-user, and WebKit's cache in the instance's home stays warm. The runner waits
+user, and Chromium's cache in the instance's home stays warm. The runner waits
 for each key press's frame, then 50 ms, before the next. Waiting, it polls
-the page and talks to WebKitWebDriver, which adds a roughly constant
+the page and talks to chromedriver, which adds a roughly constant
 overhead to interaction durations: fine for comparing before and after a
 change, not for absolute numbers. Modifier keys pressed for the key after
 them (Shift for Shift+J) are left out of the interactions.
@@ -1301,123 +1540,22 @@ command prints at the end:
   last, so a failure keeps the runs before it.
 - `metrics.json`: the same, with every run's metrics and the collector's raw
   snapshot (`__baumPerf.snapshot()`, [local app](../app/README.md)).
-- `driver.log`, WebKitWebDriver's output, and `failure.png`, the window
+- `run-N.cpuprofile`, each measured run's CPU profile (below).
+- `driver.log`, chromedriver's output, and `failure.png`, the window
   when a run failed.
 
-The numbers come with the headless instance's limits. Weston renders with
-Pixman, in software, so script, style, layout and React times are
-realistic and paint and compositing times are not; frame gaps include
-software painting. The app's Rust shell is a debug build, as `isolated`
-runs it; the measured pages come from the daemon and run in the system's
-WebKitGTK, so that only slows the shell's own commands. Data copied with
+The numbers come with the headless instance's limits. Under Xvfb Chromium
+rasterises and composites in software, so script, style, layout and React
+times are realistic and paint and compositing times are not; frame gaps
+include software painting. The app is unpackaged, as `isolated` runs it,
+but it is the same Electron and Chromium a release ships, so the measured
+pages run in the engine users have on every platform. Data copied with
 `--copy-data` holds no GitHub sign-in, so the daemon finds no open pull
 requests and the inboxes and Pull requests stay empty: `jk` skips, and
 `filter` types into an empty list. The seeded dataset has them. Its
 sessions are recorded as ended, so in `session-panel` nothing streams: it
 measures the panel open on an ended conversation, and the summary says so.
 
-#### CPU profiles in Chromium
-
-The WebKit runs say what is slow (interactions, frames, renders) but not
-why. `--engine chromium` runs the same scenarios in Chromium and records a
-CPU profile of every measured run, which says which functions the time went
-to:
-
-```sh
-just desktop::profile review --engine chromium --runs 3
-just desktop::profile jk --engine chromium --runs 3
-```
-
-The `pages` scenario visits every page, so its CPU profile is theirs together.
-`--page LABEL` (repeatable) visits only the pages named, directly and by
-navigation from the Inbox, for a profile, or a comparison, of one page. A label
-is the summary's page column in any case, with dashes for spaces, as are the
-page metrics `--metric` names (`just` passes its arguments split on spaces):
-
-```sh
-just desktop::profile pages --page edit-inbox --engine chromium --runs 3
-just desktop::profile pages --page edit-inbox --baseline origin/main \
-  --metric page:edit-inbox:direct:content
-```
-
-The instance starts as usual, with its daemon, its data and the profiling
-frontend in the sidecar, but no app: the runner starts the daemon with the
-bundled `baum daemon ensure`, as the app does, and Playwright's Chromium
-(Chrome for Testing, headless, in the `desktop-isolated` image) opens the
-launch URL from its `credential.json` (the capability in it is never
-logged: chromedriver logs only severe messages, and the runner scrubs
-`#token=` from `driver.log`; see
-[Attaching to the daemon](#attaching-to-the-daemon)). chromedriver of the
-same version drives it with the same WebDriver commands as WebKitWebDriver,
-so the scenarios are the same code. The image takes both at the Playwright
-version `../app`'s lockfile pins (`chromium.test.ts` checks), from Chrome for
-Testing, which has chromedriver for x86-64 Linux only, so on another Docker
-engine `--engine chromium` stops before building anything. Each measured run
-(not the warm-up) samples the page's main thread every 250 µs through
-chromedriver's DevTools Protocol endpoint (`Profiler.start` and `stop`):
-enough samples to tell a 16 ms frame's stacks apart at a few percent of
-overhead, where 100 µs costs more on long journeys and makes long profiles
-large.
-
-The summary then ends with a CPU section:
-
-- the time a run spent in JavaScript, outside it (`(program)`: style,
-  layout, paint and the browser's own work), in garbage collection and idle,
-  from the collector's reset to its snapshot, the window the rest of the
-  summary measures (cold start relaunches the browser each run and counts
-  from the page's start, sampling from before it loads, which adds the
-  profiler's start to its launch times);
-- the 20 functions with the most self time per run, with their total time
-  (callees included, a recursive function counted once). Each is named by
-  the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
-  at the line its function starts, `oss/app/src/up-next.tsx:1396`, not the
-  hot line inside it: V8's line ticks give a bundle line without a column,
-  and the minified bundles are a few lines long, so they map to nothing. A
-  package's functions show as the package (`react-dom`) but are told apart
-  by their own source line; `browser` marks the DOM's and V8's own
-  functions, whose time includes the style and layout they force
-  (`getBoundingClientRect`, `scrollIntoView`). A minified name the map
-  cannot resolve keeps its bundle place beside it. `(program)` and
-  `(garbage collector)` are rows too, and often the top one: time outside
-  JavaScript;
-- for the five slowest interactions and the three longest frames, that
-  breakdown within the interaction (from the input to the frame after it)
-  or frame, its functions with the most self time, and its three heaviest
-  JavaScript stacks, innermost first, at most eight frames, a package's
-  consecutive frames as one (`[react-dom ×56]`: 56 more frames of
-  react-dom, mostly React walking its tree of components). Idle time within an
-  interaction or frame was spent off the main thread: raster, compositing
-  or the driver, which the profile does not see.
-
-To place interactions and frames on the profile, the runner lines up the
-page's `performance.now()` with the profile's clock: after the snapshot it
-runs a function, `__baumProfileClock`, that spins 30 ms and returns the
-page times it started and ended. Its first sample is no earlier than the
-start and its last no later than the end, so the clocks' offset is the mean
-of the two differences, to within half a sampling interval. A run whose
-spin got fewer than ten samples, or samples spanning less than 80% of it (a
-sampler starved on shared CPUs), is left unaligned rather than
-misattributed: the summary says so and leaves its interactions and frames
-out. The offset is kept in
-each profile as `baumClockOffset` (microseconds, profile time less page
-time).
-
-`run-N.cpuprofile` beside the summary holds each run's whole profile: open
-it in Chrome DevTools (Performance, Load profile) or
-[speedscope](https://www.speedscope.app) for the flame chart. The bundles
-are minified, so their names there are the minified ones unless DevTools
-can load the source maps.
-
-Chromium's numbers are not WebKit's. V8 and JavaScriptCore compile and
-collect garbage differently, Blink's style and layout differ from WebKit's,
-and headless Chromium paints with its own software renderer, so a frame or
-an interaction may be much faster or slower in one than the other, and a
-problem only one engine has (a slow path in its layout or its regular
-expressions) shows only there. Use Chromium's profile to find which code is
-hot, and WebKit's runs to judge how slow the app is for its users. The rest
-of the summary (metrics, interactions, components) is measured the same way
-in both. The driver's own polling shows in the profile as anonymous
-functions with no source, a little in every interaction.
 #### Comparing with a baseline
 
 `--baseline REF` says whether this checkout is faster or slower than REF
@@ -1432,15 +1570,19 @@ just desktop::profile review --baseline origin/main --metric long_frame_total
 
 Both sides are this checkout's runner and scenarios, so the journey is the
 same; only the app under test differs. The baseline's app is its profiling
-frontend, viewer, sidecar and the Rust shell's debug build, all built from
-REF by REF's own recipes in a worktree that comparisons share,
+frontend, viewer, sidecar and the Electron shell's main process bundled
+(`pnpm build`), all built from REF by REF's own recipes in a worktree that
+comparisons share,
 `${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/profile-baselines/worktree`, and
 kept by commit beside it, so comparing against the same commit again
 builds nothing. The three most recent stay, and any a running comparison
 uses. The shell is built per side because its connecting screen and
-commands are part of what cold start measures. A REF from before the
-profiling runner has no `__baumPerf.progress()` to drive, so the
-comparison stops before building, saying so.
+commands are part of what cold start measures; Electron itself is this
+checkout's on both sides (the container's `node_modules`), so a change of
+Electron's version does not show. A REF from before the profiling runner
+has no `__baumPerf.progress()` to drive, and one from before the Electron
+app cannot be built or run as this checkout's is, so the comparison stops
+before building, saying so.
 
 Each side runs in its own headless instance, `NAME-head` and `NAME-base`
 (`profile-head` and `profile-base` by default): two containers, each with
@@ -1549,6 +1691,94 @@ its timers due, which fire before its run's page loads; and a change
 smaller than the floor, or than the runs' spread, shows as within noise
 rather than as no change.
 
+#### CPU profiles
+
+The runs say what is slow (interactions, frames, renders); the CPU profile
+of every measured run says which functions the time went to, in the same
+app:
+
+```sh
+just desktop::profile review --runs 3
+just desktop::profile jk --runs 3
+```
+
+The `pages` scenario visits every page, so its CPU profile is theirs together.
+`--page LABEL` (repeatable) visits only the pages named, directly and by
+navigation from the Inbox, for a profile, or a comparison, of one page. A label
+is the summary's page column in any case, with dashes for spaces, as are the
+page metrics `--metric` names (`just` passes its arguments split on spaces):
+
+```sh
+just desktop::profile pages --page edit-inbox --runs 3
+just desktop::profile pages --page edit-inbox --baseline origin/main \
+  --metric page:edit-inbox:direct:content
+```
+
+Each measured run (not the warm-up) samples the window's renderer main
+thread every 250 µs through chromedriver's DevTools Protocol endpoint
+(`Profiler.start` and `stop`): enough samples to tell a 16 ms frame's stacks
+apart at a few percent of overhead, where 100 µs costs more on long journeys
+and makes long profiles large. The overhead is in every run, so before and
+after numbers compare. chromedriver logs only severe messages, so no
+command reaches `driver.log`, and the runner also scrubs `#token=` from it:
+the daemon's launch URL holds its capability (see
+[Attaching to the daemon](#attaching-to-the-daemon)).
+
+The summary then ends with a CPU section:
+
+- the time a run spent in JavaScript, outside it (`(program)`: style,
+  layout, paint and the browser's own work), in garbage collection and idle,
+  from the collector's reset to its snapshot, the window the rest of the
+  summary measures (cold start relaunches the app each run and counts from
+  the page's start, sampling from as soon as chromedriver can drive the
+  window, which adds the profiler's start to its launch times);
+- the 20 functions with the most self time per run, with their total time
+  (callees included, a recursive function counted once). Each is named by
+  the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
+  at the line its function starts, `oss/app/src/up-next.tsx:1396`, not the
+  hot line inside it: V8's line ticks give a bundle line without a column,
+  and the minified bundles are a few lines long, so they map to nothing. A
+  package's functions show as the package (`react-dom`) but are told apart
+  by their own source line; `browser` marks the DOM's and V8's own
+  functions, whose time includes the style and layout they force
+  (`getBoundingClientRect`, `scrollIntoView`). A minified name the map
+  cannot resolve keeps its bundle place beside it. `(program)` and
+  `(garbage collector)` are rows too, and often the top one: time outside
+  JavaScript;
+- for the five slowest interactions and the three longest frames, that
+  breakdown within the interaction (from the input to the frame after it)
+  or frame, its functions with the most self time, and its three heaviest
+  JavaScript stacks, innermost first, at most eight frames, a package's
+  consecutive frames as one (`[react-dom ×56]`: 56 more frames of
+  react-dom, mostly React walking its tree of components). Idle time within an
+  interaction or frame was spent off the main thread: raster, compositing
+  or the driver, which the profile does not see.
+
+To place interactions and frames on the profile, the runner lines up the
+page's `performance.now()` with the profile's clock: after the snapshot it
+runs a function, `__baumProfileClock`, that spins 30 ms and returns the
+page times it started and ended. Its first sample is no earlier than the
+start and its last no later than the end, so the clocks' offset is the mean
+of the two differences, to within half a sampling interval. A run whose
+spin got fewer than ten samples, or samples spanning less than 80% of it (a
+sampler starved on shared CPUs), is left unaligned rather than
+misattributed: the summary says so and leaves its interactions and frames
+out. The offset is kept in
+each profile as `baumClockOffset` (microseconds, profile time less page
+time).
+
+`run-N.cpuprofile` beside the summary holds each run's whole profile: open
+it in Chrome DevTools (Performance, Load profile) or
+[speedscope](https://www.speedscope.app) for the flame chart. The bundles
+are minified, so their names there are the minified ones unless DevTools
+can load the source maps.
+
+JavaScript profiles do not see style and layout work beyond the
+`(program)` row and the `browser` functions that force it; Chrome DevTools'
+Performance panel on a `run-N.cpuprofile` does not either. The driver's own
+polling shows in the profile as anonymous functions with no source, a
+little in every interaction.
+
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
 release runs them, without a Developer ID, so the app is signed ad hoc and not
@@ -1567,18 +1797,40 @@ icon (`icons/icon.icns`) as its volume icon. The window layout is
 regenerate both in Docker with `just desktop::dmg-layout` after changing
 `scripts/dmg-layout.py`.
 
-`run` starts the container's own daemon in the container's home directory,
-not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
-bundled one.
+`run` bundles the main process (`pnpm build`) and runs `electron .` in the
+`desktop-electron` service, on this Wayland session's display
+(`--ozone-platform=wayland`, with the socket mounted). It starts the
+container's own daemon in the container's home directory, not yours. Set
+`BAUM_DESKTOP_BAUM` to run a different `baum` binary than the bundled one.
 
 For UI work and host integration, use `just desktop::dev` on macOS, or on Linux
 in a Wayland or X11 session. Vite, dependencies and generated frontend code stay in
 Docker; the CLI sidecar is built in `oss-test` for the host's target (Go
-cross-compiles it without cgo). The native Rust app is compiled
-and run on the host, with separate output in `target/host-dev`. This is an
-intentional host execution exception: a container cannot resolve the host user's
-login environment, installed agent CLIs, repository paths, credential agents or
-native desktop services faithfully by mounting a display socket. The launcher
+cross-compiles it without cgo), and the app's main process and preload are
+bundled in `desktop-electron` (`pnpm build`, into `build/`). Only the
+Electron binary runs on the host, on the unpackaged app in `oss/desktop`.
+This is an intentional host execution exception: a container cannot resolve
+the host user's login environment, installed agent CLIs, repository paths,
+credential agents or native desktop services faithfully by mounting a
+display socket.
+
+The host needs no Node.js and installs no npm packages. Electron's binary is
+platform-specific and `node_modules` lives in a Docker volume holding the
+Linux one, so the same `desktop-electron` run also downloads the Electron
+release for the host's platform and architecture
+(`scripts/host-electron.mjs`): the version the lockfile pins, through the
+`@electron/get` the electron package installs itself with, checked against
+the checksums that package ships, into the shared Electron download cache
+(`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/electron`). The host then unpacks
+it once per version into `electron-host/v<version>-<platform>-<arch>/` beside
+it (`unzip` on Linux, which the host needs; `ditto` on macOS) and runs it.
+A host `pnpm install` would run every package's install scripts on the host
+and could not share the Docker volume's `node_modules`; `npx electron` would
+need Node.js on the host and resolve the version apart from the lockfile.
+On Linux the downloaded Electron sandboxes its renderers with user
+namespaces; where they are restricted (Ubuntu 24.04's AppArmor default), it
+exits at start, and `ELECTRON_DISABLE_SANDBOX=1 just desktop::dev` runs it
+without that sandbox, for development only. The launcher
 uses your real home directory and the shared host daemon, so installation and
 repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
 when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
@@ -1596,12 +1848,9 @@ named `baum`, as the install-record validation requires; the platform-suffixed
 sidecar filename is only the build artifact. Existing daemons can finish using
 the previous executable after the copy is replaced.
 
-The host needs Rust (at least the version in `Cargo.toml`), a C toolchain,
-pkg-config and the Tauri GTK/WebKit development libraries. On Debian/Ubuntu,
-install `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev
-libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev`. On macOS,
-Rust and the Xcode command line tools are enough. Docker continues to own checks
-and release builds.
+The host needs Docker, and on Linux `unzip` and the libraries Electron
+loads (GTK 3, NSS, libnotify and a few X libraries, which a desktop session
+has). Docker continues to own checks and release builds.
 
 On Linux, Vite runs with host networking (`desktop-dev-frontend`) and shares the
 host's loopback with the app and the daemon. Docker Desktop on macOS has no
@@ -1611,24 +1860,26 @@ keeping the daemon's own `Host` header, which it requires. Windows is not
 supported.
 
 Saving React components or CSS in `oss/app` or `oss/viewer` refreshes the window,
-including the setup screen. Native Rust and connecting screen changes require
-restarting the command. Ctrl-C removes the Vite container and its private shared directory;
+including the setup screen. Changes to the shell (`electron/`) and the
+connecting screen require restarting the command. Ctrl-C removes the Vite container and its private shared directory;
 the host daemon continues running, just as when the normal desktop app closes.
 A second Vite, such as another worktree's, can serve the same daemon beside
 it with `BAUM_DESKTOP_DEV_PORT` set to another port; open it in a browser with
 the launch URL from the daemon's `credential.json`.
 
-Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
-on port 1420. The private directory shares only the daemon origin with Vite,
+Only an unpackaged app with `BAUM_DESKTOP_DEV_DIR` set
+(`electron/main/development.ts`) uses the development frontend on port 1420. The private directory shares only the daemon origin with Vite,
 never its launch capability. Vite uses Docker host networking and binds only
 `127.0.0.1`, allowing the host window and the container proxy to reach the host
 daemon without exposing a development port beyond loopback. It proxies the normal
 login exchange and namespaced API, including event streams, rewriting the expected
 development Origin for CSRF validation. The setup screen also loads from Vite,
-at `http://localhost:1420/setup.html`. Tauri grants commands by origin, not
-path, so setup uses `localhost` while the daemon's pages use `127.0.0.1`; a
-capability added at runtime grants only the `localhost` origin the setup
-commands, and the window may navigate only to the setup page there. Release builds ignore the override.
+at `http://localhost:1420/setup.html`. The bridge grants setup commands by
+origin, so setup uses `localhost` while the daemon's pages use `127.0.0.1`:
+under development only, it grants the setup commands to that page on the
+`localhost` origin while setup shows (`electron/main/bridge.ts`), and the
+window may navigate only to the setup page there. A packaged app ignores the
+override.
 
 Tauri expects the bundled binary at `binaries/baum-<target triple>`, which
 `scripts/sidecar.sh` builds (run it from the module root; it takes the triple
@@ -1648,7 +1899,7 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
             ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
-                 └─ desktop-manifest     latest.json, desktop-checksums.txt; read-only
+                 └─ desktop-manifest     latest.json, latest*.yml checks, desktop-checksums.txt; read-only
                       └─ desktop-publish attach files, latest.json last, publish the draft,
                                          then the release candidates' latest.json
 ```
@@ -1665,38 +1916,55 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   parent is allowed, so a release candidate can be promoted). goreleaser creates the release as a draft with empty
   notes (a re-run reuses that draft), and keeps its `baum` binaries as the
   artifact `cli-binaries`.
-- `desktop` compiles the app around those binaries with `scripts/bundle.sh`,
-  on Linux in this directory's Docker image. This is where third-party code
-  runs: hundreds of crates' build scripts and macros, and the bundler's
-  downloads (linuxdeploy, NSIS). It has no secrets, and `bundle.sh` refuses to
-  run if a signing variable is set. It produces the deb and AppImage and the
-  unsigned macOS app (as a tar). The Windows installer is not released for
+- `desktop` builds the Electron app around those binaries with
+  `scripts/bundle.sh` and electron-builder (`electron-builder.mjs`), on Linux
+  in this directory's Docker image. This is where third-party code runs: the
+  npm packages' install scripts, esbuild, electron-builder and its downloads
+  (Electron, the AppImage runtime, fpm, NSIS, each checked against a
+  checksum electron-builder pins). It has no secrets, and `bundle.sh` refuses
+  to run if a signing variable or a token is set; electron-builder never
+  publishes (`--publish never`). It produces the deb, the AppImage and
+  `latest-linux.yml` (`latest-linux-arm64.yml` on arm64) and the unsigned
+  universal macOS app (as a tar). The Windows installer is not released for
   now: the release calls `desktop.yml` with `windows: false`, so only Check's
   snapshots build it (see "Windows" below).
 - The two sign jobs use the `release` environment, the only place the
   signing secrets live. Each waits for a reviewer's approval (both
   together), and the environment accepts only `v*` tags. They compile
   nothing: they run Apple's tools (`codesign`, `notarytool`, `stapler`,
-  `hdiutil`) through `scripts/macos-finalize.sh`, and minisign 0.12 (the official binary,
+  `hdiutil`) through `scripts/macos-finalize.sh`, minisign 0.12 (the official binary,
   pinned by SHA-256 in `scripts/install-minisign.sh`) through
-  `scripts/updater-sign.sh`, which signs each updater bundle for the release
-  version. OS signing comes first, so the updater signature covers the final
-  file. Each job downloads only its own platform's artifact, by name, and
-  takes only that platform's file names from it; `updater-sign.sh` and
+  `scripts/updater-sign.sh`, which signs each updater file for the release
+  version, and `scripts/update-yml.mjs` (Node.js, no dependencies) with the
+  runner's own Node.js. OS signing comes first, so the updater signature and
+  the hashes in `latest-mac.yml`, which `macos-finalize.sh` writes after
+  stapling, cover the final file. Every file a `latest*.yml` lists (the macOS
+  zip, the AppImages and the debs) and the macOS `.app.tar.gz` get a `.sig`.
+  Each job downloads only its own platform's artifact, by name, and takes
+  only that platform's file names from it; `updater-sign.sh` and
   `updater-manifest.sh` refuse any minisign but the pinned one there.
 - `desktop-manifest` downloads each sign job's artifact by name, accepts
   only that platform's file names and fails if two artifacts carry the same
   name. It writes `latest.json` with `scripts/updater-manifest.sh` and checks
   every bundle in it against the release key, the version and its expected
-  download URL. If the environment holds the updater key but a
-  signature is missing, it fails. It also writes `desktop-checksums.txt`.
+  download URL, and that each is the Electron app (`updater-manifest.sh
+  electron`; see Bridge release). It checks that `latest-mac.yml` and
+  `latest-linux.yml` are there, points the files they list at
+  `downloads.usebaum.com` (`update-yml.mjs publish`), and checks that every
+  update file announces the version and gives the size and SHA-512 of the
+  files beside it (`update-yml.mjs check`), and that each file they list
+  carries the release key's signature for the version
+  (`updater-manifest.sh signed`). If the environment holds the updater key but a
+  signature is missing, it fails; without the key it publishes neither
+  `latest.json` nor the update files. It also writes `desktop-checksums.txt`.
 - `desktop-publish`, the only job besides `release` with a token that can
   write, attests the files' build provenance, uploads exactly the expected
-  files (`latest.json` last), and only then publishes the draft. It then
-  copies `latest.json` to the `desktop-rc-updates` pre-release, which it
+  files (`latest.json` and the `latest*.yml` update files last), and only then
+  publishes the draft. It then copies `latest.json` and the update files to
+  the `desktop-rc-updates` pre-release, which it
   creates on the first release, unless that already holds a newer version (a
   re-run of an older release). That pre-release is not a release: it only
-  holds the manifest release candidates read, and being a pre-release, it is
+  holds the manifests release candidates read, and being a pre-release, it is
   never the latest release.
 
 Before tagging a stable release, write the version's section (`## v1.2.3`) in
@@ -1744,7 +2012,8 @@ summary and a local clone of baum-ai/baum:
 
    ```sh
    git fetch --tags origin
-   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile .goreleaser.yaml
+   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile \
+     desktop/package.json desktop/pnpm-lock.yaml desktop/electron-builder.* .goreleaser.yaml
    ```
 
    and that the release commit itself adds only the built apps:
@@ -1761,6 +2030,12 @@ summary and a local clone of baum-ai/baum:
    (Settings → Secrets and variables → Actions → Repository secrets), only the
    environment's.
 4. The draft release has its notes.
+5. Until `latest.json` is retired (see Bridge release): the run's summary
+   shows `latest.json`, and each platform's `url` names this version's
+   Electron files (`baum-desktop-darwin-universal….app.tar.gz`,
+   `baum-desktop-linux-amd64.AppImage`). The `desktop-manifest` job checked
+   that they hold the Electron app; installed Tauri copies install whatever
+   it lists.
 
 ### Snapshots
 
@@ -1768,22 +2043,24 @@ A pull request or push to `main` that changes `desktop/`, `app/`,
 `internal/localapp/`, the viewer build scripts or these workflows also runs
 `desktop.yml` from `check.yml` with version 0.0.0, packaging the macOS app ad
 hoc with `macos-finalize.sh`, so the bundling and packaging scripts are
-exercised before a tag. Like the release, it skips the Windows installer.
-Snapshots reuse a cached Linux build image and Rust build output; release
-builds use neither. Those snapshot bundles are kept as workflow artifacts for
-14 days.
+exercised before a tag. Unlike the release, it also builds the Windows
+installer. Snapshots reuse a cached Linux build image, pnpm store and
+Electron and electron-builder downloads; release builds use none of them.
+Those snapshot bundles are kept as workflow artifacts for 14 days.
 
 ### Files on a release
 
 | File | What it is |
 | --- | --- |
 | `baum-desktop-darwin-universal.dmg` | macOS disk image, Apple silicon and Intel, macOS 12 or newer |
-| `baum-desktop-darwin-universal.app.tar.gz` (`.sig`) | macOS app the updater installs |
+| `baum-desktop-darwin-universal.zip` (`.sig`) | macOS app electron-updater installs |
+| `baum-desktop-darwin-universal.app.tar.gz` (`.sig`) | the same macOS app in the archive the Tauri updater installs |
 | `baum-desktop-linux-amd64.AppImage` (`.sig`) | Linux x86_64 AppImage; also what the updater installs |
-| `baum-desktop-linux-amd64.deb` | Debian and Ubuntu package (no self-update) |
-| `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` | Linux arm64, when that build succeeds |
+| `baum-desktop-linux-amd64.deb` (`.sig`) | Debian and Ubuntu package |
+| `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` (`.sig`) | Linux arm64, when that build succeeds |
 | `desktop-checksums.txt` | SHA-256 of the desktop files |
-| `latest.json` | the updater manifest |
+| `latest.json` | the Tauri updater's manifest (see Bridge release) |
+| `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml` | electron-updater's update files: version, size and SHA-512 of each file |
 
 The download links at `downloads.usebaum.com`, used by the website and the
 repository README, take the version from the updater manifests and find these
@@ -1793,11 +2070,68 @@ The desktop files also carry a GitHub build provenance attestation
 (`gh attestation verify FILE --repo baum-ai/baum`).
 
 A macOS bundle that is not signed with a Developer ID is named
-`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); Gatekeeper
-warns about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
+`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`), and its zip
+and `.app.tar.gz` likewise; Gatekeeper warns about those. The update files
+are written with plain file names (electron-builder's `publish` setting is a
+generic provider at the latest release's downloads, which the app
+overrides, and `detectUpdateChannel` is off, so a release candidate's are
+`latest*.yml` too); `desktop-manifest` points each at
+`https://downloads.usebaum.com/update/vVERSION/<its file>`, since the
+release candidates' channel holds only the update files. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
 (both the universal app), `linux-x86_64` and, when built, `linux-aarch64`,
-each at
-`https://downloads.usebaum.com/update/vVERSION/<its file>`.
+each at the same URLs.
+
+### Bridge release
+
+The Tauri app's updater reads only `latest.json`, takes only bundles
+signed with the release key for the announced version
+(`requireSignedVersion`), and installs them in place: on macOS it replaces
+the whole `baum.app` with what the `.app.tar.gz` holds below its first path
+component, on Linux it rewrites the AppImage file. Windows was never
+released, so there is nothing to bridge there.
+
+So the first Electron release, and every release after it, publishes
+`latest.json` beside the `latest*.yml` files, listing the Electron app's
+`.app.tar.gz` (one `baum.app` at its root) and AppImages, signed with the
+same key. On both channels: full releases are read from the latest release,
+and release candidates from `desktop-rc-updates`, which every release
+updates with the rest of the update files. A Tauri copy that updates starts
+as the Electron app with the same identifier, so it finds the same
+`desktop.json` (setup is not shown again), the same stable copy of `baum`,
+menu entry and start at login (see "Electron shell"). Browser storage does
+not carry over: the Tauri app's pages kept only view preferences in
+WebKit's `localStorage` and `sessionStorage` (the folded inbox, the
+sidebar, the pull requests tab, the last inbox, closed build cards,
+dismissed fix suggestions, the review's file grouping, tile frame heights,
+the session panel's layout, the closed tour, and the viewer's conversation
+tab, width and folding), which go back to their defaults once. A deb is
+updated by installing the new deb, which has the same package name.
+
+`just desktop::bridge-test` checks the bridge end to end on Linux
+(`scripts/bridge-test.sh`): it signs the Electron AppImage and a stand-in
+macOS archive with a throwaway key, writes `latest.json` with
+`updater-manifest.sh` as the release does, has the Tauri crate's
+`bridge_manifest_is_accepted` test check it with tauri-plugin-updater's own
+manifest type and verification rules, then runs a Tauri AppImage built at
+1.2.2 (with the `bridge-test` feature, which installs a downloaded update at
+once, and its updater pointed at a local server) under Xvfb, in the
+`desktop-bridge` service (`bridge.Dockerfile`: the Electron image plus the
+OpenGL libraries a Tauri AppImage takes from the system), with its bundled
+`baum` and a real daemon. The AppImage must be replaced by the Electron one,
+which must start (from the Tauri app's restart, with its arguments) and
+open the daemon's page, not setup, at the zoom `desktop.json` saved, with
+the Tauri app's stable copy of `baum` and menu entry. It then runs the Electron update
+(1.2.3-test.1 to 1.2.4-test.1, through Settings' commands) and a damaged
+signature, which must be rejected and remembered. What it cannot check is
+the signed macOS app: try the first release candidate on a Mac with the
+Tauri app installed, from `/Applications`, before the full release.
+
+Keep publishing `latest.json` for at least three stable releases after the
+first Electron one, so copies that were not running for a while still find
+a way across. Then remove `scripts/updater-manifest.sh` (keeping the
+`signed` check of the update files), the `.app.tar.gz`, `latest.json` and
+their steps in the release workflow, the Tauri crate, and switch the
+downloads Worker's release lookup to `latest-linux.yml`.
 
 ### Signing
 
@@ -1808,8 +2142,8 @@ never as repository secrets.
 
 | Secrets | What they enable |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures and `latest.json`. Without them the bundles are published without a manifest, and installed apps are not offered the release. |
-| `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app and the bundled `baum` |
+| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures, `latest.json` and the `latest*.yml` update files. Without them the bundles are published without either, and installed apps are not offered the release. |
+| `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app, Electron's frameworks and helpers, and the bundled `baum` |
 | `APPLE_API_ISSUER`, `APPLE_API_KEY` (key ID), `APPLE_API_PRIVATE_KEY` (the `.p8` contents) — or `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), `APPLE_TEAM_ID` | notarisation and stapling of the app and the disk image; needs the signing secrets |
 
 The updater key's public half is `plugins.updater.pubkey` in
@@ -1820,51 +2154,60 @@ signed with the old private key, before signing with the new one.
 
 ### macOS
 
-One universal app (`--target universal-apple-darwin`, built with
-`--no-sign`) bundles a universal `baum` that `lipo` makes from goreleaser's
-darwin/arm64 and darwin/amd64 binaries. With the Apple secrets, `sign-macos`
-imports the certificate into a temporary keychain, and `macos-finalize.sh`
-signs the bundled `baum` and then the app with the hardened runtime and no
-entitlements (no App Sandbox), checks that both executables carry the
-Developer ID and hardened runtime, notarises and staples the app, builds the
-disk image with `hdiutil`, signs, notarises and staples it, and checks both
-with `stapler validate` and `spctl`. Before extracting the unsigned app, it
-rejects any archive entry that is not a regular file or directory inside
-`baum.app/`. Two passwords still reach a command line, on the ephemeral
+One universal app (electron-builder `--mac dir --universal`, unsigned:
+`mac.identity` is null) bundles a universal `baum` that `lipo` makes from
+goreleaser's darwin/arm64 and darwin/amd64 binaries, in
+`Contents/Resources/bin/baum`. electron-builder builds an x64 and an arm64
+app and merges them with `@electron/universal`, which keeps the
+already-universal `baum` as it is (`x64ArchFiles`). With the Apple secrets,
+`sign-macos` imports the certificate into a temporary keychain, and
+`macos-finalize.sh` signs inside out, deepest first as `@electron/osx-sign`
+does: every Mach-O file (Electron's framework binaries and dylibs, the
+helpers' executables, crashpad, Squirrel's ShipIt, the bundled `baum`), every
+nested `.app` and `.framework`, then the app, all with the hardened runtime
+and `macos/entitlements.plist`. That file allows only what V8's JIT needs
+(`com.apple.security.cs.allow-jit` and
+`com.apple.security.cs.allow-unsigned-executable-memory`); there is no App
+Sandbox. It checks that each carries the Developer ID and hardened runtime,
+notarises and staples the app, builds the disk image with `hdiutil`, signs,
+notarises and staples it, and checks both with `stapler validate` and
+`spctl`. It then zips the stapled app with `ditto` (what electron-updater's
+Squirrel.Mac installs), writes `latest-mac.yml` for that zip, and makes the
+`.app.tar.gz`. Before extracting the unsigned app, it rejects any archive
+entry that is not a regular file, directory or symbolic link inside
+`baum.app/`, and after extracting, any link that is absolute or climbs with
+`..` (Electron's frameworks need their relative links). Two passwords still
+reach a command line, on the ephemeral
 runner only: `security import` takes the certificate's password only as an
 argument (`-P`), and notarising with an Apple ID passes the app-specific
 password to `notarytool`; the App Store Connect API key avoids the second.
-The keychain's own password is random per run. Without them the app is signed ad hoc,
-so it runs on Apple silicon once the user allows it in System Settings. The
-updater archive is the finished app in a gzipped tar, as Tauri's bundler
-makes it.
+The keychain's own password is random per run. Without them every part is
+signed ad hoc, without the hardened runtime (whose library validation would
+refuse Electron's ad hoc signed framework), so the app runs on Apple silicon
+once the user allows it in System Settings. Video plays through Electron's
+own ffmpeg (`libffmpeg.dylib` in Electron's framework), the only ffmpeg
+`bundle.sh` allows in the app.
 
 ### Linux
 
-The Linux bundles are built in this directory's Docker image, on Ubuntu
-24.04 (the base image pinned by digest), the oldest supported distribution.
-They require Ubuntu 24.04 or newer, or a compatible distribution with glibc
-2.39 or newer and the corresponding system libraries. Ubuntu 22.04 and
-Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
-the 4.1 API (`libwebkit2gtk-4.1-0`), 2.40 or newer: the first release that
-sends the Fetch Metadata request headers (`Sec-Fetch-*`), without which no
-custom tile's frame loads. It declares its package dependencies and
-installs `baum-desktop` and `baum` in `/usr/bin`. Video in reviews plays
-through the system's GStreamer: WebKitGTK depends on the base and good
-plugins (WebM: VP8, VP9, Opus), and the deb also depends on
-`gstreamer1.0-libav` for MP4 (H.264, AAC).
+The Linux bundles are built with electron-builder in this directory's
+Docker image, on Ubuntu 24.04 (the base image pinned by digest), the oldest
+supported distribution. They require Ubuntu 24.04 or newer, or a compatible
+distribution with glibc 2.39 or newer. Ubuntu 22.04 and Debian 12 are no
+longer supported. Both carry Electron (Chromium) and the bundled `baum` in
+`resources/bin`, outside the asar archive. The deb installs the app in
+`/opt/baum`, links `/usr/bin/baum-desktop` to it and `/usr/bin/baum` to the
+bundled `baum`, and depends only on the system libraries Electron needs
+(GTK 3, NSS, libnotify, libsecret and a few X libraries): no WebKitGTK and no
+GStreamer, which `bundle.sh` checks. On systems that restrict unprivileged
+user namespaces it installs electron-builder's AppArmor profile for
+Chromium's sandbox.
 
-The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
-glibc, HarfBuzz and the other libraries linuxdeploy leaves out. It also
-carries the image's GStreamer with its base and good plugins
-(`bundleMediaFramework` in `tauri.conf.json`) and uses those instead of the
-system's, so WebM videos play without any GStreamer on the system. It
-carries no H.264 or AAC decoder (libav), so MP4 videos show as unavailable
-there. The image
-requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
-This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
-for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
-so keep it in a directory you can write (for example `~/Applications`).
+Video in reviews plays through Electron's own ffmpeg (`libffmpeg.so` beside
+the executable) in both bundles, not the system's. `bundle.sh` checks
+that it is the only ffmpeg (libav) library in the bundle. The AppImage
+updates itself in place, so keep it in a directory you can write (for
+example `~/Applications`).
 
 A downloaded AppImage is not executable. With an integration tool that
 handles AppImages (AppImageLauncher 3.x, Gear Lever), double-clicking it
@@ -1876,12 +2219,7 @@ the static AppImage runtime ("Can't open squashfs image: Bad address"), so
 the AppImage does not start there; 3.x fixed that. Other AppImages built on
 this runtime, such as Cursor's, have the same limitation.
 
-On NVIDIA GPUs under Wayland, WebKitGTK only uses its fast GPU renderer
-from 2.54. The AppImage carries Ubuntu 24.04's WebKitGTK (2.52), so it renders
-slowly there, as does the deb on systems whose WebKitGTK is older than 2.54.
-The move to Ubuntu 24.04 fixes the loader leak but does not fix this limitation.
-User-facing limitations like these are listed in
-[KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+User-facing limitations are listed in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
 The app adds itself to the applications menu (`src/menu_entry.rs`): every
 start of an installed AppImage writes
@@ -1896,7 +2234,7 @@ and Gear Lever's do), the app removes its own entry instead, so baum is
 listed once. There is no Flatpak or Snap. x86_64 is
 the supported architecture; arm64 is built on GitHub's arm64 runners and
 published when that build succeeds. Linux bundles are not OS-signed; the
-AppImage carries the updater signature.
+AppImage and the deb carry updater signatures.
 
 ### Windows
 
@@ -1912,20 +2250,22 @@ restores. Its signing secrets are `WINDOWS_CERTIFICATE` (base64 `.pfx`) and
 `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT` and
 `AZURE_TRUSTED_SIGNING_PROFILE`.
 
-An NSIS installer for the current user (no administrator rights), which
-installs the WebView2 runtime with Microsoft's bootstrapper when it is
-missing. With signing secrets, `windows-sign.ps1` signs the installer with
+electron-builder's one-click NSIS installer for the current user
+(`perMachine: false`, no administrator rights), which installs into
+`%LOCALAPPDATA%\Programs\baum` and writes `latest.yml`. With signing
+secrets, `windows-sign.ps1` signs the installer with
 `signtool`: a certificate is imported into the current user's store for the
 signature and removed afterwards, so its password never appears on a command
 line; Azure Artifact Signing uses Microsoft's `signtool` plug-in from a
 NuGet package pinned by SHA-256. The app and the bundled `baum.exe` inside
 the installer, and the uninstaller, stay unsigned: signing them would mean
-running the Tauri bundler, which downloads and runs NSIS, in a job holding
+running electron-builder, which downloads and runs NSIS, in a job holding
 the secrets. Signing the installer is what SmartScreen checks on download.
 
-The installer's hooks (`windows/installer-hooks.nsh`) run `baum daemon stop`
-before installing or uninstalling, with the installed `baum.exe` and the
-app's copy in its local data directory, whichever exist; the command reaches
+The installer's custom macros (`windows/installer.nsh`, electron-builder's
+`customInit` and `customUnInit`) run `baum daemon stop` before installing or
+uninstalling, with the installed `resources\bin\baum.exe` and the app's copy
+in its local data directory, whichever exist; the command reaches
 the running daemon whichever binary it runs from. An in-app update stops it
 too, after waiting for running jobs, and the updated app starts it again.
 This is untested on Windows so far.
@@ -1936,7 +2276,7 @@ tools installed after the app or the agent started are found.
 
 ### What is checked where
 
-- `cargo test`: the updater configuration (key, manifest URL,
+- `cargo test` (the Tauri shell, `just desktop::check`; not run in CI any more): the updater configuration (key, manifest URL,
   `requireSignedVersion`, Windows passive install), that release candidates
   read the `desktop-rc-updates` manifest and full releases the configured one, that the key rejects
   another key's signature, and the record of failed installs.
@@ -1949,7 +2289,21 @@ tools installed after the app or the agent started are found.
   from another key, another platform's bundle, a foreign host, another tag,
   plain `http`, an unknown platform, an announced version the bundles were
   not signed for, an older release's bundle, a missing platform and an
-  unsigned bundle are all rejected.
+  unsigned bundle are all rejected, and so are an update file without a
+  signature, signed for another version, carrying another file's signature or
+  tampered with (`updater-manifest.sh signed`).
+- `scripts/update-yml-test.sh` (Check, the release's `desktop-test`, the
+  monorepo's Desktop job): the update files `update-yml.mjs` writes and
+  rewrites describe their files, and a changed or missing file, a name
+  outside the directory, another version or an unlisted main file is
+  rejected.
+- `scripts/bundle.sh`, on every bundle: the bundled `baum` is the one given,
+  executable and outside the asar; Electron's ffmpeg is the only one; the
+  executable's Electron fuses are those `electron-builder.mjs` sets
+  (`scripts/check-fuses.mjs`: no `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` or
+  `--inspect`, code only from an `app.asar` it validates on macOS and
+  Windows, no extra `file://` privileges); the AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
+  and links `/usr/bin/baum`; the update file matches the bundles.
 - The release runs the same verification on the real bundles before
   anything is attached, and the app verifies each download again.
 

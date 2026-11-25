@@ -94,15 +94,19 @@ func MapSchema(types []string) []byte {
 // SectionSchema is a section agent's reply schema.
 func SectionSchema(types []string) []byte {
 	brief := object(obj{"id": text(80), "shows": text(600), "cites": cites(reviewv2.MaxCites), "drop": obj{"type": "boolean"}, "reason": nullable(text(400))})
-	point := object(obj{"text": text(450), "more": nullable(text(1200)), "cites": cites(reviewv2.MaxCites)})
+	point := object(obj{"text": text(450), "more": nullable(text(1200)), "tone": nullable(enum(reviewv2.PointTones...)), "cites": cites(reviewv2.MaxCites)})
 	// A block uses the fields of its type; the others are null.
 	block := object(obj{
 		"type":  enum(reviewv2.BlockProse, reviewv2.BlockPoints, reviewv2.BlockNote, reviewv2.BlockTile),
-		"title": nullable(text(160)), "text": nullable(text(1200)), "items": nullable(array(point, 1, reviewv2.MaxPoints)),
+		"title": nullable(text(160)), "kind": nullable(enum(reviewv2.NoteKinds...)), "text": nullable(text(1200)), "items": nullable(array(point, 1, reviewv2.MaxPoints)),
 		"tile": nullable(text(80)),
 	})
+	// keep answers a revised section with its previous body and risks, which
+	// the host takes; body and risks are then empty, so the schema lets the
+	// body be (checkSection asks for one otherwise).
 	return encode(object(obj{
-		"body": array(block, 1, reviewv2.MaxBlocks),
+		"keep": obj{"type": "boolean"},
+		"body": array(block, 0, reviewv2.MaxBlocks),
 		"risks": array(object(obj{
 			"id": obj{"type": "string", "pattern": "^rsk_[a-z0-9_]{1,60}$"}, "tier": enum(reviewv2.RiskTiers...),
 			"category": obj{"type": "string", "pattern": "^[a-z0-9_]{1,40}$"}, "text": text(1200), "cites": array(citeSchema(), 1, reviewv2.MaxCites),

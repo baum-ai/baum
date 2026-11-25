@@ -1485,7 +1485,10 @@ message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
 An `init` with `check` (sent only by the render check's runner) settles on
 the frame's fonts and a message turn instead of two animation frames, since
 a hidden window runs none, and the runner may then send `measure`, which a
-detail answers with a `resize` of its height, changed or not.
+detail answers with a `resize` of its height, changed or not. The runner
+may also send `ping` to a frame that has not said `hello`; the bootstrap
+answers `pong` from its message listener, which a frame whose script never
+yields cannot run.
 The optional `tokens` (`{"--token": "colour"}`) are a custom colour theme's
 overrides: the bootstrap sets each on the frame's root element and a later
 `theme` message replaces them (tokens it omits are removed, so omitting
@@ -1732,7 +1735,9 @@ definition was not valid; an expired or unknown ID is refused as unknown.
   /api/tile-checks/{id}/alive` every 2 s and as frames finish (`Alive`). A
   claimed job with neither a report nor a sign of life for 10 s, or still
   running 10 s plus 3 s per frame of its matrix after it was claimed, is
-  `hang`: the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
+  `hang`, and so is a job whose report holds a `hang` problem (a frame the
+  runner found unresponsive while its own page ran on, below; a runner
+  could get the same by going quiet): the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
   until it restarts), publishes `hung`, and announces each check still
   waiting as `queued` again, so a page that closed a hung runner brings one
   back. A candidate whose digest is already hung answers `hang` at once. A
@@ -1764,8 +1769,16 @@ and protocol, in a `position: fixed` container inside the viewport at
 `opacity: 0`, at most 8 at a time: the data (when given), each sample,
 `minimal` and `maximal`, as glances at each declared size in the guide's
 boxes (third 310×164, half 488×180, full 1022×116) and details at 720 and
-360px, and the data also in the dark theme. It reports `no_hello` (5 s),
-`timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
+360px, and the data also in the dark theme. A frame with no `hello` after
+5 s is sent a `ping`: one that answers `pong` within 2 s, or whose document
+loaded (no kit in it), is `no_hello`; one that does neither is stuck in a
+script that never yields and is `hang`, after which the runner starts no
+more frames and reports. Where the engine draws sandboxed frames in a
+process of their own (Chromium, so the Electron shell's check window and
+Chrome) that loop leaves the runner's page running, its heartbeat
+included, so only this probe catches it; where frames share the page's
+process (WebKit) the whole page stalls and the daemon's hang timer does. It
+also reports `timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
 `render_failed`, `empty`, `overflow_glance`, `overflow_x`,
 `unresolved_citation` and `slow` from the ready metrics, and `layout_loop`
 when a detail set to the height it asks for keeps growing by the same
@@ -1778,15 +1791,15 @@ itself rather than through `TileFrame`, which mounts on an
 IntersectionObserver and follows heights by animation frame.
 
 Where it runs: when the desktop shell declares
-`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one,
-currently Linux), the main page calls
+`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one:
+the Electron shell, and the Tauri shell on Linux), the main page calls
 the shell's `open_check_window` on a queued check, which loads
-`?page=tile-check` in a hidden window with its own web process, and
+`?page=tile-check` in a hidden window with its own renderer process, and
 `close_check_window` on `hung` (ending that process and the loop with it) or
 after 2 minutes without a check; the shell's commands are sent one after
 another, so the `queued` the daemon announces again for waiting checks after
 a hang reopens the window. Anywhere else frames are allowed (a
-browser, the macOS shell) the main page draws queued checks inside itself,
+browser, the Tauri shell on macOS) the main page draws queued checks inside itself,
 where a hang freezes the page until the daemon gives up on the job. A shell
 that allows no frames draws nothing, and checks are `unavailable`.
 
@@ -2091,8 +2104,11 @@ Code, Tests, Session and Docs views, risks); between the gist and the risks it
 draws the section's `body`, an ordered list of blocks the section agent
 composes (`reviewv2.Block`): `prose` (`text`, at most three sentences and 450
 characters), `points` (1 to 8 `items`, each a line of at most 180 characters
-with `cites` and an optional `more` of at most 450 characters shown when the
-line is opened), `note` (`text`, at most 240 characters) and `tile`, which
+with `cites`, an optional `more` of at most 450 characters shown when the
+line is opened and an optional `tone`, the native tiles' tones but plain,
+drawn as its marker), `note` (`text`, at most 240 characters, and an optional
+`kind`, `reviewv2.NoteKinds`: `caveat`, `decision`, `unchanged` or
+`follow_up`, drawn as its icon) and `tile`, which
 places one of the document's tiles that the section owns (`tile`, by ID).
 A body has at most 6 blocks (`MaxBlocks`) and a block an optional `title` of
 at most 60 characters; text is inline markdown, bold and code only. `reviewv2.EnsureBodies` gives every section a body, without a tile block that
@@ -2137,14 +2153,14 @@ them are clips, checks and threads; `RefsOf` a bundle, `RefsOfIndex` a document'
 `CheckDocument` runs the schema and every level.
 
 **Completion.** `reviewv2.Complete` turns what the levels wrote into the
-stored document without a model: the header, index and stats from the
-bundle and the risk score (rubric `risk-v1`: the highest section level,
-mechanical sections 1, floors of 4 and 5 for active high and critical risks,
-a lower bound when a section's details failed) and each section's derived
-facts (state against the previous version's section of the same ID by hunk
-hashes, line counts, reviewers, review score) through
-`review.HostParts`, which runs `baum.review/1`'s completion code; the
-reading time (`ReviewMinutes`: the prose's words at 400 a minute,
+stored document without a model: the header, index and stats from the bundle
+and the risk score (rubric `risk-v1`: the highest section level, mechanical
+sections 1, floors of 4 and 5 for active high and critical risks, a lower
+bound when a section's details failed) and each section's derived facts
+(state against the previous version's section of the same ID, or the one a
+renamed section continues, by hunk hashes, line counts, reviewers, review
+score) through `review.HostParts`, which runs `baum.review/1`'s completion
+code; the reading time (`ReviewMinutes`: the prose's words at 400 a minute,
 `review.MinutesForWords`); the risks' history as `baum.review/1`'s (a risk
 keeps the version it was introduced in, a previous risk a section no longer
 names is mitigated in this version unless the section's details are pending
@@ -2153,20 +2169,59 @@ lines) from the diff; and every tile's state. A previous version of either
 schema is read through `reviewv2.Read`. A completed document always has a
 `generation` record; a converted one never does.
 
-**Conversion.** `reviewv2.FromV1` converts a stored `baum.review/1`
-version and its view composition: the header, stats, index, risk score and
-reading time are kept, the recommendation becomes the verdict without
-points, context parts become the context (their references the files),
-each current section keeps its risks, its assessment becomes its level and
-reasons, its summary and behaviour steps its body (`BodyOf`, with a tile block
-for each tile it owns) and the first sentence of its summary its gist; the composition's overview parts and tiles become the
-overview and the tiles, owned where the review page placed them.
+**Conversion.** `reviewv2.FromV1` converts a stored `baum.review/1` version
+and its view composition: the header, stats, index, risk score and reading
+time are kept, the recommendation becomes the verdict without points,
+context parts become the context (their references the files), each current
+section keeps its risks, its assessment becomes its level and reasons, its
+summary and behaviour steps its body (`BodyOf`, with a tile block for each
+tile it owns) and the first sentence of its summary its gist; the
+composition's overview parts and tiles become the overview and the tiles,
+owned where the review page placed them.
 
-**Reuse.** `reviewv2.ReusableSections` gives the previous version's
-sections a new map keeps with the same hunks, their body and
-active risks and their ready tiles, so the orchestration writes them
-without a call. `reviewv2.Substrate` is the tile document a
-`baum.review/2` document's library and added tiles are checked against.
+**Reuse.** `reviewv2.ReusableSections` gives the previous version's sections
+a new map keeps with the same hunks, their body and active risks and their
+ready tiles, so the orchestration writes them without a call.
+`reviewv2.RevisableSections` gives the logical sections a new map keeps
+under the same ID over other hunks, with a complete body, of a previous
+`baum.review/2` version (a converted `baum.review/1` one gives none): their
+previous body and active risks, their ready tiles, and each hunk unchanged,
+new, joined (in another previous section), moved (to another section now) or
+gone (with its path and range in the previous index). A section the new map
+gives an ID the previous version did not have is revised the same way from
+the previous logical section with a complete text whose code it clearly has
+and whose ID the new map no longer has (`RenamedSections`): they share a
+hunk, or a hunk new to this diff overlaps the lines of one of the previous
+section's hunks gone from it on the same path (an edit), or the one file of
+both is the same, one of the previous section's hunks on it is gone and a
+hunk of the new section on it is new; a shared path alone is not enough. The
+overlap is a heuristic: each version numbers lines in its own new file, so
+code added above a hunk shifts it. The pairs with the most shared hunks,
+then overlapping hunks, then shared paths are taken first, in map order on
+ties, and a section on either side is in at most one pair. A renamed section
+over exactly its previous section's hunks is reused (`ReusableSections`, its
+tiles now its own), not revised. A previous section without a complete text
+is never continued: its code is joined. A revised section's agent revises
+that text (see "Tiles in the pipeline"). `reviewv2.JoinedSections` gives,
+for every logical section of the new map, a new ID's too, the hunks it takes
+over from other previous sections and the active risks handed over with
+them; `FixedRiskIDs` the IDs of risks mitigated and nowhere active. A risk
+is handed over with its code (`HandedOver`): it cites a hunk the receiving
+section has and every hunk it cites has left its old section; when its hunks
+split, only the section that has the first of them gets it. `Complete`
+follows the same rule: a previous risk that that section names under its ID,
+citing a hunk it cited, is dropped from its old section (even where that
+section still names it) and keeps its introduced version. Risk IDs are
+unique only within a section: when the receiving section had a mitigated
+risk of that ID (which its agent is not shown), the handed-over risk takes
+the next `<id>_N` no previous risk had, so each keeps its own history. A
+renamed section
+is its previous section for both: that section's code is not joined, and its
+risks are reconciled under the new ID (named ones keep their history, the
+rest are mitigated there). Any other risk of the same ID elsewhere is a new
+risk, and the old one is mitigated where it was. `reviewv2.Substrate` is the
+tile document a `baum.review/2` document's library and added tiles are
+checked against.
 
 **Storage and serving.** A version's document is either schema; the store's
 summaries read the same paths of both, and a `baum.review/2` version carries
@@ -2539,10 +2594,10 @@ group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
 
 A tile review takes its instructions through `ReviewV2Prompts`; the module's
-`prompt.V2Prompts` (`review-v2-public-v1`) embeds the shared text and one
-text per level (`review-map-v1.md`, `review-section-v1.md`,
+`prompt.V2Prompts` (`review-v2-public-v2`) embeds the shared text and one
+text per level (`review-map-v1.md`, `review-section-v2.md`,
 `review-context-v2.md`, `review-tile-v1.md` with a part per native type, and
-`review-overview-v1.md`). A library tile's fill opens with
+`review-overview-v2.md`). A library tile's fill opens with
 `review-tiles-fill-public-v1.md` (`prompt.TilesPrompts`, version
 `review-tiles-public-v1`), which is built in and not replaceable.
 
@@ -2841,13 +2896,75 @@ the levels of `agent/orchestrate` instead of the staged review:
    `generate.Tiles`). Only a map that fails after its repair fails the run.
 2. **Sections and context.** One section agent per logical section and the
    context agent run at once. A section whose hunks are unchanged since the
-   previous `baum.review/2` version keeps its text and tiles without a call.
-3. **Tiles.** Each planned tile is drawn by a call of its own as soon as
-   its owner is written. Native types share the tile prompt; a dedicated type
-   goes through the library's fill (`agent.Generator.FillTile`); a code tile
-   is filled by the host. The types the person added or pinned
-   (`generate.Tiles.Always`) get a tile whatever the map plans.
-4. **The overview**, by resuming the map's session.
+   previous version, under its ID or renamed, keeps its text and tiles
+   without a call; a kept tile whose type is no longer offered with the
+   definition it was filled with stays under its ID and brief, pending, and
+   is filled again. A section under another ID over exactly the previous
+   section's hunks is reused, not revised (`reviewv2.ReusableSections`). A
+   logical section the previous version wrote under the same ID over other
+   hunks, or under another ID over code that is edited or only partly the
+   same (`reviewv2.RenamedSections`; the input then names the section it
+   continues), is revised: its input adds, as model-written data, the
+   previous body and active risks, each point, risk and prose or note block
+   marked with whether the code it rests on changed (`code`: `changed` when
+   a hunk it cites is gone, with the gone hunks; a block without cites rests
+   on the section's code as a whole), the IDs of risks fixed earlier, each
+   hunk's status (unchanged, new, joined from another previous section,
+   moved to another section, or gone, with where it was) and the risks
+   handed over with joined hunks. Any other section that takes over code
+   from a previous section, a new ID's included, gets a shorter block: the
+   joined hunks, the risks handed over with them and the fixed IDs. A reply
+   risk that takes a fixed ID is sent back, or renamed (`_2`, `_3`, …) on
+   the last pass. The agent keeps what still holds word for word and changes
+   only what the new code changes, or answers `keep`, and the host takes the
+   previous body and risks (their IDs, so the risks' history carries). A
+   keep is accepted only when the change adds code and nothing else (some
+   hunk unchanged, none moved or gone, no risk handed over with joined code)
+   and the previous text cites only the section's hunks now; otherwise it is
+   sent back and the agent writes the section. A written revision that
+   repeats a previous point or risk word for word (whitespace aside) whose
+   cited hunks included a gone one, whatever it cites now, is sent back once
+   with one finding listing them: its words may still match while its
+   meaning changed (a deadline that became an idle timeout). Prose and note
+   blocks cite nothing, so they are only marked in the input, not checked.
+   The check runs on strict passes until it has sent the section back once;
+   the same text on a later pass, or on the lenient last pass, is taken as
+   checked. Its tile blocks place only the section's tiles now. The
+   section's call record says `ran`, with the reason that it revised or kept
+   the previous text, and the level counts kept and revised sections
+   (replay's `v2_sections_kept`, `v2_sections_revised`). `Run.NoReuse` turns
+   off reuse and revision alike.
+3. **Tiles.** Each planned tile is drawn by a call of its own as soon as its
+   owner is written. In a revised or kept section, a tile the map plans
+   again is kept from the previous version without a call (`reused`) when
+   the previous section drew it ready under the same ID and type, every hunk
+   it cited is still in the pull request, its brief and the hunks the brief
+   cites, after the section agent's answer, are the same, and its type's
+   definition is the one it was filled with (a library or saved type's
+   digest; a native type is drawn by the page's own code and counts as
+   unchanged). A native tile is drawn beside its section's text, so it is
+   kept only when the section kept its text; a rewritten section's is drawn
+   again. A code tile, a tile that cites no hunk and a tile the person added
+   are never kept: they are drawn again (`keepTiles`, `unchangedTile`,
+   `readyTiles`). Otherwise a tile is drawn again, and a tile the section
+   drops is neither kept nor drawn. Native types share the tile prompt; a
+   dedicated type goes through the library's fill
+   (`agent.Generator.FillTile`); a code tile is filled by the host. The
+   types the person added or pinned (`generate.Tiles.Always`) get a tile
+   whatever the map plans.
+4. **The overview**, by resuming the map's session (or in a fresh call
+   with the map in its input). After a `baum.review/2` version, and unless
+   `Run.NoReuse`, its input adds that version's overview as model-written
+   data: the title and change kind then, the summary, the verdict (its
+   decision, text and points), why the risk is what it is and the intent
+   lines. The agent keeps what still holds word for word and changes what
+   the sections now say differently, naming changed behaviour in the
+   code's own terms; the verdict follows the current
+   sections and risks, and never keeps a point about a mitigated risk or a
+   section that no longer exists. A point that names a section the
+   document does not have is sent back; the last pass drops the name. The
+   shared ground rules count the previous version's map, section text and
+   overview as model-written data.
 
 A section, the context, a tile or the overview that fails never fails the
 run. The run's call and token budgets and its time limit are split between
@@ -3680,7 +3797,7 @@ address or session store path; a linked session's transcript is its own route
 `sessions` holds only sessions with at least one matched commit, ordered by when
 their transcript or checkpoint was last modified, oldest first; `commits` holds every commit of the pull request, oldest first, with `links`
 empty for a commit no session matched. `links` are ordered by confidence;
-`method` is `commit_ref` (creation evidence) or `files_overlap` (inferred contribution), and `source` is
+`method` is `commit_ref` (a recorded creation of the commit), and `source` is
 the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
 `vendor` for a session an Entire checkpoint recorded. A pull request none of
 whose commits match still answers `available` with `"sessions": []`. A subject
