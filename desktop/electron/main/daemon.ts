@@ -7,9 +7,10 @@
 import { spawn } from "node:child_process";
 import { lstatSync, readFileSync } from "node:fs";
 import { request } from "node:http";
-import { delimiter, isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Readable } from "node:stream";
 import { inspect } from "node:util";
+import { type AppProcess, childPath } from "./run-baum.ts";
 
 /** How long `baum daemon ensure` may take, including a first start that
  *  resolves the login-shell environment. */
@@ -170,34 +171,6 @@ export async function cliPath(cli: Cli): Promise<string> {
   return cli.bundled;
 }
 
-/** Whether this process runs from an AppImage's mount. `APPIMAGE` alone is
- *  not enough: children of an AppImage (an editor's terminal) inherit it. */
-export function runningAsAppImage(env: NodeJS.ProcessEnv, exe: string): boolean {
-  const appdir = env.APPDIR;
-  if (!env.APPIMAGE || !appdir) return false;
-  const inside = relative(appdir, exe);
-  return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside);
-}
-
-/** `path` without the entries inside `dir`. */
-export function withoutDir(path: string, dir: string, separator = delimiter): string {
-  return path
-    .split(separator)
-    .filter((entry) => {
-      const inside = relative(dir, entry);
-      return !(inside === "" || (!inside.startsWith("..") && !isAbsolute(inside)));
-    })
-    .join(separator);
-}
-
-/** The PATH every baum the app runs gets, when it differs from the app's: an
- *  AppImage's runtime puts its own mount first, which holds the bundled baum
- *  that vanishes when the app quits. */
-export function childPath(env: NodeJS.ProcessEnv, exe: string): string | undefined {
-  if (!runningAsAppImage(env, exe) || !env.APPDIR || env.PATH === undefined) return undefined;
-  return withoutDir(env.PATH, env.APPDIR);
-}
-
 export interface Output {
   stdout: string[];
   stderr: string[];
@@ -238,19 +211,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Runs the CLI with a deadline. */
+const THIS_APP: AppProcess = {
+  platform: process.platform,
+  env: process.env,
+  execPath: process.execPath,
+};
+
+/** Runs the CLI with a deadline, with the PATH every baum the app runs gets
+ *  (run-baum.ts's `childPath`: an AppImage's mount taken off). */
 export function run(
   cli: string,
   args: string[],
   timeout: number,
-  env: NodeJS.ProcessEnv = process.env,
-  exe: string = process.execPath,
+  app: AppProcess = THIS_APP,
 ): Promise<Output> {
   return new Promise((resolve, reject) => {
-    const path = childPath(env, exe);
+    const path = childPath(app);
     const child = spawn(cli, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: path === undefined ? env : { ...env, PATH: path },
+      env: path === null ? app.env : { ...app.env, PATH: path },
       // No console window flashing next to the app.
       windowsHide: true,
     });
@@ -261,12 +240,12 @@ export function run(
       if (settled) return;
       settled = true;
       child.kill("SIGKILL");
-      reject(
-        new Failure(
-          `The baum daemon did not start within ${Math.round(timeout / 1000)} seconds.`,
-          await stderr(),
-        ),
-      );
+      const seconds = Math.round(timeout / 1000);
+      const message =
+        args[1] === "ensure"
+          ? `The baum daemon did not start within ${seconds} seconds.`
+          : `baum ${args.join(" ")} did not finish within ${seconds} seconds.`;
+      reject(new Failure(message, await stderr()));
     }, timeout);
     child.on("error", (e) => {
       if (settled) return;

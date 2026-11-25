@@ -25,7 +25,7 @@ import {
   updateAt,
 } from "./onboarding.ts";
 import type { AppProcess } from "./run-baum.ts";
-import { childPath, runBaum } from "./run-baum.ts";
+import { childPath, runBaum, withoutDir } from "./run-baum.ts";
 import { FILE } from "./settings.ts";
 
 const unix = process.platform !== "win32";
@@ -425,5 +425,29 @@ describe.skipIf(!unix)("the setup commands", () => {
     expect(setup.cliPath()).toBe(copy);
     expect(childPath(appImage)).toBe("/usr/bin");
     expect(statSync(copy).mode & 0o777).toBe(0o755);
+  });
+
+  it("drops the AppImage mount from the child's PATH", () => {
+    expect(
+      withoutDir(
+        "/tmp/.mount_baum-dfeJFK/usr/bin:/home/user/.local/bin:/tmp/.mount_baum-dfeJFK:/tmp/.mount_baum-dfeJFKG/usr/bin:/usr/bin",
+        "/tmp/.mount_baum-dfeJFK",
+        "linux",
+      ),
+    ).toBe("/home/user/.local/bin:/tmp/.mount_baum-dfeJFKG/usr/bin:/usr/bin");
+    const env = {
+      APPIMAGE: "/x.AppImage",
+      APPDIR: "/tmp/.mount_a",
+      PATH: "/tmp/.mount_a/usr/bin:/usr/bin",
+    };
+    const app = (execPath: string, e: NodeJS.ProcessEnv = env): AppProcess => ({
+      platform: "linux",
+      env: e,
+      execPath,
+    });
+    expect(childPath(app("/tmp/.mount_a/usr/bin/baum-desktop"))).toBe("/usr/bin");
+    // A child of an AppImage inherits APPIMAGE but runs from elsewhere.
+    expect(childPath(app("/usr/bin/code"))).toBeNull();
+    expect(childPath(app("/usr/bin/baum-desktop", { PATH: "/usr/bin" }))).toBeNull();
   });
 });
