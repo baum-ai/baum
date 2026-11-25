@@ -13,14 +13,14 @@
 // (windows.ts's `registerAppWindow`), so its page can call no command. This
 // module holds the rules; check-window-electron.ts builds the window.
 
-/** The Chromium feature the app turns off so that the check window's tiles
- *  run in the check window's own process. With it on (Chromium's default),
- *  Chromium puts sandboxed frames in a process apart from their page, but
- *  one per site and shared by every window: a tile spinning in the check
- *  window would stall the main window's tiles too, and ending its process
- *  would crash them. Without it a tile frame runs in its page's process, as
- *  in WebKit, and windows never share one (tests/shell checks both). */
-export const DISABLED_FEATURES = "IsolateSandboxedIframes";
+/** The check window's session: in memory, apart from the main window's.
+ *  Chromium puts a session's sandboxed frames of one site in one process of
+ *  their own, which every window in the session shares, so in the main
+ *  window's session a tile spinning in the check window would stall the main
+ *  window's tiles and could not be ended alone. Chromium never shares a
+ *  renderer between sessions. The daemon's cookies are copied in before each
+ *  load (check-window-electron.ts). */
+export const PARTITION = "check-window";
 
 /** The size the runner lays tiles out in. */
 export const WIDTH = 1280;
@@ -60,7 +60,7 @@ export function checkPageUrl(main: string, daemon: string | null): string | null
 /** What the window rules need of Electron. */
 export interface CheckWindowHost<W> {
   /** Builds the hidden window and starts loading `url`. */
-  create(url: string): W;
+  create(url: string): Promise<W>;
   isGone(window: W): boolean;
   /** The OS processes that only this window's frames run in. */
   ownProcesses(window: W): number[];
@@ -73,6 +73,9 @@ export interface CheckWindowHost<W> {
   /** Ends a process the window's frames ran in, if it is still one of the
    *  app's renderers. */
   endProcess(pid: number): void;
+  /** Forgets what the window's pages stored (its session's cookies and
+   *  storage), once it is gone. */
+  clearStorage(): Promise<void>;
   sleep(ms: number): Promise<void>;
 }
 
@@ -103,7 +106,7 @@ export class CheckWindow<W> {
     const generation = this.#generation;
     return this.#serial(async () => {
       if (generation !== this.#generation || this.window !== null) return;
-      this.#window = this.#host.create(url);
+      this.#window = await this.#host.create(url);
     });
   }
 
@@ -137,6 +140,7 @@ export class CheckWindow<W> {
     await host.sleep(UNLOAD_GRACE);
     if (!host.isGone(window)) host.destroy(window);
     for (const pid of processes) host.endProcess(pid);
+    await host.clearStorage();
   }
 
   #serial(task: () => Promise<void>): Promise<void> {

@@ -73,9 +73,11 @@ version, then tick each line.
       "Escape probe: focus" keeps every key in the composer.
 - [ ] Tab reaches Widget health's detail frame, its citation chips open the
       cited code, and Escape inside it goes back to the summary.
-- [ ] "Escape probe: busy" freezes the window for about a second and a half
-      (both shells run a tile frame in its page's process), then the app
-      answers again (the documented limit: a busy loop is not interrupted).
+- [ ] "Escape probe: busy" leaves the window answering in the Electron
+      shell, which runs tile frames apart from the page (other tiles may
+      pause for about a second and a half). In the Tauri shell it freezes
+      the window for about that long, then the app answers again (the
+      documented limit: a busy loop is not interrupted).
 - [ ] The listener on 127.0.0.1:4170 logged nothing during the whole check.
 - [ ] Residual, recorded rather than ticked: with `resolvectl monitor`
       (Linux) or the platform's DNS log, whether opening the probe resolves

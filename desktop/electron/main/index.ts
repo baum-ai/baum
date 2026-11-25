@@ -30,7 +30,6 @@ import { THEME_CHANNEL } from "../shared/contract.ts";
 import { type AttachHooks, Attacher, HealthPause } from "./attach.ts";
 import { createAutostart } from "./autostart.ts";
 import { type BridgeState, DEVELOPMENT_SETUP_ORIGIN, installBridge } from "./bridge.ts";
-import { DISABLED_FEATURES } from "./check-window.ts";
 import { registerCheckWindow } from "./check-window-electron.ts";
 import * as client from "./client.ts";
 import { registerCommand } from "./commands.ts";
@@ -97,9 +96,6 @@ app.setPath("sessionData", sessionDataDir(config));
 // Before the first notification, or Windows toasts carry no app identity.
 if (process.platform === "win32") app.setAppUserModelId(IDENTIFIER);
 registerAppScheme(protocol);
-// Tile frames run in their page's renderer process, so the tile check
-// window's tiles run apart from the main window's (check-window.ts).
-app.commandLine.appendSwitch("disable-features", DISABLED_FEATURES);
 
 const development = developmentDir(process.env, app.isPackaged);
 // Start at login runs the app with this flag: the app attaches to the
@@ -306,6 +302,7 @@ function start(): void {
     preload: join(__dirname, "preload.cjs"),
     main: () => main,
     daemon: () => attacher.daemon(),
+    isAppOrigin,
     logRefusals: !app.isPackaged,
   });
   const closeCheckWindow = () => {

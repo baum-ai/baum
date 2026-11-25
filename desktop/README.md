@@ -911,15 +911,22 @@ timers are not throttled, so its page runs as a visible one does
   never opens the browser: every request for a new window is refused.
 - It is not one of the app's command windows, so the guard refuses every
   command its page calls; the page reports its results to the daemon over
-  HTTP. It is in the default session, so it shares the main window's
-  cookies and storage.
-- Chromium runs it in renderer processes other than the main window's: it is
-  a separate browsing instance. Chromium would put every window's sandboxed
-  frames of one site into one process of their own
-  (`IsolateSandboxedIframes`), which a tile spinning in the check window
-  would then share with the main window's tiles, so the shell turns that
-  feature off: a tile frame runs in its page's process, as in WebKit, and
-  the two windows share none.
+  HTTP.
+- It runs in a session of its own, in memory (`check-window`), so Chromium
+  never runs its page or its tiles in a process the main window uses.
+  Chromium runs sandboxed frames apart from their page, in one process per
+  site that every window of a session shares, so in the main window's
+  session a tile spinning in the check window would stall the main window's
+  tiles and could not be ended alone. The session gets the default
+  session's guards (permissions, the network check of frame loads; no
+  window attaches a webview). Before each load the shell copies the cookies
+  the default session holds for the daemon's host into it, with their
+  attributes (the daemon's session cookie is HttpOnly, `SameSite=Strict` and
+  scoped to `/s/<namespace>/`), so the page is signed in as the main
+  window's is, and it empties the session when the window closes. The check
+  page reads nothing the main window keeps in `localStorage` or
+  `sessionStorage`: its runner gets its jobs and the app's appearance from
+  the daemon.
 - `close_check_window` first asks the page to close (as closing a window
   does, so its `pagehide` runs) and waits 200 ms: a page that still answers
   unloads, and a check it was drawing is reported abandoned and ends as
@@ -944,10 +951,14 @@ process's CPU use drops within a second of `close_check_window` and the
 process is gone a second later, a second open while the window is open loads
 nothing, a window opened again after closing works, an open right after a
 close builds a new window, the main window loading another page closes it,
-and the check page sees the main window's cookies and the declaration with
+closing leaves no cookie in the check window's session, every check page
+request carries the daemon's HttpOnly session cookie, and the check page
+sees the main window's script cookies and the declaration with
 `openLinks: false`, can call no command (`open_check_window`,
 `close_check_window`, `zoom_state`, `open_link`), and cannot navigate to or
-open another site.
+open another site. It also fails unless the main window's own tile runs in
+a process apart from its page, and a tile spinning in the main window
+leaves the page's heartbeat running.
 
 On macOS and Windows a person checks, before a release that changes the
 check window, with an unpackaged app started with
@@ -1042,9 +1053,12 @@ shell stops a frame. In the main window's console:
    browser opens once at most.
 7. In setup's GitHub step (first run, with a fresh configuration directory),
    sign in: the browser opens GitHub's device page about five seconds later.
-8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the window
-   freezes (see SECURITY.md); the tray menu still answers, and quitting from
-   it and starting the app again recovers.
+8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the frame
+   is same-origin here, so it runs in the page's process and the window
+   freezes; the tray menu still answers, and quitting from it and starting
+   the app again recovers. A sandboxed tile frame (no `allow-same-origin`)
+   runs in a process of its own and leaves the window running (see
+   SECURITY.md).
 
 The Tauri shell was checked on Linux by WebKitGTK harnesses
 (`tests/navigation` and `tests/check-window`, now in git history only) and by

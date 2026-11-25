@@ -26,9 +26,15 @@ const daemon = new MockDaemon();
 const attacker = new Server();
 let shell: Shell;
 let checkLoads = 0;
+/** The Cookie header of each check page request. */
+const checkCookies: string[] = [];
+/** The daemon's session cookie: HttpOnly, SameSite=Strict, scoped to the
+ *  namespace, as the daemon sets it. */
+const SESSION_COOKIE = "baum_ui=session-secret";
 const SPIN_AFTER_MS = 1500;
 
 const MAIN_JS = `
+document.cookie = "baum_shared=yes; path=/; SameSite=Strict";
 setInterval(() => fetch("/s/ns/beat?win=main", { method: "POST" }).catch(() => {}), 100);`;
 
 const checkJs = () => `
@@ -39,7 +45,7 @@ let frames = 0;
 const count = () => { frames++; requestAnimationFrame(count); };
 requestAnimationFrame(count);
 (async () => {
-  const report = { gen, declaration: JSON.stringify(window.__BAUM_DESKTOP__), visibility: document.visibilityState, bridge: typeof window.baumDesktop };
+  const report = { gen, declaration: JSON.stringify(window.__BAUM_DESKTOP__), visibility: document.visibilityState, cookie: document.cookie, bridge: typeof window.baumDesktop };
   for (const command of ["open_check_window", "close_check_window", "zoom_state", "open_link"]) {
     try {
       await window.baumDesktop.invoke(command, command === "open_link" ? { url: "http://attacker.example:${attacker.port}/?via=open_link" } : undefined);
@@ -64,18 +70,22 @@ const tile = (mode: string | null) =>
 
 test.beforeAll(async () => {
   await Promise.all([daemon.listen(), attacker.listen()]);
-  daemon.pages.set("/s/ns/", (url) => {
+  daemon.pages.set("/s/ns/", (url, _body, headers) => {
     if (url.searchParams.get("page") === "tile-check") {
       const gen = ++checkLoads;
+      checkCookies.push(headers.cookie ?? "");
       return {
         csp: DAEMON_CSP,
         body: `<!doctype html><html data-gen="${gen}"><body style="margin:0"><iframe sandbox="allow-scripts" style="width:720px;height:200px;border:0" src="/s/ns/tile?mode=${gen === 1 ? "spin" : "idle"}"></iframe><script src="/s/ns/check.js"></script></body></html>`,
       };
     }
-    // The main window's page, with an idle tile frame of its own.
+    // The main window's page, with a tile frame of its own (one that spins
+    // with `?spin`).
+    const mode = url.searchParams.has("spin") ? "spin" : "main";
     return {
       csp: DAEMON_CSP,
-      body: `<!doctype html><p>main window</p><iframe sandbox="allow-scripts" src="/s/ns/tile?mode=main"></iframe><script src="/s/ns/main.js"></script>`,
+      headers: { "Set-Cookie": `${SESSION_COOKIE}; Path=/s/ns/; HttpOnly; SameSite=Strict` },
+      body: `<!doctype html><p>main window</p><iframe sandbox="allow-scripts" src="/s/ns/tile?mode=${mode}"></iframe><script src="/s/ns/main.js"></script>`,
     };
   });
   daemon.pages.set("/s/ns/main.js", { type: "text/javascript", body: MAIN_JS });
@@ -127,6 +137,9 @@ test("the check window isolates a spinning tile and closing it ends the process"
   expect(spinFrame, "the check window's tile frame").toBeDefined();
   const spinning = spinFrame?.pid as number;
   const mainPids = new Set(main.frames.map((f) => f.pid));
+  // Chromium runs the main window's tiles apart from its page.
+  expect(mainTile, "the main window's tile frame").toBeDefined();
+  expect(mainTile?.pid, "the main window's tile runs in its page's process").not.toBe(main.pid);
   expect(check.pid, "the check page runs in the main window's process").not.toBe(main.pid);
   expect(mainPids.has(check.pid), "the check page shares a process with the main window").toBe(
     false,
@@ -157,12 +170,14 @@ test("the check window isolates a spinning tile and closing it ends the process"
     const closing = Date.now();
     expect(await invoke(shell.main, "close_check_window")).toBe("ok null");
     numbers.closeCommandMs = Date.now() - closing;
-    const stopped = await waitFor("the spinning process to stop", 10_000, () =>
-      sampler.samples.find((s) => s.t > closing && (s.cpu === null || s.cpu < 10)),
-    );
-    numbers.closeToCpuDropMs = stopped.t - closing;
+    // The first sample from which the process stays quiet (or gone).
+    await sleep(2000);
+    const after = sampler.samples.filter((s) => s.t > closing);
+    const quiet = (s: { cpu: number | null }) => s.cpu === null || s.cpu < 10;
+    const from = after.findIndex((_, i) => after.slice(i).every(quiet));
+    expect(from, "the spinning process kept running").toBeGreaterThanOrEqual(0);
+    numbers.closeToCpuDropMs = (after[from]?.t ?? Number.POSITIVE_INFINITY) - closing;
     expect(numbers.closeToCpuDropMs as number).toBeLessThanOrEqual(1000);
-    await sleep(1000);
     numbers.spinningProcessGoneAfter1s = cpuTicks(spinning) === null;
     expect(numbers.spinningProcessGoneAfter1s).toBe(true);
     expect((await contents(shell.app)).some(isCheck), "the check window is still open").toBe(false);
@@ -196,6 +211,8 @@ test("the check window isolates a spinning tile and closing it ends the process"
   for (const r of pages) {
     numbers[`checkPage${r.gen}`] = r;
     expect(r.declaration).toBe('{"tileFrames":true,"checkWindow":true,"openLinks":false}');
+    // The main window's cookies, copied into the check window's session.
+    expect(r.cookie).toContain("baum_shared=yes");
     for (const command of ["open_check_window", "close_check_window", "zoom_state", "open_link"]) {
       expect(r[command], command).toBe(`refused: command ${command} not allowed`);
     }
@@ -218,6 +235,10 @@ test("the check window isolates a spinning tile and closing it ends the process"
   );
   numbers.closeThenOpenToFirstBeatMs = thirdBeat - swapped;
   expect(checkLoads).toBe(3);
+  // Every load carried the daemon's session cookie, HttpOnly and scoped to
+  // the namespace.
+  numbers.checkCookies = checkCookies;
+  for (const cookie of checkCookies) expect(cookie).toContain(SESSION_COOKIE);
 
   const beforeReload = Date.now();
   // The main window loading another page closes it.
@@ -229,6 +250,11 @@ test("the check window isolates a spinning tile and closing it ends the process"
   );
   expect(await invoke(shell.main, "close_check_window")).toBe("ok null");
   expect(attacker.requests).toEqual([]);
+  // Closing emptied the check window's session.
+  const left = await shell.app.evaluate(async ({ session }) =>
+    (await session.fromPartition("check-window").cookies.get({})).map((c) => c.name),
+  );
+  expect(left).toEqual([]);
   numbers.mainMaxBeatGapUntilReloadMs = maxGap(
     daemon.beatsOf("main"),
     daemon.beatsOf("main")[5] as number,
@@ -239,4 +265,33 @@ test("the check window isolates a spinning tile and closing it ends the process"
   numbers.refusals = refusals;
   console.log(JSON.stringify(numbers, null, 2));
   expect(refusals).toContain("baum desktop: refused a navigation to http://attacker.example");
+});
+
+test("a tile spinning in the main window leaves its page running", async () => {
+  await shell.main.goto(daemon.url("?spin"));
+  const all = await contents(shell.app);
+  const main = all.find((c) => c.url.startsWith(daemon.url()) && !isCheck(c)) as Contents;
+  const tile = await waitFor("the spinning tile frame", 10_000, async () =>
+    (await contents(shell.app))
+      .find((c) => c.pid === main.pid)
+      ?.frames.find((f) => f.url.includes("mode=spin")),
+  );
+  expect(tile.pid, "the tile runs in its page's process").not.toBe(main.pid);
+  const sampler = new CpuSampler(tile.pid);
+  try {
+    await waitFor("the tile's process at full CPU", 15_000, () =>
+      sampler.samples.slice(-3).some((s) => (s.cpu ?? 0) >= 80),
+    );
+    const from = Date.now();
+    await sleep(3000);
+    const to = Date.now();
+    const gap = maxGap(daemon.beatsOf("main"), from, to);
+    console.log(`main window heartbeat while its own tile spins: longest gap ${gap} ms`);
+    expect(gap).toBeLessThan(1000);
+    expect(await invoke(shell.main, "zoom_state")).toMatch(/^ok /);
+  } finally {
+    sampler.stop();
+  }
+  // Leave the spinning tile behind.
+  await shell.main.goto(daemon.url());
 });

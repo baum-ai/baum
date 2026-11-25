@@ -56,7 +56,7 @@ function fakeHost() {
   const windows: FakeWindow[] = [];
   let answers = true;
   const host: CheckWindowHost<FakeWindow> = {
-    create(url) {
+    async create(url) {
       const window = { id: windows.length + 1, url, gone: false, answers, pids: [100, 101] };
       windows.push(window);
       events.push(`create ${window.id}`);
@@ -73,6 +73,9 @@ function fakeHost() {
       window.gone = true;
     },
     endProcess: (pid) => void events.push(`end ${pid}`),
+    async clearStorage() {
+      events.push("clear");
+    },
     async sleep(ms) {
       events.push(`sleep ${ms}`);
       await Promise.resolve();
@@ -103,7 +106,14 @@ describe("the check window", () => {
     const check = new CheckWindow(host);
     await check.open("a");
     await check.close();
-    expect(events).toEqual(["create 1", "ask 1", `sleep ${UNLOAD_GRACE}`, "end 100", "end 101"]);
+    expect(events).toEqual([
+      "create 1",
+      "ask 1",
+      `sleep ${UNLOAD_GRACE}`,
+      "end 100",
+      "end 101",
+      "clear",
+    ]);
     expect(check.window).toBeNull();
   });
 
@@ -120,6 +130,7 @@ describe("the check window", () => {
       "destroy 1",
       "end 100",
       "end 101",
+      "clear",
     ]);
   });
 
@@ -170,7 +181,7 @@ describe("the check window", () => {
     const { host } = fakeHost();
     const create = host.create;
     let fail = true;
-    host.create = (url) => {
+    host.create = async (url) => {
       if (fail) throw new Error("no window");
       return create(url);
     };

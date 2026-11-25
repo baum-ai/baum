@@ -36,7 +36,11 @@ export interface Served {
   body?: string;
 }
 
-export type Route = (url: URL, body: string) => Served | undefined;
+export type Route = (
+  url: URL,
+  body: string,
+  headers: http.IncomingHttpHeaders,
+) => Served | undefined;
 
 /** A small HTTP server on 127.0.0.1 that records every request it gets. */
 export class Server {
@@ -56,7 +60,7 @@ export class Server {
       req.on("end", () => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
         this.requests.push(`${req.method} ${url.host}${url.pathname}${url.search}`);
-        const served = this.route(url, body) ?? { status: 404, body: "not found" };
+        const served = this.route(url, body, req.headers) ?? { status: 404, body: "not found" };
         res.statusCode = served.status ?? 200;
         res.setHeader("Content-Type", served.type ?? "text/html; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");
@@ -98,7 +102,7 @@ export class MockDaemon extends Server {
 
   constructor() {
     super();
-    this.route = (url, body) => this.#route(url, body);
+    this.route = (url, body, headers) => this.#route(url, body, headers);
   }
 
   get origin(): string {
@@ -114,7 +118,7 @@ export class MockDaemon extends Server {
     return this.beats.get(window) ?? [];
   }
 
-  #route(url: URL, body: string): Served | undefined {
+  #route(url: URL, body: string, headers: http.IncomingHttpHeaders): Served | undefined {
     if (url.pathname === "/") return { status: 302, headers: { Location: NAMESPACE } };
     if (url.pathname === "/api/health")
       return { type: "application/json", body: '{"status":"ok"}' };
@@ -129,7 +133,7 @@ export class MockDaemon extends Server {
     }
     const page =
       this.pages.get(`${url.pathname}${url.search}`) ?? this.pages.get(url.pathname) ?? undefined;
-    if (typeof page === "function") return page(url, body);
+    if (typeof page === "function") return page(url, body, headers);
     if (page) return page;
     if (url.pathname === NAMESPACE) return { csp: DAEMON_CSP, body: "<!doctype html><p>app page" };
     return undefined;

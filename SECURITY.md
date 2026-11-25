@@ -1910,12 +1910,14 @@ by the chat's agent.
   fresh realm gets around such a script. It minimises what a tile receives
   instead.
 - **A tile in an endless loop freezes the app's window until the app is
-  closed**, where the engine runs the frame on the page's thread, and
-  nothing in the page can stop it; the next time the review is opened it
+  closed**, where the engine runs the frame on the page's thread (the Tauri
+  shell; a browser in some runs), and nothing in the page can stop it; the next time the review is opened it
   freezes again. In the browser suite a 1.5-second loop held the page for
   its length in WebKit every time, and in Chromium in some runs and not
   others. The host unmounts a frame that does not draw in time, but cannot
-  interrupt one that holds the thread. Where the desktop shell provides the
+  interrupt one that holds the thread. The Electron shell runs sandboxed
+  frames in a process apart from the page, so a looping tile there stalls
+  only the tiles that share its process, and the page keeps working. Where the desktop shell provides the
   render check a window with its own renderer process (the Electron shell,
   and the Tauri shell on Linux), that window takes the freeze instead (see "The render check" below). Elsewhere
   (a browser, a shell without one) the render check draws in the app's own
@@ -2523,20 +2525,22 @@ check window (in the Electron shell on every platform; in the Tauri shell on
 Linux only), which runs in renderer processes of its own. It starts at the
 attached daemon's check page and can load only pages of that daemon's
 origin, under the main window's navigation rules, opens no browser, and its
-page can call no app command. It shares the main window's cookies. A tile
-that never yields there stalls only that window, and closing it ends its
-processes.
+page can call no app command. In the Electron shell it runs in a session of
+its own, in memory, into which the app copies the daemon's cookies before
+each load and which it empties when the window closes. A tile that never
+yields there stalls only that window, and closing it ends its processes.
 
-A script that never yields, in the page or in a frame it embeds, freezes the
-whole window: the app runs a page and its frames in one process, and does
-not detect an unresponsive page. The Electron shell turns off Chromium's
-separate process for sandboxed frames, which every window's frames of one
-site would share, so that the check window's tiles stay apart from the main
-window's; a tile therefore runs in its page's process, as in WebKit, and the
-process boundary between a tile and the page is the same as in the Tauri
-shell. The tray, its menu and the daemon keep working, and quitting the app
-from the tray and opening it again loads the page anew. Your data is not at
-risk, but nothing stops a page from being unusable until then.
+In the Electron shell a sandboxed tile frame runs in a renderer process
+apart from the page, so a tile that never yields no longer freezes the
+window: it stalls the tiles that share its process (the page's other
+sandboxed frames of the daemon's site), and the page keeps working. A
+script that never yields in the page itself, or in a frame of the page's
+own origin, still freezes the whole window, and so does any in the Tauri
+shell, which runs a page and its frames in one process; neither shell
+detects an unresponsive page. The tray, its menu and the daemon keep
+working, and quitting the app from the tray and opening it again loads the
+page anew. Your data is not at risk, but nothing stops a page from being
+unusable until then.
 
 In the Tauri shell, a navigation to an address the app's URL parser cannot
 read is allowed by the app's runtime without asking the app; the Electron
