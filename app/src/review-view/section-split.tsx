@@ -120,6 +120,9 @@ export function SectionSplit({
       ref={grid}
       data-section-split=""
       data-collapsed={collapsed ? "" : undefined}
+      // Open, the two columns share the whole pane rather than its reading
+      // measure; collapsed, the Overview keeps that measure.
+      data-pane-full={collapsed ? undefined : ""}
       style={{ "--side-width": `${pane.width}px` } as CSSProperties}
       className={cn(
         "grid items-start",

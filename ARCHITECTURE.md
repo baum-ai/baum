@@ -1605,7 +1605,8 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   language, the data and the resolved citations (`refs.ts`, below). A detail
   that cites code whose excerpt the document omits first reads it from the
   page's patch source (waiting at most 1.5 seconds), as the viewer's cited
-  code does. Changed data or citations are sent as `update`. `ready` is
+  code does, and highlights the cited code within the same wait. Changed
+  data or citations are sent as `update`. `ready` is
   taken once for each `init` or `update`; any other `ready` is a resize.
 - **Sizes.** A glance's box is reserved before it loads (7 or 9 rem by size,
   growing with its card's row) and the frame fills it; its height requests
@@ -1659,7 +1660,10 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   (members by name, items in order, the shapes of `$defs/citation`, at most
   256) and resolves each against the document on screen: hunks (path,
   range, counts, and for a detail the cited lines with three around them, or
-  the hunk, at most 200 lines, 64 hunks and 384 KiB in all), files, risks,
+  the hunk, at most 200 lines, 64 hunks and 384 KiB in all, each line with
+  `tokens` from the highlighter the review's diffs use, `[text, kind]` or
+  `[text]` when plain, at most 20,000 in all and none for a language it does
+  not know), files, risks,
   evidence, changes, tiles, checks and review threads; commits, sessions and
   the kinds that carry what they name get a label only. What the document
   lacks is `unavailable` (`not_in_review`, or `too_many` past the cap). A
@@ -7050,7 +7054,14 @@ replace it.
     `listen_on`. On macOS, iTerm2 (`iTerm2`, `iTermServer-*`) and Terminal run
     an AppleScript (`osascript`) that selects the session or tab whose `tty`
     is the terminal device and activates the application; a refused Automation
-    permission (-1743) says where to allow it.
+    permission (-1743) says where to allow it. Herdr's terminals run under
+    herdr-core's holder (`herdr-core`), apart from its window: the terminal
+    whose `pid` (`herdr-core get <t> --json`, for each of `ls --json`'s local
+    terminals) is the process below the holder is shown with `herdr-app do
+    agent.focus --terminal <t>`, both commands from the `PATH`, else the
+    running process's executable; the window raised is then herdr-app's
+    (`pgrep -n -x herdr-app`), also when the terminal is not found. Herdr
+    not running says to open it.
   - The window, unless the tab step activated it: on macOS the application
     bundle holding the executable of the nearest process in one (`open -a`),
     or iTerm2 by its bundle identifier for its `iTermServer`, which runs from
@@ -7075,7 +7086,7 @@ replace it.
     `focus` is, judges the same from the record without running anything: on
     Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
     terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
-    a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
+    a kitty with its socket, `herdr-core` in the chain, and on macOS iTerm2 or Terminal with a terminal device;
     `window` otherwise. Codex hooks whose chain contains only `codex`, `systemd`
     or `launchd` and no terminal can belong to a shared app server with separate
     TUI clients. They offer session focus. Focus matches the thread ID in terminal
@@ -7783,7 +7794,7 @@ summary scrubs them; a GitHub Enterprise token check is `other host`, and the
 token and backend checks give no source; never `home`, a check's path, detail
 or fix, the environment or the issue the Report a problem dialog drafts), and
 the Settings tools below: `settings_general` and `settings_appearance` with `/api/settings/appearance`,
-`settings_reviews` with `/api/settings` and `/api/settings/labs`, `settings_fixes` with `/api/settings`,
+`settings_reviews` with `/api/settings` and `/api/settings/labs`, `settings_fixes` with `/api/settings`, `settings_panel` with `/api/settings/panel`,
 `settings_connections` with `/api/github-auth`, `settings_computer` with
 `/api/settings` and `/api/diagnostics`, and `prompts` and `prompt` with
 `/api/settings/prompts`. `/api/settings` is read whole in process and decoded
@@ -8044,6 +8055,7 @@ home folder:
 | `settings_appearance` | global | Appearance | `/api/settings/appearance`: the `theme` mode, `light_theme` and `dark_theme`, `themes` as `{id, name, base, tokens, builtin}`. It adds `theme_tokens` (`themes.Seeds` and `themes.Roles()`), `theme_defaults` (`light` and `dark`: `themes.Resolve` with no overrides, allowlisted tokens as `#rrggbb` or `#rrggbbaa`), `slot_values` (the same for each slot's theme) and `theme_note` (the `theme` setting picks the active slot; system follows the operating system) |
 | `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences), and `tile_reviews` from `/api/settings/labs` |
 | `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
+| `settings_panel` | global | Session panel | `/api/settings/panel`: the agent and model a new session opens with, whether each is chosen (`panel`) or follows the fix agent (`fix`), its access `mode` and the `position` the panel opens from |
 | `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
 | `settings_computer` | global | This computer | `/api/settings` (job concurrency, time limits, the agent environment's names, sorted, and its source), the `settings` of `/api/agent-requests` (`codex_approvals`), and `/api/diagnostics`: the agent and harness checks (`claude`, `codex`, `cursor-agent`, `backend-auto`, `backend-configured`, `anthropic-api-key`; id, label, status, version, scrubbed as `diagnostics_summary` scrubs them, without the source) and how many problems the report has. Updates, zoom, the command line tool and agent sign-in are the desktop shell's |
 | `prompts` | global | Prompts | `/api/settings/prompts`, or with `repository` `/api/repositories/{owner}/{name}/prompts`: each entry's fields but the texts (`custom` says whether it has its own) |

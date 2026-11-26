@@ -401,6 +401,7 @@ export function SessionPanelHost({
   const panel = useSessionPanel();
   const settings = usePanelSettings();
   usePageReport(page, panel.available !== false);
+  useKeysStayOnReturn();
   // The panel's key works anywhere, a text field included, so it is not one
   // of the page's keys (`useShortcuts`): from the composer it hides the
   // panel, from anywhere else it shows the panel, or puts the keys in the
@@ -441,6 +442,77 @@ export function SessionPanelHost({
       go={go}
     />
   );
+}
+
+/** Keys that only modify another, as a window manager's shortcut back to the
+ *  app may leave held. */
+const MODIFIER_ONLY = new Set([
+  "Control",
+  "Shift",
+  "Alt",
+  "Meta",
+  "OS",
+  "Super",
+  "Hyper",
+  "AltGraph",
+]);
+
+/** Going back to the app leaves the keys where they were: the session panel
+ *  does not take them unless it had them when the window lost them. The
+ *  window may put them back somewhere else (Electron restores the webview's
+ *  focus as it is activated), so until the person clicks or presses a key in
+ *  the window, the panel taking the keys gives them back to what had them,
+ *  or to the page. */
+function useKeysStayOnReturn() {
+  useEffect(() => {
+    const inPanel = (element: Element | null) => !!element?.closest(".session-panel");
+    // What had the keys as the window lost them, and whether the panel is
+    // to be kept from taking them.
+    let before: Element | null = null;
+    let guarded = false;
+    const away = () => {
+      before = document.activeElement;
+      // A tile's frame taking the keys blurs the window too, but the window
+      // still has them.
+      guarded = !inPanel(before) && !(before instanceof HTMLIFrameElement);
+    };
+    const settle = () => {
+      if (!guarded) return;
+      const focused = document.activeElement;
+      if (!(focused instanceof HTMLElement) || !inPanel(focused)) return;
+      focused.blur();
+      if (before instanceof HTMLElement && before.isConnected && !inPanel(before))
+        before.focus({ preventScroll: true });
+    };
+    // The window's activation may land after its `focus` event.
+    let frame = 0;
+    const back = () => {
+      settle();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(settle);
+    };
+    const onFocusIn = () => queueMicrotask(settle);
+    // The person's own click or key decides where the keys go.
+    const done = () => {
+      guarded = false;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!MODIFIER_ONLY.has(event.key)) done();
+    };
+    addEventListener("blur", away);
+    addEventListener("focus", back);
+    document.addEventListener("focusin", onFocusIn, true);
+    addEventListener("pointerdown", done, true);
+    addEventListener("keydown", onKeyDown, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      removeEventListener("blur", away);
+      removeEventListener("focus", back);
+      document.removeEventListener("focusin", onFocusIn, true);
+      removeEventListener("pointerdown", done, true);
+      removeEventListener("keydown", onKeyDown, true);
+    };
+  }, []);
 }
 
 /** The panel's composer, where its key hides the panel. */

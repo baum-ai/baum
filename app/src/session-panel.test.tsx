@@ -20,7 +20,7 @@ import {
   useSessionPanel,
 } from "./session-panel";
 import { PreferencesProvider } from "./preferences";
-import { PanelPositionSetting, SessionPanelSection } from "./settings";
+import { SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
 
 /** The host as the app mounts it, with the conversations it reads. */
@@ -380,6 +380,40 @@ it("takes two Escapes to give the page its keys back, never letting it have one 
   } finally {
     removeEventListener("keydown", pageEscape);
   }
+});
+
+it("leaves the keys where they were when the window comes back", async () => {
+  await host(pr);
+  const opener = button("Opener")!;
+  opener.focus();
+  await key(opener, "`", { ctrlKey: true });
+  expect(document.activeElement).toBe(composer());
+  await key(composer(), "Escape");
+  await key(panel()!, "Escape");
+  expect(document.activeElement).toBe(opener);
+  const leave = () => act(async () => void dispatchEvent(new Event("blur")));
+  const come = () => act(async () => void dispatchEvent(new Event("focus")));
+  // Coming back, the window puts the keys in the panel, which did not have
+  // them: they go back to the page.
+  await leave();
+  composer().focus();
+  await come();
+  expect(document.activeElement).toBe(opener);
+  // Landing there after the window's focus event, too.
+  await leave();
+  await come();
+  await act(async () => composer().focus());
+  expect(document.activeElement).toBe(opener);
+  // The person's own click puts them in the panel.
+  await act(async () => void composer().dispatchEvent(new Event("pointerdown", { bubbles: true })));
+  await act(async () => composer().focus());
+  expect(document.activeElement).toBe(composer());
+  // The panel that had them keeps them.
+  await leave();
+  composer().blur();
+  composer().focus();
+  await come();
+  expect(document.activeElement).toBe(composer());
 });
 
 it("keeps the page's keys while it has them, and reads its session with them", async () => {
@@ -1015,27 +1049,14 @@ it("saves the session panel's setting as it changes", async () => {
     agent: "codex",
     model: "gpt-6-luna",
     mode: "auto",
+    position: "bottom",
   });
-  // The edge it opens from is under General, not here.
-  expect(button("Top")).toBeFalsy();
   await act(async () => button("Workspace")!.click());
   await until(() => expect(puts().at(-1)!.body).toMatchObject({ mode: "workspace" }));
-});
-
-it("saves only the edge the session panel opens from, under General", async () => {
-  await act(async () =>
-    root.render(
-      <ToastProvider>
-        <PanelPositionSetting />
-      </ToastProvider>,
-    ),
-  );
-  await until(() => expect(button("Top")).toBeTruthy());
+  // The edge it opens from is in the same section.
   expect(button("Bottom")!.getAttribute("aria-pressed")).toBe("true");
   await act(async () => button("Top")!.click());
-  const puts = () => calls.filter((c) => c.path === "api/settings/panel" && c.method === "PUT");
-  await until(() => expect(puts()).toHaveLength(1));
-  expect(puts().at(-1)!.body).toEqual({ position: "top" });
+  await until(() => expect(puts().at(-1)!.body).toMatchObject({ position: "top" }));
 });
 
 it("picks the pull request's own open conversation for an Ask, else a new one", () => {

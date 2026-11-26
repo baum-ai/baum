@@ -767,11 +767,17 @@ previous file of the list in its order and stop at the ends. Elsewhere they
 move through
 the blocks of the one read (its attention, each behavior, risk or finding, a
 commit's or session's card, each file of a commit opened alone, a decision,
+on the Overview its summary, risk, clips, screenshots, diagram, added tiles
+and each ask, in a section's Code, Tests and Docs each file and the folded
+generated files,
 or, in a session's transcript, each prompt and agent reply as the transcript
 page moves through them: the viewer's `data-review-block`; a
 block holding blocks, such as a session's card of decisions, is passed over for
 what it holds), bringing it into
 view, marking it and giving it the focus; a new section starts from its first.
+A marked block taller than the pane, such as a long file's diff, is read
+through first: the keys scroll it on by part of the pane until its end is in
+view, then move on (`readThrough` in the viewer).
 The first block, like a step back to the first place, scrolls the page to its
 top, so the review's header shows again (`scrollToTop` in the viewer).
 `Space` opens or closes the marked block's first fold (a behavior's excerpts, a
@@ -936,11 +942,14 @@ more unresolved threads, a reviewer's approval, change request or comment on
 GitHub, finished turns of a session panel conversation about it, and any other
 update GitHub reports (`updated_at`) that none of those explains. The app counts
 each change between two reads of the index while its window is shown, so pushes
-made while it is hidden count once. A pull request first read counts nothing;
-opening its page in either list, or its group's page, clears it and reads what happens while it
-stays open. A group's row adds up its members'. The record, the latest 500
-pull requests changed or opened, is the `activity` ui-state. With two or more
-Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
+made while it is hidden count once. Only a pull request whose page has been open
+counts, so the list does not light up for every pull request it holds: opening
+its page in either list, or its group's page, clears it and reads what happens
+while it stays open; opened before the panel's conversations and GitHub's
+details are read, it is taken as it is once they are. A group's row adds up its
+members'. The record, the latest 500 opened pull requests changed or opened, is
+the `activity` ui-state; records saved before this rule are let go. With two or
+more Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
 each pull request's merge options, merges each with GitHub's default method for
 the person at the head commit shown, one after another, and names any GitHub
 refused with the reason; leaving the page stops the merges not yet sent. Below
@@ -2783,7 +2792,11 @@ shows all of the marked message or less again, `a` opens or closes its
 turn's agent activity, `i` or `Enter` go back to the composer, and `q` hides
 the panel. Page Up
 and Page Down scroll the session from the composer too. A click in the page
-gives the page its keys back. The sheet lists them under "Session panel",
+gives the page its keys back. Going back to the app from another window
+leaves the keys where they were: the panel takes them only if it had them
+when the window lost them, until a click or key in the window says
+otherwise, so a webview that restores its focus elsewhere cannot hand them
+to it. The sheet lists them under "Session panel",
 and while Alt is held (with the app's other hints) a line at the panel's foot
 names the ones that work where the keys are: the reading keys, or in a field
 `Esc`, Page Up and Down and the panel's key; the page's own key bar gives way
@@ -2925,11 +2938,10 @@ When the daemon runs no session panel (`GET api/console/conversations`
 answers `available: false`), the button carries a `!` and says so, the panel
 explains that baum could not open its sessions, and no page is reported.
 
-Settings › Fixes holds the panel's setting (**Session panel**,
-`api/settings/panel`): its agent (**Same as fixes** follows the fix agent and
-its model), the model of an agent chosen there and the access of a new
-session. The edge it opens from (**Opens from**) is under Settings › General,
-which saves only `position`. On the Sessions page a panel's session carries a
+Settings › Session panel (`section=panel`) holds the panel's setting
+(`api/settings/panel`): its agent (**Same as fixes** follows the fix agent and
+its model), the model of an agent chosen there, the access of a new session
+and the edge it opens from (**Opens from**). On the Sessions page a panel's session carries a
 **Panel** tag, a session in its own empty folder is named "Session panel" and
 placed in "Own folder", and its menu offers **Open in panel** instead of
 reply, focus and end (a running one says so under its card). A finished turn
@@ -3068,7 +3080,8 @@ builds the rail's model (the sections and the file list) from it.
   label; a table cell `{text, was}` strikes the old value and marks its row
   Changed, and a flow whose
   steps have `more` shows a step's detail below while the mouse is over it
-  and makes them buttons that keep it open; "Writing
+  and makes them buttons that keep it open, the space below as tall as its
+  longest detail so nothing moves as the mouse passes; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
   migration hunks, file by file, drawn as Files changed draws them, and its
   generated or vendored files folded at the end), **Tests** (its test hunks,

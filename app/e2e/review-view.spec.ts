@@ -258,6 +258,34 @@ test("a wide section shows its Overview beside its other views, which stay in si
   expect(errors).toEqual([]);
 });
 
+test("a section keeps the reading measure until its side column opens, then takes the whole pane", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 2560, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const pane = page.locator("#review-section");
+  const section = page.locator("[data-section-split]");
+  await expect(page.locator("[data-section-body]")).toBeVisible();
+  const paneWidth = (await pane.boundingBox())!.width;
+  expect(paneWidth).toBeGreaterThan(1600);
+  expect((await section.boundingBox())!.width).toBeLessThanOrEqual(1480);
+  await page.getByRole("button", { name: "Expand section views" }).click();
+  await expect(page.locator("[data-section-side]")).toBeVisible();
+  await expect.poll(async () => (await section.boundingBox())!.width).toBeGreaterThan(1480);
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `section-split-2560-${scheme}.png`) });
+    }
+  }
+  await page.getByRole("button", { name: "Collapse section views" }).click();
+  await expect.poll(async () => (await section.boundingBox())!.width).toBeLessThanOrEqual(1480);
+  expect(errors).toEqual([]);
+});
+
 test("a wide section's excerpts open in its side column, which collapses and resizes", async ({
   page,
 }) => {
@@ -803,4 +831,59 @@ test("a failed disconnect keeps the connection and can be tried again", async ({
   await expect(page.getByText("Could not change the connection.", { exact: false })).toBeVisible();
   await panel.getByRole("button", { name: "Disconnect" }).click();
   await expect(panel.getByText("Disconnected", { exact: true })).toBeVisible();
+});
+
+test("j and k go through the Overview: its summary, the risk, the diagram and each ask", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7);
+  const active = page.locator("[data-review-block-active]");
+  await expect(page.getByRole("region", { name: "Risk" })).toBeVisible();
+  await page.keyboard.press("j");
+  await expect(active).toContainText("A paired phone can now reach the daemon");
+  await page.keyboard.press("j");
+  await expect(active).toHaveAttribute("aria-label", "Risk");
+  await page.keyboard.press("j");
+  await expect(active).toHaveAttribute("data-tile", "dg_shape");
+  await page.keyboard.press("j");
+  await expect(active).toContainText("Review on the phone");
+  await page.keyboard.press("j");
+  await expect(active).toContainText("An encrypted relay run by baum");
+  await page.keyboard.press("k");
+  await page.keyboard.press("k");
+  await expect(active).toHaveAttribute("data-tile", "dg_shape");
+  // The keys stay on the Overview: Shift+J is what leaves it.
+  await expect(page).not.toHaveURL(/pane=/);
+});
+
+test("j and k step through a section's files, and read through one taller than the pane", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  // Without smooth scrolling, each key's scroll is done when it is read.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist&section_view=code`);
+  const file = page.locator('[data-review-block]:has(article[aria-label$="remote.go diff"])');
+  await expect(file).toBeVisible();
+  const top = () => page.evaluate(() => document.querySelector(".local-main")!.scrollTop);
+  await page.keyboard.press("j");
+  await expect(file).toHaveAttribute("data-review-block-active", "");
+  // The file runs past the pane: j reads on down it, and k back up.
+  const before = await top();
+  await page.keyboard.press("j");
+  await expect.poll(top).toBeGreaterThan(before);
+  await expect(file).toHaveAttribute("data-review-block-active", "");
+  const further = await top();
+  await page.keyboard.press("k");
+  await expect.poll(top).toBeLessThan(further);
+  // On to its end, where j, on the section's last file, stops.
+  // (Pressed while polled: the diff can still grow as its code is drawn.)
+  await expect
+    .poll(async () => {
+      await page.keyboard.press("j");
+      return file.evaluate((el) => el.getBoundingClientRect().bottom <= window.innerHeight + 1);
+    })
+    .toBe(true);
+  await expect(file).toHaveAttribute("data-review-block-active", "");
 });

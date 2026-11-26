@@ -358,7 +358,7 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 			t.Errorf("an action's %s of another repository: %v %s", tool, failed, text)
 		}
 	}
-	for _, tool := range []string{"settings_general", "settings_appearance", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"} {
+	for _, tool := range []string{"settings_general", "settings_appearance", "settings_reviews", "settings_fixes", "settings_panel", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"} {
 		params, _ := json.Marshal(map[string]any{"name": tool, "arguments": map[string]any{}})
 		r := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":`+string(params)+`}`))
 		r.Header.Set("Content-Type", "application/json")

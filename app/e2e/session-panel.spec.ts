@@ -198,14 +198,14 @@ test("the panel follows the page the person has open", async ({ page }) => {
   await expect(page.getByTestId("session-panel-page")).toHaveText("Settings · General");
   await expect.poll(() => reported.at(-1)).toEqual({ page: "settings", section: "general" });
 
-  await page.getByRole("button", { name: /^Fixes/ }).click();
-  await expect(page.getByTestId("session-panel-page")).toHaveText("Settings · Fixes");
-  await expect.poll(() => reported.at(-1)).toEqual({ page: "settings", section: "fixes" });
-  // The page scrolls clear of the panel: its last section comes into view
-  // above it.
+  await page.getByRole("button", { name: /^Session panel/ }).click();
+  await expect(page.getByTestId("session-panel-page")).toHaveText("Settings · Session panel");
+  await expect.poll(() => reported.at(-1)).toEqual({ page: "settings", section: "panel" });
+  // The page scrolls clear of the panel: the section's footnote comes into
+  // view above it.
   const section = page.getByRole("heading", { name: "Session panel", exact: true });
   await section.scrollIntoViewIfNeeded();
-  const footnote = page.getByText("Changes apply to the next session you start");
+  const footnote = page.getByText("Agent and access changes apply to the next session you start");
   await footnote.scrollIntoViewIfNeeded();
   const panelTop = (await panel(page).boundingBox())!.y;
   expect((await footnote.boundingBox())!.y + 10).toBeLessThan(panelTop);
@@ -225,7 +225,7 @@ test("from the top, the panel leaves the pull request's bar in view", async ({ p
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Settings", exact: true }).first().click();
-  await page.getByRole("button", { name: /^General/ }).click();
+  await page.getByRole("button", { name: /^Session panel/ }).click();
   await page.getByRole("button", { name: "Top", exact: true }).click();
   await expect(page.getByRole("button", { name: "Top", pressed: true })).toBeVisible();
   try {
