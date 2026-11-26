@@ -19,6 +19,26 @@ export interface TrayStart {
   iconsDir?: string;
 }
 
+/** The menu bar icon's size in points on macOS, which draws a tray image at
+ *  its size in points and crops what overflows the bar. */
+const MAC_TRAY_POINTS = 18;
+
+/** Fits a 64 px tray icon to the platform. Linux and Windows tray hosts scale
+ *  icons themselves; macOS would show 64 px as 64 pt, so there it gets an
+ *  18 pt image with a representation for each display scale. */
+function trayImage(source: NativeImage): NativeImage {
+  if (process.platform !== "darwin" || source.isEmpty()) return source;
+  const image = nativeImage.createEmpty();
+  for (const scaleFactor of [1, 2, 3]) {
+    const size = MAC_TRAY_POINTS * scaleFactor;
+    image.addRepresentation({
+      scaleFactor,
+      buffer: source.resize({ width: size, height: size, quality: "best" }).toPNG(),
+    });
+  }
+  return image;
+}
+
 /** Creates the tray and starts its reading loops. Call it once the app is
  *  ready, then attach the daemon with `attached`, `detached` and `connecting`
  *  on the returned controller. A tray that cannot be created (a missing
@@ -29,7 +49,7 @@ export function startTray(start: TrayStart): TrayController {
   const image = (icon: Icon): NativeImage => {
     let found = images.get(icon);
     if (found === undefined) {
-      found = nativeImage.createFromPath(join(dir, `${icon}.png`));
+      found = trayImage(nativeImage.createFromPath(join(dir, `${icon}.png`)));
       images.set(icon, found);
     }
     return found;
