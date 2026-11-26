@@ -38,6 +38,22 @@ func (s *memoryStore) Delete(context.Context) error { s.value = nil; return nil 
 type transport func(*http.Request) (*http.Response, error)
 
 func (f transport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestClientIDPrecedence(t *testing.T) {
+	original := releaseClientID
+	t.Cleanup(func() { releaseClientID = original })
+	for _, tc := range []struct{ runtime, release, want string }{
+		{"", "", defaultClientID},
+		{"", "packaged", "packaged"},
+		{"local", "packaged", "local"},
+	} {
+		releaseClientID = tc.release
+		if got := New(t.Context(), tc.runtime).clientID; got != tc.want {
+			t.Errorf("runtime %q, release %q: got %q, want %q", tc.runtime, tc.release, got, tc.want)
+		}
+	}
+}
+
 func TestConnectLookupRefreshDisconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
