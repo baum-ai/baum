@@ -1761,6 +1761,14 @@ viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, then any
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
+Settings › Connections lists the daemon's integration providers. Connect
+opens the provider in the system browser. A connected Linear workspace adds
+links below the pull request title for issues explicitly linked in the PR
+description, with each issue's identifier, title and workflow state. The page
+loads independently of these lookups. See the [Linear daemon
+provider](../internal/integrations/linear/README.md) for registration and
+credential storage.
+
 Settings (`?page=settings&section=…`, `SettingsPage` in `src/settings.tsx`)
 shows one section at a time, listed on the left with a line on where each
 stands and a dot when it needs attention. At narrow widths the list wraps

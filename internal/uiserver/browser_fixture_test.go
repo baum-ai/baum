@@ -44,6 +44,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/inboxes"
+	"github.com/baum-ai/baum/internal/integrations"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -779,7 +780,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		drafts := &tiledrafts.Store{Changed: func(pr string) {
 			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		local := uiserver.LocalAPI{Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		local := uiserver.LocalAPI{Integrations: integrations.Handler(fixtureIntegration{}), Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -1116,3 +1117,15 @@ func browserCustomTiles(t *testing.T, document []byte) []reviewv2.Tile {
 	}
 	return out
 }
+
+type fixtureIntegration struct{}
+
+func (fixtureIntegration) ID() string   { return "linear" }
+func (fixtureIntegration) Name() string { return "Linear" }
+func (fixtureIntegration) Status(context.Context) integrations.Connection {
+	return integrations.Connection{State: "connected", Account: "Sam · Acme"}
+}
+func (fixtureIntegration) Connect(context.Context) (string, error) {
+	return "https://linear.app/oauth/authorize", nil
+}
+func (fixtureIntegration) Disconnect(context.Context) error { return nil }

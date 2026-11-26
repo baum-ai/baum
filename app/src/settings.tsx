@@ -71,6 +71,7 @@ import {
 } from "./repositories";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection } from "./list";
+import { IntegrationConnections } from "./integrations";
 import { GitHubConnectionSection } from "./github-connection";
 import { OrganizationAccessNotice } from "./organization-access";
 import { messages as githubMessages } from "./github-auth";
@@ -2114,6 +2115,7 @@ export function SettingsPage({
                 }
               />
               <GitHubConnectionSection onChanged={authChanged} />
+              <IntegrationConnections />
               {setup.desktop ? <AgentHooksPanel setup={setup} /> : null}
               {setup.feedback}
             </section>
