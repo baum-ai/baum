@@ -591,8 +591,9 @@ function isWide(element: Element | null | undefined) {
 
 /** How wide a pane's content may run, centred in the pane. The Summary set
  *  this measure, and every pane keeps to it so that switching between them
- *  does not move the text. */
-const PANE_WIDTH = "mx-auto w-full max-w-[1480px]";
+ *  does not move the text. Content that marks itself `data-pane-full` (a
+ *  section with its side column open) takes the whole pane instead. */
+const PANE_WIDTH = "mx-auto w-full max-w-[1480px] has-[[data-pane-full]]:max-w-none";
 
 /** Keeps `--review-visible` on the element at the height of what scrolls it
  *  (the window, or a host's panel that scrolls on its own) below its top, or

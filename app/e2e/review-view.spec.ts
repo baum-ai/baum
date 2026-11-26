@@ -258,6 +258,34 @@ test("a wide section shows its Overview beside its other views, which stay in si
   expect(errors).toEqual([]);
 });
 
+test("a section keeps the reading measure until its side column opens, then takes the whole pane", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 2560, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const pane = page.locator("#review-section");
+  const section = page.locator("[data-section-split]");
+  await expect(page.locator("[data-section-body]")).toBeVisible();
+  const paneWidth = (await pane.boundingBox())!.width;
+  expect(paneWidth).toBeGreaterThan(1600);
+  expect((await section.boundingBox())!.width).toBeLessThanOrEqual(1480);
+  await page.getByRole("button", { name: "Expand section views" }).click();
+  await expect(page.locator("[data-section-side]")).toBeVisible();
+  await expect.poll(async () => (await section.boundingBox())!.width).toBeGreaterThan(1480);
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `section-split-2560-${scheme}.png`) });
+    }
+  }
+  await page.getByRole("button", { name: "Collapse section views" }).click();
+  await expect.poll(async () => (await section.boundingBox())!.width).toBeLessThanOrEqual(1480);
+  expect(errors).toEqual([]);
+});
+
 test("a wide section's excerpts open in its side column, which collapses and resizes", async ({
   page,
 }) => {
