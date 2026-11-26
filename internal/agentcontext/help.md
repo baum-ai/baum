@@ -124,7 +124,9 @@ A pull request or group:
 - `j`, `k`: next and previous item; `⇧J`, `⇧↓`, `→` (`Shift+J`, `Shift+↓` elsewhere): next section; `⇧K`, `⇧↑`, `←` (`Shift+K`, `Shift+↑`): previous section.
 - `Space`: open or close an item's details. `Enter`: open the item.
 - `c`: comment. `v`: send your review. `a`: ask an agent in the session panel.
-- `]`: toggle the right-hand sidebar; `h`, `l`: Details, Activity and Comments in it.
+- `[`: collapse or expand the list of sections on the left. `]`: collapse or expand the code beside a section's Overview.
+- `h`, `l`: previous and next of a section's views (Code, Tests, Session, Docs).
+- `⌃]` on a Mac, `Ctrl+]` elsewhere: toggle the right-hand sidebar, which then takes the keys; in it, `h`, `l` go through Details, Activity and Comments, and `Escape` gives the keys back.
 - `u`, `Escape`: back to the list.
 
 Sessions and transcripts:
