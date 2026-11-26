@@ -42,7 +42,9 @@ func testBundle() *bundle.Bundle {
 }
 
 // fake is a backend whose replies are chosen by the call's label (its
-// Stage), recording when each call ran and how many ran at once.
+// Stage), recording the order calls started and ended in and how many ran at
+// once. starts and ends hold positions in one sequence, not times: Windows'
+// clock can give a call's end and the next call's start the same time.
 type fake struct {
 	mu         sync.Mutex
 	replies    map[string]func(pass int) string
@@ -51,14 +53,15 @@ type fake struct {
 	sessions   bool
 	inFlight   atomic.Int32
 	maxFlight  atomic.Int32
-	starts     map[string]time.Time
-	ends       map[string]time.Time
+	events     int
+	starts     map[string]int
+	ends       map[string]int
 	requests   map[string]agent.Request
 }
 
 func newFake() *fake {
 	return &fake{replies: map[string]func(int) string{}, concurrent: true, sessions: true,
-		starts: map[string]time.Time{}, ends: map[string]time.Time{}, requests: map[string]agent.Request{}}
+		starts: map[string]int{}, ends: map[string]int{}, requests: map[string]agent.Request{}}
 }
 
 func (f *fake) Name() string          { return agent.BackendClaude }
@@ -75,8 +78,9 @@ func (f *fake) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 		}
 	}
 	f.mu.Lock()
+	f.events++
 	if _, ok := f.starts[r.Stage]; !ok {
-		f.starts[r.Stage] = time.Now()
+		f.starts[r.Stage] = f.events
 	}
 	f.requests[r.Stage] = r
 	reply := f.replies[r.Stage]
@@ -88,7 +92,8 @@ func (f *fake) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	}
 	defer func() {
 		f.mu.Lock()
-		f.ends[r.Stage] = time.Now()
+		f.events++
+		f.ends[r.Stage] = f.events
 		f.mu.Unlock()
 	}()
 	if reply == nil {
@@ -262,14 +267,14 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 	}
 	// The order: each tile after its owner, the overview after every tile,
 	// and the overview resumes the map's session.
-	if !f.starts["tile-tl-backoff"].After(f.ends["section-sec-retry"]) {
+	if f.starts["tile-tl-backoff"] < f.ends["section-sec-retry"] {
 		t.Error("the section's tile started before its section was written")
 	}
-	if !f.starts["tile-tl-path"].Before(f.ends["section-sec-retry"]) {
+	if f.starts["tile-tl-path"] == 0 || f.starts["tile-tl-path"] > f.ends["section-sec-retry"] {
 		t.Error("the overview's tile waited for a section")
 	}
 	for _, stage := range []string{"tile-tl-path", "tile-tl-backoff", "section-sec-retry", "section-sec-api", "context"} {
-		if !f.starts["overview"].After(f.ends[stage]) {
+		if f.ends[stage] == 0 || f.starts["overview"] < f.ends[stage] {
 			t.Errorf("the overview started before %s ended", stage)
 		}
 	}
