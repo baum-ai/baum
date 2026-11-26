@@ -1121,8 +1121,8 @@ func browserCustomTiles(t *testing.T, document []byte) []reviewv2.Tile {
 
 type fixtureIntegration struct{ disconnected atomic.Bool }
 
-func (fixtureIntegration) ID() string   { return "linear" }
-func (fixtureIntegration) Name() string { return "Linear" }
+func (*fixtureIntegration) ID() string   { return "linear" }
+func (*fixtureIntegration) Name() string { return "Linear" }
 func (f *fixtureIntegration) Status(context.Context) integrations.Connection {
 	if f.disconnected.Load() {
 		return integrations.Connection{State: "disconnected"}
