@@ -4,6 +4,14 @@ One `## vX.Y.Z` section per release, newest first, written for users and
 without internal tracking identifiers. A release candidate's notes are its
 version's section: `v0.2.0-rc.1` and `v0.2.0` both use `## v0.2.0`.
 
+## v0.3.1
+
+baum 0.3.1 fixes the first launch of the Linux AppImage after it updates from 0.2.
+
+### Fixes
+
+- After the Linux AppImage updated from 0.2 to 0.3.0, its first run kept the old app's environment until the app was reopened: Settings, Command line reported baum 0.2.0 from the old app on PATH, and terminals and commands the app started inherited the old app's paths. The app now drops the old app's paths and working directory when it starts.
+
 ## v0.3.0
 
 baum 0.3.0 moves the desktop app to Electron, adds a session panel on every page that works with your own Claude Code or Codex session, and lays the review page out as an Overview, How it works and Files changed.
