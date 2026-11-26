@@ -749,6 +749,28 @@ test("a baum.review/1 version draws its own Summary and sections in the rail", a
   expect(errors).toEqual([]);
 });
 
+test("a section's tile, washed while j is on it, keeps a gutter round its content", async ({
+  page,
+}) => {
+  test.skip(!SHOTS, "a picture for REVIEW_VIEW_SHOTS");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const tile = page.locator('[data-tile="dg_allowlist"]');
+  await expect(tile).toBeVisible();
+  for (let i = 0; i < 20 && (await tile.getAttribute("data-review-block-active")) === null; i++)
+    await page.keyboard.press("j");
+  await expect(tile).toHaveAttribute("data-review-block-active", "");
+  // The wash reaches past the tile's edge, so the picture takes a margin.
+  mkdirSync(SHOTS, { recursive: true });
+  const box = (await tile.boundingBox())!;
+  const clip = { x: box.x - 24, y: box.y - 24, width: box.width + 48, height: box.height + 48 };
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.screenshot({ path: join(SHOTS, `section-active-tile-${scheme}.png`), clip });
+  }
+});
+
 test("j and k go through a points block row by row, and Enter opens the row", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await open(page, `${PR7}&pane=section&section=sec_allowlist`);

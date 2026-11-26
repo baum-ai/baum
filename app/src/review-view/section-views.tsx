@@ -496,7 +496,7 @@ function GeneratedFiles({
       {/* A stop of j and k too, which Space opens. */}
       <div
         data-review-block=""
-        className="scroll-mt-4 rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
+        className="scroll-mt-4 rounded-sm outline-none data-[review-block-active]:bg-surface-wash data-[review-block-active]:shadow-[0_0_0_0.5rem_var(--surface-wash)]"
       >
         <GeneratedToggle open={open} files={files.length} onToggle={() => setOpen((was) => !was)} />
       </div>
