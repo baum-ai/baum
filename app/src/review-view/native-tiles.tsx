@@ -469,6 +469,10 @@ export function FlowDiagram({ data }: { data: FlowData }) {
         {legend}
       </div>
     );
+  // Every detail sits in the same cell, only the shown one visible, so the
+  // area keeps the height of the tallest and nothing under it moves as the
+  // mouse passes over the steps.
+  const showing = opened?.more?.trim() ? opened : undefined;
   return (
     <div className="grid min-w-0 gap-2.5">
       {grid}
@@ -476,17 +480,32 @@ export function FlowDiagram({ data }: { data: FlowData }) {
       <div
         aria-live={peeked ? "off" : "polite"}
         data-flow-more=""
-        className="max-w-[72ch] space-y-1.5 text-base text-secondary"
+        className="grid max-w-[72ch] text-base text-secondary"
       >
-        {opened?.more ? (
-          <div className="space-y-1.5 border-t border-subtle pt-2.5">
-            <InlineMarkdown className="block font-semibold text-primary">
-              {opened.title}
-            </InlineMarkdown>
-            <InlineMarkdown className="block">{opened.more}</InlineMarkdown>
-          </div>
-        ) : (
-          <p className="text-xs text-tertiary">Click a step for its detail, or hover over it.</p>
+        <p
+          aria-hidden={showing ? true : undefined}
+          className={cn("col-start-1 row-start-1 text-xs text-tertiary", showing && "invisible")}
+        >
+          Click a step for its detail, or hover over it.
+        </p>
+        {data.lanes.flatMap((lane, at) =>
+          lane.steps.map((step, position) =>
+            step.more?.trim() ? (
+              <div
+                key={`${at}:${position}`}
+                aria-hidden={step === showing ? undefined : true}
+                className={cn(
+                  "col-start-1 row-start-1 space-y-1.5 border-t border-subtle pt-2.5",
+                  step !== showing && "invisible",
+                )}
+              >
+                <InlineMarkdown className="block font-semibold text-primary">
+                  {step.title}
+                </InlineMarkdown>
+                <InlineMarkdown className="block">{step.more}</InlineMarkdown>
+              </div>
+            ) : null,
+          ),
         )}
       </div>
     </div>

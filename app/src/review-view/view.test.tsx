@@ -1670,17 +1670,28 @@ describe("a section's body", () => {
     expect(boxes.map((each) => each.textContent)).toEqual(["Offer", "Pair"]);
     expect(container.querySelectorAll(".flow li")[1]?.querySelector("button")).toBeNull();
     expect(boxes.map((each) => each.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
-    const more = container.querySelector<HTMLElement>("[data-flow-more]")!;
-    expect(more.textContent).toContain("Click a step");
+    // Every detail stays laid out, so the area keeps one height; only the
+    // shown one is visible.
+    const area = container.querySelector<HTMLElement>("[data-flow-more]")!;
+    const more = () =>
+      [...area.children]
+        .filter((each) => !each.hasAttribute("aria-hidden"))
+        .map((each) => each.textContent)
+        .join("");
+    expect(area.children).toHaveLength(3);
+    expect(more()).toContain("Click a step");
     await click(boxes[1]!);
     expect(boxes[1]!.getAttribute("aria-pressed")).toBe("true");
-    expect(more.textContent).toContain("Pair");
-    expect(more.textContent).toContain("The phone is stored by its key.");
+    expect(more()).toContain("Pair");
+    expect(more()).toContain("The phone is stored by its key.");
+    expect(more()).not.toContain("Click a step");
     await click(boxes[0]!);
     expect(boxes.map((each) => each.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
-    expect(more.textContent).toContain("A secret is made.");
+    expect(more()).toContain("A secret is made.");
+    expect(more()).not.toContain("The phone is stored by its key.");
     await click(boxes[0]!);
-    expect(more.textContent).not.toContain("A secret is made.");
+    expect(more()).not.toContain("A secret is made.");
+    expect(more()).toContain("Click a step");
   });
   it("marks a flow's new steps with a pill and can show only them", async () => {
     const flow = tileOf("dg_pairing");

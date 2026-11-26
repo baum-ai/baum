@@ -3065,7 +3065,8 @@ builds the rail's model (the sections and the file list) from it.
   label; a table cell `{text, was}` strikes the old value and marks its row
   Changed, and a flow whose
   steps have `more` shows a step's detail below while the mouse is over it
-  and makes them buttons that keep it open; "Writing
+  and makes them buttons that keep it open, the space below as tall as its
+  longest detail so nothing moves as the mouse passes; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
   migration hunks, file by file, drawn as Files changed draws them, and its
   generated or vendored files folded at the end), **Tests** (its test hunks,
