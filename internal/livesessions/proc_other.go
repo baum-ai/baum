@@ -11,6 +11,3 @@ func sameProcess(p ClaudeProcess) error {
 	}
 	return errors.ErrUnsupported
 }
-
-// heldOpen cannot tell where processes' open files are not read.
-func heldOpen(string) bool { return false }

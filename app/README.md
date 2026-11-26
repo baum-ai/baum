@@ -2884,11 +2884,12 @@ that resumes that session in the directory it worked in
 (`POST api/console/conversations` with `agent` and `resume`), or the one
 already continuing it, and opens the panel on it, with the panel's model and
 access. Why it cannot (it is still running, its transcript or its directory
-is gone) shows as a toast. A session counts as running, whether or not the
-daemon lists it, while a Claude Code process registered under
+is gone) shows as a toast. A session counts as running while the daemon
+lists it as not ended, or, for Claude Code, while a process registered under
 `~/.claude/sessions` runs it (including one that switched to it with
-`/resume`), or while a process holds a Codex session's file open (its terminal
-or Codex's app server, which lets go within a minute of the terminal exiting).
+`/resume`), whether or not its hooks reached the daemon. Codex ends a
+terminal's session within a minute of the terminal exiting, when its app
+server lets it go.
 Closing that conversation gives the session back: it is no longer marked as
 the panel's. A message to a panel conversation whose session a terminal runs
 again (`claude --resume`, `codex resume`) is not sent, and the panel says the

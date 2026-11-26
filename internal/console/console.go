@@ -236,10 +236,11 @@ type Options struct {
 	// read from its transcript, for a conversation that resumes it; its
 	// error says why it cannot be. Nil resumes none.
 	SessionDirectory func(ctx context.Context, agent, id string) (string, error)
-	// SessionRunning is whether a process runs the agent's session id now,
-	// such as a terminal that resumed it; a turn waits until it does not.
+	// SessionRunning is whether something runs the agent's session id now
+	// with activity after since, when the conversation's last turn ended,
+	// such as a terminal that resumed it; a turn waits until nothing does.
 	// Nil finds none.
-	SessionRunning func(agent, id string) bool
+	SessionRunning func(agent, id string, since time.Time) bool
 	Log              *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
@@ -515,11 +516,11 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	if message == "" || len(message) > MaxMessageBytes || !utf8.ValidString(message) {
 		return Conversation{}, invalid("a message is 1 to %d bytes of text", MaxMessageBytes)
 	}
-	// A process running its session while no turn of its own runs is
-	// another's, such as the person's terminal. Asked outside the lock: it
-	// may read every process's open files.
+	// Its session running while no turn of its own runs is another's, such
+	// as the person's terminal; UpdatedAt is when its last turn ended.
+	// Asked outside the lock: it may read Claude Code's process registry.
 	if c, err := s.store.get(id); err == nil && c.State != StateRunning && c.Session != "" &&
-		s.opts.SessionRunning != nil && s.opts.SessionRunning(c.Agent, c.Session) {
+		s.opts.SessionRunning != nil && s.opts.SessionRunning(c.Agent, c.Session, c.UpdatedAt) {
 		return Conversation{}, ErrRunningElsewhere
 	}
 	s.mu.Lock()

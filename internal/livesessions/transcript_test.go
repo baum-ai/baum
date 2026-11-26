@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -415,38 +414,37 @@ func TestSessionDirectoryIsWhereTheTranscriptSaysTheSessionWorked(t *testing.T) 
 	}
 }
 
-func TestACodexSessionRunsWhileAProcessHoldsItsFile(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skip("open files are read on Linux and macOS")
-	}
+func TestASessionRunsWhileItsHooksSayItHasNotEnded(t *testing.T) {
 	f := newTranscriptFixture(t)
 	const id = "019f0000-0000-7000-8000-0000000000d1"
-	path := filepath.Join(f.home, ".codex", "sessions", "2026", "10", "20", "rollout-2026-10-20T09-00-00-"+id+".jsonl")
-	write(t, path, `{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo"}}`+"\n")
-	quiet := f.clock.now.Add(-time.Hour)
-	if err := os.Chtimes(path, quiet, quiet); err != nil {
-		t.Fatal(err)
+	codexEvent := func(name string, at time.Time) {
+		t.Helper()
+		e := hookevents.New(hookevents.KindAgent, "codex", name, "/work/demo", "test")
+		f.clock.now, e.Time = at, at
+		e.Session = &hookevents.Session{ID: id, Cwd: "/work/demo"}
+		if !apply(f.tracker, e) {
+			t.Fatalf("%s not applied", name)
+		}
 	}
-	if f.live.Running(AgentCodex, id) {
-		t.Fatal("running before anything opened it")
+	if f.live.Running(AgentCodex, id, time.Time{}) {
+		t.Fatal("running before any hook")
 	}
-	// Its terminal, or the app server it talks to, has it open.
-	held, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
+	// A panel turn (codex exec) that started and ended.
+	turn := f.clock.now
+	codexEvent("session-start", turn)
+	codexEvent("session-end", turn.Add(time.Second))
+	turnEnded := turn.Add(2 * time.Second)
+	if f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("running once the panel's turn ended")
 	}
-	if !f.live.Running(AgentCodex, id) {
-		t.Error("not running while a process holds its file")
+	// The person resumed it in a terminal.
+	codexEvent("session-start", turnEnded.Add(time.Minute))
+	if !f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("not running while a terminal has it")
 	}
-	var missing *Unavailable
-	if _, err := f.live.SessionDirectory(AgentCodex, id); !errors.As(err, &missing) || missing.Reason != RunningElsewhere {
-		t.Errorf("continued while held: %v", err)
-	}
-	_ = held.Close()
-	if f.live.Running(AgentCodex, id) {
-		t.Error("running once nothing holds its file")
-	}
-	if dir, err := f.live.SessionDirectory(AgentCodex, id); err != nil || dir != "/work/demo" {
-		t.Errorf("not continued once let go: %q %v", dir, err)
+	// Its terminal exited, and Codex's app server unloaded it.
+	codexEvent("session-end", turnEnded.Add(2*time.Minute))
+	if f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("running once it ended")
 	}
 }

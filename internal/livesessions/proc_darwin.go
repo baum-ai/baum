@@ -34,12 +34,3 @@ func sameProcess(p ClaudeProcess) error {
 	}
 	return nil
 }
-
-// heldOpen reports whether a process has the file at path open, as lsof
-// finds it.
-func heldOpen(path string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "lsof", "-t", "--", path).Output()
-	return err == nil && len(strings.TrimSpace(string(out))) > 0
-}

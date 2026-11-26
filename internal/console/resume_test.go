@@ -1,3 +1,5 @@
+//go:build unix
+
 package console
 
 import (
@@ -182,7 +184,7 @@ func TestATurnWaitsWhileATerminalRunsTheSession(t *testing.T) {
 	var running atomic.Bool
 	f := newFixture(t, func(o *Options) {
 		o.SessionDirectory = func(context.Context, string, string) (string, error) { return dir, nil }
-		o.SessionRunning = func(agent, id string) bool { return running.Load() && id == testSession }
+		o.SessionRunning = func(agent, id string, _ time.Time) bool { return running.Load() && id == testSession }
 	})
 	ctx := context.Background()
 	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Resume: testSession})

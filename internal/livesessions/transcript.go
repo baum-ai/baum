@@ -696,7 +696,7 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if t.runningAt(agent, id, loc.main) {
+	if t.claudeRunning(agent, id) {
 		return "", unavailable(RunningElsewhere)
 	}
 	// One the tracker missed may still be running: its agent is writing it.
@@ -719,33 +719,30 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 // person's terminal, is not continued in the panel.
 const RunningElsewhere = "The session is running in a terminal. Continue it there, or exit it there first; Codex can take a minute to let it go."
 
-// Running is whether a process runs the agent's session id now, whether or
-// not the tracker lists it. Claude Code registers each running session's
-// process with its id (FindClaude), and keeps it current when the session
-// switches with /resume. Codex registers none, but whatever runs a Codex
-// session, its terminal or the app server that terminal talks to, holds its
-// file open (heldOpen) until shortly after it exits; a finished `codex exec`
-// turn, as the panel runs, holds nothing. Other agents are never found.
-func (t *Transcripts) Running(agent, id string) bool {
-	main := ""
-	if agent == AgentCodex {
-		loc, err := Locate(t.home(), "", agent, id, "")
-		if err != nil {
-			return false
+// Running is whether something other than a finished panel turn runs the
+// agent's session id now: the tracker lists it as not ended with activity
+// after since (when the panel's last turn ended; a turn's own events come
+// before), or, for Claude Code, a process is registered with its id
+// (FindClaude), whether or not its hooks reached the tracker. Claude Code
+// keeps that entry current when a session switches with /resume. Codex ends
+// a terminal's session (its SessionEnd hook) once its app server unloads it,
+// within a minute of the terminal exiting, and a `codex exec` turn's as it
+// finishes.
+func (t *Transcripts) Running(agent, id string, since time.Time) bool {
+	if t.Tracker != nil {
+		if session, _, ok := t.Tracker.Lookup(agent, id); ok && session.State != StateEnded && session.LastActivityAt.After(since) {
+			return true
 		}
-		main = loc.main
 	}
-	return t.runningAt(agent, id, main)
+	return t.claudeRunning(agent, id)
 }
 
-// runningAt is Running for a Codex session whose file is main.
-func (t *Transcripts) runningAt(agent, id, main string) bool {
-	switch agent {
-	case AgentClaudeCode:
-		_, err := FindClaude(t.home(), id)
-		return err == nil
-	case AgentCodex:
-		return main != "" && heldOpen(main)
+// claudeRunning is whether a Claude Code process is registered with the
+// session id.
+func (t *Transcripts) claudeRunning(agent, id string) bool {
+	if agent != AgentClaudeCode {
+		return false
 	}
-	return false
+	_, err := FindClaude(t.home(), id)
+	return err == nil
 }

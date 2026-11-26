@@ -1143,10 +1143,10 @@ func conversationTranscript(transcripts *livesessions.Transcripts) func(http.Res
 	}
 }
 
-// sessionRunning tells the panel whether a process, such as the person's
-// terminal, runs a session it is about to write to; nil without live
-// transcripts.
-func sessionRunning(transcripts *livesessions.Transcripts) func(string, string) bool {
+// sessionRunning tells the panel whether something else, such as the
+// person's terminal, runs a session it is about to write to; nil without
+// live transcripts.
+func sessionRunning(transcripts *livesessions.Transcripts) func(string, string, time.Time) bool {
 	if transcripts == nil {
 		return nil
 	}

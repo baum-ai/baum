@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,32 +79,4 @@ func machineID() string {
 		}
 	}
 	return ""
-}
-
-// heldOpen reports whether a process this user can see has the file at path
-// open, by the links under /proc/<pid>/fd.
-func heldOpen(path string) bool {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
-	}
-	procs, err := os.ReadDir("/proc")
-	if err != nil {
-		return false
-	}
-	for _, p := range procs {
-		if _, err := strconv.Atoi(p.Name()); err != nil {
-			continue
-		}
-		dir := filepath.Join("/proc", p.Name(), "fd")
-		fds, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, fd := range fds {
-			if target, err := os.Readlink(filepath.Join(dir, fd.Name())); err == nil && target == path {
-				return true
-			}
-		}
-	}
-	return false
 }
