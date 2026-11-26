@@ -22,6 +22,7 @@ import (
 	"github.com/baum-ai/baum/internal/integrations"
 )
 
+const defaultClientID = "3087d4fa6067dbab52b0c44866aeca18"
 const callback = "http://127.0.0.1:37841/oauth/linear/callback"
 
 // releaseClientID is the public OAuth application ID embedded by release builds.
@@ -58,7 +59,7 @@ type Provider struct {
 }
 
 func New(ctx context.Context, clientID string) *Provider {
-	return &Provider{lifetime: ctx, clientID: cmp.Or(clientID, releaseClientID), client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: credentialstore.ProcessStore{Service: "baum.linear.app"}}
+	return &Provider{lifetime: ctx, clientID: cmp.Or(clientID, releaseClientID, defaultClientID), client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: credentialstore.ProcessStore{Service: "baum.linear.app"}}
 }
 func (*Provider) ID() string   { return "linear" }
 func (*Provider) Name() string { return "Linear" }
