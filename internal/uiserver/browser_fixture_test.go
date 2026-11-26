@@ -671,6 +671,24 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	// page finds its transcript by its id, and the panel can continue it.
 	writeFixtureTranscript(filepath.Join(home, ".claude", "projects", "-fixture-live", "ended-e2e.jsonl"), "ended-e2e",
 		time.Now().Add(-26*time.Hour), []string{"Add a retry budget to the uploader", "Cover it with a test"})
+	// Another, which resume-session.spec.ts says a terminal runs again.
+	writeFixtureTranscript(filepath.Join(home, ".claude", "projects", "-fixture-live", "terminal-e2e.jsonl"), "terminal-e2e",
+		time.Now().Add(-27*time.Hour), []string{"Tighten the upload timeout"})
+	// A spec says a terminal runs a session by writing terminal-<id>, which
+	// a run before it may have left.
+	stale, _ := filepath.Glob(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "terminal-*"))
+	for _, path := range stale {
+		_ = os.Remove(path)
+	}
+	// Both ended long ago, so neither counts as written moments ago.
+	for _, id := range []string{"ended-e2e", "terminal-e2e"} {
+		old := time.Now().Add(-26 * time.Hour)
+		_ = os.Chtimes(filepath.Join(home, ".claude", "projects", "-fixture-live", id+".jsonl"), old, old)
+	}
+	inTerminal := func(id string) bool {
+		_, err := os.Stat(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "terminal-"+id))
+		return err == nil
+	}
 	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)
@@ -795,6 +813,23 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			Transcript: func(w http.ResponseWriter, r *http.Request, agent, id string) {
 				answer, err := transcripts.Read(r.Context(), agent, id, "", "")
 				transcripts.WriteAnswer(w, r, answer, err)
+			},
+			// Continuing a session finds it as the daemon does, except that a
+			// terminal-<id> marker stands for a terminal that runs it, and the
+			// fixture's sessions worked in a directory made here.
+			SessionDirectory: func(_ context.Context, agentName, id string) (string, error) {
+				if inTerminal(id) {
+					return "", &livesessions.Unavailable{Reason: livesessions.RunningElsewhere}
+				}
+				dir, err := transcripts.SessionDirectory(agentName, id)
+				if err != nil || dir != "/fixture/live" {
+					return dir, err
+				}
+				dir = filepath.Join(home, "fixture-live")
+				return dir, os.MkdirAll(dir, 0o700)
+			},
+			SessionRunning: func(agentName, id string, since time.Time) bool {
+				return inTerminal(id) || transcripts.Running(agentName, id, since)
 			}})
 		if err != nil {
 			return daemon.App{}, err

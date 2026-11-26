@@ -88,7 +88,7 @@ var (
 	// ErrRunningElsewhere is a message to a conversation whose agent session
 	// another process runs now, such as the person's terminal that resumed
 	// it: two would write the same session.
-	ErrRunningElsewhere = errors.New("This session is running in a terminal. Continue it there, or exit it there first; Codex can take a minute to let it go.")
+	ErrRunningElsewhere = errors.New("This session is running in a terminal. Continue it there, or exit it and try again in a minute.")
 	// ErrClosed is a message to, or a stop of, a closed conversation.
 	ErrClosed = errors.New("the conversation is closed")
 	// ErrShuttingDown is a conversation opened or a message sent once the

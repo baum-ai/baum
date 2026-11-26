@@ -717,7 +717,7 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 
 // RunningElsewhere is why a session a process runs, such as one in the
 // person's terminal, is not continued in the panel.
-const RunningElsewhere = "The session is running in a terminal. Continue it there, or exit it there first; Codex can take a minute to let it go."
+const RunningElsewhere = "The session is running in a terminal. Continue it there, or exit it and try again in a minute."
 
 // Running is whether something other than a finished panel turn runs the
 // agent's session id now: the tracker lists it as not ended with activity
@@ -730,7 +730,10 @@ const RunningElsewhere = "The session is running in a terminal. Continue it ther
 // finishes.
 func (t *Transcripts) Running(agent, id string, since time.Time) bool {
 	if t.Tracker != nil {
-		if session, _, ok := t.Tracker.Lookup(agent, id); ok && session.State != StateEnded && session.LastActivityAt.After(since) {
+		// To the millisecond, as since is stored: a turn's last event falls
+		// in the millisecond it ended in.
+		if session, _, ok := t.Tracker.Lookup(agent, id); ok && session.State != StateEnded &&
+			session.LastActivityAt.Truncate(time.Millisecond).After(since) {
 			return true
 		}
 	}

@@ -437,6 +437,15 @@ func TestASessionRunsWhileItsHooksSayItHasNotEnded(t *testing.T) {
 	if f.live.Running(AgentCodex, id, turnEnded) {
 		t.Error("running once the panel's turn ended")
 	}
+	// A panel turn whose last hook (a stop, with no end) came in the
+	// millisecond its end was stored in, to the millisecond.
+	lastStop := turnEnded.Add(10 * time.Second).Add(400 * time.Microsecond)
+	codexEvent("session-start", lastStop.Add(-time.Second))
+	codexEvent("stop", lastStop)
+	turnEnded = lastStop.Truncate(time.Millisecond)
+	if f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("the panel's own last turn counted as another")
+	}
 	// The person resumed it in a terminal.
 	codexEvent("session-start", turnEnded.Add(time.Minute))
 	if !f.live.Running(AgentCodex, id, turnEnded) {
