@@ -59,9 +59,13 @@ snapshot:
 # Commit subjects are not release notes (and may name internal tracking
 # identifiers). The release workflow passes --release-notes with the version's
 # section of CHANGELOG.md on main (scripts/release-notes.sh), written in a PR
-# before the release.
+# before the release. Leave the changelog enabled: it is the step that reads
+# --release-notes, so disabling it publishes an empty body. Given a notes file
+# it uses only that; without one, every commit is excluded.
 changelog:
-  disable: true
+  filters:
+    exclude:
+      - ".*"
 
 release:
   github:
