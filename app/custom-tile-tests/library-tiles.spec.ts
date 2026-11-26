@@ -66,8 +66,12 @@ test("library and authored tiles on their sections", async ({ page }) => {
   await expect(api.getByRole("heading", { name: "Interface changes" })).toBeVisible();
   await frameReady(page, "api_change");
   await expect(page.getByText("Custom · Interface changes")).toHaveCount(0);
-  // The code it cites is coloured as the review's diffs are.
-  const code = page.frameLocator('[data-custom-tile="api_change"] iframe').locator(".baum-code");
+  // The code it cites starts closed; opened, it is coloured as the review's
+  // diffs are.
+  const frame = page.frameLocator('[data-custom-tile="api_change"] iframe');
+  const code = frame.locator(".baum-code");
+  await expect(code.first()).toBeHidden();
+  await frame.locator("details.kit-details > summary", { hasText: "Code" }).first().click();
   await expect(code.first()).toBeVisible();
   await expect(
     code.filter({ hasText: "func DeadLetters" }).first().locator("span").first(),

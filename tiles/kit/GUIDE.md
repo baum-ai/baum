@@ -124,7 +124,9 @@ it 720px and 360px wide (a phone). Its height follows its content. Use `kit-sect
 `kit-heading`, `kit-card` per thing, `kit-table` inside `kit-scroll` for
 tables, `baum.cite` chips, and `baum.diff` for the code. Put the most
 important things first (breaking, destructive, high severity). Long lists go
-in `<details class="kit-details">` (one may hold others). A list of cards goes
+in `<details class="kit-details">` (one may hold others), and so does code:
+start it closed. The kit keeps each one open or closed as the reader left it
+when the page draws the tile again. A list of cards goes
 in a `kit-stack`, which spaces them. Rows of a before and an after (a
 column's old and new type) mark the words that differ with `baum.compare`,
 put a `kit-pill` on what changed, draw the rows that stayed the same in
