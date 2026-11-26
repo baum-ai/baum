@@ -11,3 +11,6 @@ func running(int) bool { return false }
 func terminate(int) error { return errors.ErrUnsupported }
 
 func sameProcess(ClaudeProcess) error { return errors.ErrUnsupported }
+
+// heldOpen is not asked of open files on Windows.
+func heldOpen(string) bool { return false }

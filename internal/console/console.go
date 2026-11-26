@@ -88,7 +88,7 @@ var (
 	// ErrRunningElsewhere is a message to a conversation whose agent session
 	// another process runs now, such as the person's terminal that resumed
 	// it: two would write the same session.
-	ErrRunningElsewhere = errors.New("This session is running in a terminal. Continue it there, or exit it there first.")
+	ErrRunningElsewhere = errors.New("This session is running in a terminal. Continue it there, or exit it there first; Codex can take a minute to let it go.")
 	// ErrClosed is a message to, or a stop of, a closed conversation.
 	ErrClosed = errors.New("the conversation is closed")
 	// ErrShuttingDown is a conversation opened or a message sent once the
@@ -515,6 +515,13 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	if message == "" || len(message) > MaxMessageBytes || !utf8.ValidString(message) {
 		return Conversation{}, invalid("a message is 1 to %d bytes of text", MaxMessageBytes)
 	}
+	// A process running its session while no turn of its own runs is
+	// another's, such as the person's terminal. Asked outside the lock: it
+	// may read every process's open files.
+	if c, err := s.store.get(id); err == nil && c.State != StateRunning && c.Session != "" &&
+		s.opts.SessionRunning != nil && s.opts.SessionRunning(c.Agent, c.Session) {
+		return Conversation{}, ErrRunningElsewhere
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopping {
@@ -529,10 +536,6 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 		return Conversation{}, ErrClosed
 	case StateRunning:
 		return Conversation{}, ErrBusy
-	}
-	// No turn of its own runs, so a process running its session is another.
-	if c.Session != "" && s.opts.SessionRunning != nil && s.opts.SessionRunning(c.Agent, c.Session) {
-		return Conversation{}, ErrRunningElsewhere
 	}
 	if info, err := os.Stat(c.Directory); err != nil || !info.IsDir() {
 		return Conversation{}, invalid("the conversation's directory %s is gone; start a new conversation", c.Directory)

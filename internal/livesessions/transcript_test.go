@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -411,5 +412,41 @@ func TestSessionDirectoryIsWhereTheTranscriptSaysTheSessionWorked(t *testing.T) 
 		if _, err := f.live.SessionDirectory(agent, "nowhere"); !errors.As(err, &missing) {
 			t.Errorf("%s: %v", agent, err)
 		}
+	}
+}
+
+func TestACodexSessionRunsWhileAProcessHoldsItsFile(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("open files are read on Linux and macOS")
+	}
+	f := newTranscriptFixture(t)
+	const id = "019f0000-0000-7000-8000-0000000000d1"
+	path := filepath.Join(f.home, ".codex", "sessions", "2026", "10", "20", "rollout-2026-10-20T09-00-00-"+id+".jsonl")
+	write(t, path, `{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo"}}`+"\n")
+	quiet := f.clock.now.Add(-time.Hour)
+	if err := os.Chtimes(path, quiet, quiet); err != nil {
+		t.Fatal(err)
+	}
+	if f.live.Running(AgentCodex, id) {
+		t.Fatal("running before anything opened it")
+	}
+	// Its terminal, or the app server it talks to, has it open.
+	held, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.live.Running(AgentCodex, id) {
+		t.Error("not running while a process holds its file")
+	}
+	var missing *Unavailable
+	if _, err := f.live.SessionDirectory(AgentCodex, id); !errors.As(err, &missing) || missing.Reason != RunningElsewhere {
+		t.Errorf("continued while held: %v", err)
+	}
+	_ = held.Close()
+	if f.live.Running(AgentCodex, id) {
+		t.Error("running once nothing holds its file")
+	}
+	if dir, err := f.live.SessionDirectory(AgentCodex, id); err != nil || dir != "/work/demo" {
+		t.Errorf("not continued once let go: %q %v", dir, err)
 	}
 }

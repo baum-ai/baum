@@ -692,12 +692,12 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 	if agent != AgentClaudeCode && agent != AgentCodex {
 		return "", unavailable("Only Claude Code and Codex sessions can be continued.")
 	}
-	if t.Running(agent, id) {
-		return "", unavailable(RunningElsewhere)
-	}
 	loc, err := Locate(t.home(), "", agent, id, path)
 	if err != nil {
 		return "", err
+	}
+	if t.runningAt(agent, id, loc.main) {
+		return "", unavailable(RunningElsewhere)
 	}
 	// One the tracker missed may still be running: its agent is writing it.
 	if info, err := os.Stat(loc.main); err == nil && t.now().Sub(info.ModTime()) < resumeQuiet {
@@ -717,16 +717,35 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 
 // RunningElsewhere is why a session a process runs, such as one in the
 // person's terminal, is not continued in the panel.
-const RunningElsewhere = "The session is running in a terminal. Continue it there, or exit it there first."
+const RunningElsewhere = "The session is running in a terminal. Continue it there, or exit it there first; Codex can take a minute to let it go."
 
 // Running is whether a process runs the agent's session id now, whether or
-// not the tracker lists it: Claude Code registers each running session's
-// process with its id (FindClaude). Other agents register none, so theirs
-// are never found.
+// not the tracker lists it. Claude Code registers each running session's
+// process with its id (FindClaude), and keeps it current when the session
+// switches with /resume. Codex registers none, but whatever runs a Codex
+// session, its terminal or the app server that terminal talks to, holds its
+// file open (heldOpen) until shortly after it exits; a finished `codex exec`
+// turn, as the panel runs, holds nothing. Other agents are never found.
 func (t *Transcripts) Running(agent, id string) bool {
-	if agent != AgentClaudeCode {
-		return false
+	main := ""
+	if agent == AgentCodex {
+		loc, err := Locate(t.home(), "", agent, id, "")
+		if err != nil {
+			return false
+		}
+		main = loc.main
 	}
-	_, err := FindClaude(t.home(), id)
-	return err == nil
+	return t.runningAt(agent, id, main)
+}
+
+// runningAt is Running for a Codex session whose file is main.
+func (t *Transcripts) runningAt(agent, id, main string) bool {
+	switch agent {
+	case AgentClaudeCode:
+		_, err := FindClaude(t.home(), id)
+		return err == nil
+	case AgentCodex:
+		return main != "" && heldOpen(main)
+	}
+	return false
 }
