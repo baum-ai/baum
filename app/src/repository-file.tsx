@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { cn } from "@baum/viewer/components/classnames";
 import { HighlightedText } from "@baum/viewer/components/highlighted-text";
 import { ExternalLinkIcon } from "@baum/viewer/components/icons";
 import { ActionLink, Alert, Button, CloseButton } from "@baum/viewer/components/ui";
@@ -46,35 +47,32 @@ export function symbolLine(lines: readonly string[], symbol: string | null): num
   return found >= 0 ? found : null;
 }
 
-/** A file of the repository that the pull request does not change, read from
- *  the clone at the review's head and shown in the app, for a context chip
- *  to open instead of leaving for GitHub. The symbol's definition, when it is
- *  found, is scrolled to and marked. `query` is the page's document selector;
- *  `href` is the file on GitHub, offered beside it. */
-export function RepositoryFileDialog({
+/** A file of the repository read from the clone at the review's head, whole
+ *  (not its diff): numbered, coloured when its language is known, with the
+ *  symbol's definition, when it is found, scrolled to and marked. `source`
+ *  is the file route with its selector, which `&path=` follows: a pull
+ *  request's `api/file?<selector>` or a group's
+ *  `api/groups/<id>/file?version=<n>`. `fill` lets the code take the height
+ *  its parent gives it (a side column) instead of a dialog's; `href`, the
+ *  file on GitHub, is offered below it when given. */
+export function RepositoryFileView({
   reference,
   source,
   href,
-  close,
+  fill = false,
 }: {
   reference: ReviewContextRef;
-  /** The file route with its selector, which `&path=` follows: a pull
-   *  request's `api/file?<selector>` or a group's
-   *  `api/groups/<id>/file?version=<n>`. */
   source: string;
-  href: string;
-  close: () => void;
+  href?: string;
+  fill?: boolean;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const code = useRef<HTMLDivElement>(null);
   const marked = useRef<HTMLDivElement>(null);
   const [file, setFile] = useState<RepositoryFile | null>(null);
   const [tokens, setTokens] = useState<HighlightedLine[] | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const { path, symbol } = reference;
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   useEffect(() => {
     const abort = new AbortController();
     setError("");
@@ -109,25 +107,15 @@ export function RepositoryFileDialog({
   }, [content, path]);
   const lines = content === null ? [] : content.replace(/\n$/, "").split("\n");
   const target = content === null ? null : symbolLine(lines, symbol);
+  // Only the code scrolls to the symbol: the page around it stays put.
   useEffect(() => {
-    if (target !== null) marked.current?.scrollIntoView?.({ block: "center" });
+    const box = code.current;
+    const line = marked.current;
+    if (target === null || !box || !line) return;
+    box.scrollTop = Math.max(0, line.offsetTop - box.clientHeight / 2);
   }, [target, content]);
   return (
-    <dialog
-      ref={dialog}
-      onCancel={close}
-      aria-labelledby="repository-file-title"
-      className="local-dialog-wide local-file-dialog"
-    >
-      <div className="local-dialog-head">
-        <div className="min-w-0">
-          <h2 id="repository-file-title" className="truncate" title={path}>
-            {path}
-          </h2>
-          <p>{symbol ? `${symbol} · as of the review's head` : "As of the review's head"}</p>
-        </div>
-        <CloseButton onClick={close} />
-      </div>
+    <div className={cn("min-w-0", fill && "flex min-h-0 flex-1 flex-col")}>
       {!file && !error ? <LoadingStatus>Reading the file from this clone…</LoadingStatus> : null}
       {error ? (
         <div className="flex flex-col items-start gap-2">
@@ -145,7 +133,13 @@ export function RepositoryFileDialog({
           {file?.truncated ? (
             <p className="local-file-truncated">Truncated: only the start of this file is shown.</p>
           ) : null}
-          <div className="local-file-code" role="region" aria-label={`Contents of ${path}`}>
+          <div
+            ref={code}
+            className="local-file-code"
+            data-fill={fill ? "" : undefined}
+            role="region"
+            aria-label={`Contents of ${path}`}
+          >
             {lines.map((line, index) => {
               const lineTokens = tokens?.[index];
               const fits = lineTokens?.map((token) => token.content).join("") === line;
@@ -168,7 +162,7 @@ export function RepositoryFileDialog({
           </div>
         </>
       ) : null}
-      {file || error ? (
+      {href && (file || error) ? (
         <div className="local-dialog-actions mt-4">
           <ActionLink variant="ghost" size="compact" href={href} target="_blank" rel="noreferrer">
             View on GitHub
@@ -176,6 +170,45 @@ export function RepositoryFileDialog({
           </ActionLink>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** A repository file opened over the page, for a context chip to open
+ *  instead of leaving for GitHub. */
+export function RepositoryFileDialog({
+  reference,
+  source,
+  href,
+  close,
+}: {
+  reference: ReviewContextRef;
+  source: string;
+  href: string;
+  close: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  const { path, symbol } = reference;
+  return (
+    <dialog
+      ref={dialog}
+      onCancel={close}
+      aria-labelledby="repository-file-title"
+      className="local-dialog-wide local-file-dialog"
+    >
+      <div className="local-dialog-head">
+        <div className="min-w-0">
+          <h2 id="repository-file-title" className="truncate" title={path}>
+            {path}
+          </h2>
+          <p>{symbol ? `${symbol} · as of the review's head` : "As of the review's head"}</p>
+        </div>
+        <CloseButton onClick={close} />
+      </div>
+      <RepositoryFileView reference={reference} source={source} href={href} />
     </dialog>
   );
 }

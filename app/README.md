@@ -488,7 +488,9 @@ to show" for a null content, a "Truncated" note past 512 KiB, a failure with
 Retry, and a "View on GitHub" link. The group page opens its context chips'
 files the same way, from `GET api/groups/<id>/file?version=<n>&path=<path>`,
 read at the review's head (its top member's), with the same guard: a path the
-group's document does not cite is 404 (`locallink.CitedFiles`). A draft shown
+group's document does not cite is 404 (`locallink.CitedFiles`, which reads a
+baum.review/1 `summary.context` and a baum.review/2 `context.<part>.files`).
+A draft shown
 before the first version keeps the chips' former behaviour: a changed file
 opens the Files pane, others GitHub. A
 commit chip selects the commit in the Commits group when the pull request lists
@@ -3059,7 +3061,14 @@ builds the rail's model (the sections and the file list) from it.
   session.
 - **How it works** lists "Where this fits" first in the rail (the review's
   context, its files as chips, and the tiles `context` owns) and opens on the
-  first real section. The sections are the rail's rows, not a list in the page. A section shows its
+  first real section. A file chip there opens the whole file at the review's
+  head, never its diff, even for a changed file: the page and the group page
+  give the route through `RepositoryFileSourceContext`, and `RepositoryFileView`
+  reads it. When the section is wide enough for two columns (as a section's
+  views), the file shows in a column beside the context, sharing the section
+  column's width and fold (`]`, folded at first; a chip unfolds it and marks
+  itself pressed); otherwise it opens in `RepositoryFileDialog`. A directory
+  still opens GitHub, and a draft keeps the chips' former behaviour. The sections are the rail's rows, not a list in the page. A section shows its
   title, then a row of views, each with its count and disabled (never hidden)
   when the section has nothing for it: **Overview** (its gist, then its body block by
   block, then its risks: prose at reading width, points as hairline lines that

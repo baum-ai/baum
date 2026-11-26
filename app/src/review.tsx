@@ -84,6 +84,7 @@ import {
 import { LoadingStatus } from "./nine-dots";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
+import { type RepositoryFileSource, RepositoryFileSourceContext } from "./repository-file-source";
 import { canMerge, MergeDialog } from "./merge";
 import {
   openActiveBlock,
@@ -634,6 +635,17 @@ export function LocalReview({
           : doc,
     [showingDraft, draft, retrying, doc, failedSections],
   );
+  // Where "Where this fits" reads the files it names, whole, at the head of
+  // the version on screen. A draft is no saved version, so the daemon has no
+  // document to read its files for.
+  const repositoryFiles = useMemo<RepositoryFileSource | null>(() => {
+    const document = viewedDocument ?? shownDocument;
+    if (showingDraft || !document) return null;
+    return {
+      source: `api/file?${query}`,
+      href: (path) => contextRefUrl(document, path),
+    };
+  }, [showingDraft, viewedDocument, shownDocument, query]);
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
   // Before there is a review, Files changed lists the pull request's files
   // in the viewer's own files pane; once one lands, the same place is the
@@ -1047,7 +1059,7 @@ export function LocalReview({
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
           <div className="ask-main" inert={narrow && questionsOpen ? true : undefined}>
-            <TileHostContext.Provider value={tileHost}>
+            <ReviewHosts tileHost={tileHost} files={repositoryFiles}>
               <ReviewViewer
                 document={shownDocument}
                 openSource={(anchor) => {
@@ -1474,7 +1486,7 @@ export function LocalReview({
                   showingDraft ? (doc ? undefined : (path: string) => factsPatches(path)) : patches
                 }
               />
-            </TileHostContext.Provider>
+            </ReviewHosts>
           </div>
           {questionsOpen && earlier ? (
             <>
@@ -1594,6 +1606,26 @@ function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
         ),
       })
     : copy;
+}
+
+/** What the review's tiles and its context's files read from the page: the
+ *  tile host, and the route repository files are read from. */
+function ReviewHosts({
+  tileHost,
+  files,
+  children,
+}: {
+  tileHost: TileHost;
+  files: RepositoryFileSource | null;
+  children: ReactNode;
+}) {
+  return (
+    <TileHostContext.Provider value={tileHost}>
+      <RepositoryFileSourceContext.Provider value={files}>
+        {children}
+      </RepositoryFileSourceContext.Provider>
+    </TileHostContext.Provider>
+  );
 }
 
 class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean; why: string }> {
