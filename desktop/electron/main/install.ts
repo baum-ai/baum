@@ -205,6 +205,10 @@ export async function uninstall(
   return unix.uninstall(record, current, home, elevate);
 }
 
+// Moving the app's links when its baum moved (macOS: the Tauri app's
+// Contents/MacOS/baum); see Setup.moveTauriLinks.
+export { linksAt, repoint, repointAsRoot } from "./install-unix.ts";
+
 /** Puts a copy of `source` at `copy` unless the copy is the one made last
  *  time from this very `source`: a stamp beside the copy records the
  *  source's size and modification time and the copy's modification time, so

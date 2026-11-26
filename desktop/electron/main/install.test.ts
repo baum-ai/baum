@@ -33,8 +33,11 @@ import {
 import {
   INSTALL_SCRIPT,
   install,
+  linksAt,
   mayElevate,
   packageManaged,
+  repoint,
+  repointAsRoot,
   type Rules,
   status,
   statusWith,
@@ -608,6 +611,89 @@ describe.skipIf(!unix)("the baum command on Unix", () => {
     symlinkSync(w.app, join(bin, "baum"));
     const s = w.status([bin]);
     expect(s.installed && s.record === null && s.plan === null).toBe(true);
+  });
+});
+
+// The Tauri app linked the command to baum.app/Contents/MacOS/baum, the
+// Electron app's own executable now; the app moves those links to its
+// bundled baum when it starts.
+describe.skipIf(!unix)("moving the Tauri app's links", () => {
+  /** An app whose old baum path (`from`) is the executable now, its bundled
+   *  baum (`to`), and the record of a link to `from` in `dir`. */
+  function moved(w: World, dir: string) {
+    const from = w.app;
+    const to = join(w.root, "Applications/baum.app/Contents/Resources/bin/baum");
+    executable(to, "bundled");
+    const link = join(dir, "baum");
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(from, link);
+    const record: InstallRecord = {
+      link,
+      target: from,
+      backup: join(dir, "baum.replaced-by-baum-app"),
+      admin: false,
+    };
+    return { from, to, record };
+  }
+
+  /** Records each prompt instead of showing it. */
+  function prompts() {
+    const asked: string[][] = [];
+    const elevate: Elevate = {
+      async run(script, args) {
+        expect(script).toBe(INSTALL_SCRIPT);
+        asked.push([...args]);
+      },
+    };
+    return { asked, elevate };
+  }
+
+  it("moves a link in a folder the user can write without asking", () => {
+    const w = new World("tauri-writable");
+    const { from, to, record } = moved(w, w.localBin());
+    // Recorded as needing an administrator back then, but writable now.
+    const found = linksAt([{ ...record, admin: true }], from);
+    expect(found).toEqual({ writable: [{ ...record, admin: true }], system: [] });
+    const after = repoint(record, to);
+    expect(readlinkSync(record.link)).toBe(to);
+    // The backup of a baum the link replaced back then stays recorded.
+    expect(after).toEqual({ ...record, target: to, admin: false });
+    // Moved, and so no longer found.
+    expect(linksAt([record], from)).toEqual({ writable: [], system: [] });
+  });
+
+  it("leaves links someone changed, and other records", () => {
+    const w = new World("tauri-changed");
+    const { from, record } = moved(w, w.localBin());
+    unlinkSync(record.link);
+    executable(record.link, "theirs");
+    const other = moved(w, join(w.root, "elsewhere/bin"));
+    const shapeless = { ...other.record, link: join(w.root, "elsewhere/bin/notbaum") };
+    expect(linksAt([record, shapeless], from)).toEqual({ writable: [], system: [] });
+    expect(linksAt([other.record], join(w.root, "some/other/baum"))).toEqual({
+      writable: [],
+      system: [],
+    });
+  });
+
+  it("asks for a password only for a system folder", async () => {
+    const w = new World("tauri-system");
+    const dir = join(w.root, "usr/local/bin");
+    const { from, to, record } = moved(w, dir);
+    expect(linksAt([record], from, () => false).system).toEqual([record]);
+    const { asked, elevate } = prompts();
+    const after = await repointAsRoot(record, to, w.home, elevate, () => true);
+    expect(asked).toEqual([[dir, record.link, "", to]]);
+    expect(after).toEqual({ ...record, target: to, admin: true });
+    // Not a folder root may change, or a baum in the home folder: no prompt.
+    expect(await failure(repointAsRoot(record, to, w.home, elevate, () => false))).toContain(
+      "does not ask for an administrator's password",
+    );
+    const inHome = join(w.home, "Applications/baum.app/Contents/Resources/bin/baum");
+    expect(await failure(repointAsRoot(record, inHome, w.home, elevate, () => true))).toContain(
+      "does not ask for an administrator's password",
+    );
+    expect(asked).toHaveLength(1);
   });
 });
 

@@ -15,6 +15,7 @@ import * as decode from "./decode.ts";
 import { type Elevate, systemPrompt } from "./elevation.ts";
 import * as install from "./install.ts";
 import type { InstallRecord, LoginPath, Plan, Status, Target } from "./install.ts";
+import { errorMessage, log } from "./log.ts";
 import { isAbsolute, join, joinPaths, parent, samePath, splitPaths } from "./path-rules.ts";
 import {
   type AppProcess,
@@ -624,6 +625,56 @@ export class Setup<L> {
     }
     this.open = true;
     return SETUP_PAGE;
+  }
+
+  /** The Tauri app's baum was `baum.app/Contents/MacOS/baum`, which is this
+   *  app's own executable now (the bundled baum is
+   *  `Contents/Resources/bin/baum`), so the command links the Tauri app made
+   *  no longer run baum: run through a link, the executable stops before
+   *  any of the app's code runs, so hooks would do nothing. Moves them to
+   *  the baum the app runs. Links in a directory the user can write are
+   *  moved before this returns, without a prompt; a link in a system
+   *  directory (such as `/usr/local/bin`) after the password prompt, which
+   *  the returned promise waits for. A failed or cancelled move leaves the
+   *  link as it was, and setup then offers Install for it. */
+  moveTauriLinks(): Promise<void> {
+    const { app } = this.deps;
+    if (app.platform !== "darwin" || cliOverridden(app) || this.deps.misplaced() !== null) {
+      return Promise.resolve();
+    }
+    const from = app.execPath;
+    const to = this.cliPath();
+    if (samePath(from, to, app.platform)) return Promise.resolve();
+    const found = install.linksAt(this.load().commands, from);
+    for (const record of found.writable) {
+      try {
+        this.saveRecord(install.repoint(record, to));
+        log(`pointed ${record.link} at ${to}`);
+      } catch (e) {
+        log(`cannot move the baum command: ${errorMessage(e)}`);
+      }
+    }
+    if (found.system.length === 0) return Promise.resolve();
+    return this.busy.run(async () => {
+      for (const record of found.system) {
+        try {
+          const moved = await install.repointAsRoot(record, to, this.deps.home, this.elevate);
+          this.saveRecord(moved);
+          log(`pointed ${record.link} at ${to}`);
+        } catch (e) {
+          log(`cannot move the baum command: ${errorMessage(e)}`);
+        }
+      }
+    });
+  }
+
+  /** Replaces the setup record of the same link. */
+  private saveRecord(record: InstallRecord): void {
+    updateAt(this.deps.settingsFile, (saved) => {
+      saved.commands = saved.commands.map((r) =>
+        samePath(r.link, record.link, this.platform) ? record : r,
+      );
+    });
   }
 
   /** Whether the setup screen shows, so the window must stay on it: the

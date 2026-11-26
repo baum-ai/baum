@@ -1,4 +1,13 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -465,5 +474,108 @@ describe.skipIf(!unix)("the setup commands", () => {
     // A child of an AppImage inherits APPIMAGE but runs from elsewhere.
     expect(childPath(app("/usr/bin/code"))).toBeNull();
     expect(childPath(app("/usr/bin/baum-desktop", { PATH: "/usr/bin" }))).toBeNull();
+  });
+});
+
+describe.skipIf(!unix)("the Tauri app's command links on macOS", () => {
+  afterEach(() => clearCommands());
+  const runningAsRoot = process.getuid?.() === 0;
+
+  /** The updated app at `root`: its executable is the Tauri app's baum
+   *  path, its bundled baum is in Resources/bin, and desktop.json records
+   *  the Tauri app's links to the old path, in `~/.local/bin` and, unless
+   *  `system` is null, in `system`. */
+  function updated(root: string, system: string | null) {
+    const contents = join(root, "Applications/baum.app/Contents");
+    const exe = join(contents, "MacOS/baum");
+    mkdirSync(join(contents, "MacOS"), { recursive: true });
+    writeFileSync(exe, "the app");
+    mkdirSync(join(contents, "Resources/bin"), { recursive: true });
+    const bundled = fakeCli(join(contents, "Resources/bin"), "exit 0");
+    const links = [join(root, "home/.local/bin/baum")];
+    if (system !== null) links.push(join(system, "baum"));
+    for (const link of links) {
+      mkdirSync(join(link, ".."), { recursive: true });
+      symlinkSync(exe, link);
+    }
+    const settingsFile = join(root, "config", FILE);
+    mkdirSync(join(root, "config"), { recursive: true });
+    const commands = links.map((link) => ({ link, target: exe, backup: null, admin: false }));
+    writeFileSync(settingsFile, JSON.stringify({ setup: { onboarded: true, commands } }));
+    let prompts = 0;
+    const deps: SetupDeps<string> = {
+      app: { platform: "darwin", env: {}, execPath: exe },
+      home: join(root, "home"),
+      settingsFile,
+      localDataDir: join(root, "data"),
+      bundledCli: bundled,
+      misplaced: () => null,
+      launch: () => null,
+      client: {
+        request: async () => ({ status: 200, body: Buffer.from("{}") }),
+        catchUp: async () => undefined,
+      },
+      chooseFolder: async () => null,
+      openExternal: () => undefined,
+      leaveSetup: () => undefined,
+      elevate: {
+        async run() {
+          prompts++;
+        },
+      },
+    };
+    return { exe, bundled, links, settingsFile, deps, prompts: () => prompts };
+  }
+
+  it("moves a link the user can write at once, without a prompt", async () => {
+    const w = updated(tempDir("tauri-links"), null);
+    const setup = registerSetupCommands(w.deps);
+    const moving = setup.moveTauriLinks();
+    // Before the promise settles: nothing may run baum through it first.
+    expect(readlinkSync(w.links[0] ?? "")).toBe(w.bundled);
+    await moving;
+    expect(w.prompts()).toBe(0);
+    expect(readFrom(w.settingsFile).commands).toEqual([
+      { link: w.links[0], target: w.bundled, backup: null, admin: false },
+    ]);
+    // Done: the next start finds nothing to move.
+    clearCommands();
+    await registerSetupCommands(w.deps).moveTauriLinks();
+    expect(w.prompts()).toBe(0);
+  });
+
+  it.skipIf(runningAsRoot)(
+    "prompts for no folder outside the system ones, and leaves its link",
+    async () => {
+      const root = tempDir("tauri-locked");
+      const locked = join(root, "opt/bin");
+      const w = updated(root, locked);
+      chmodSync(locked, 0o555);
+      try {
+        await registerSetupCommands(w.deps).moveTauriLinks();
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+      // ~/.local/bin moved; opt/bin is the user's, not root's: no prompt,
+      // and setup offers Install for it.
+      expect(w.prompts()).toBe(0);
+      expect(readlinkSync(w.links[0] ?? "")).toBe(w.bundled);
+      expect(readlinkSync(w.links[1] ?? "")).toBe(w.exe);
+      expect(readFrom(w.settingsFile).commands.map((c) => c.target)).toEqual([w.bundled, w.exe]);
+    },
+  );
+
+  it("does nothing elsewhere than macOS, or with a development baum", async () => {
+    const w = updated(tempDir("tauri-other"), null);
+    await registerSetupCommands({
+      ...w.deps,
+      app: { ...w.deps.app, platform: "linux" },
+    }).moveTauriLinks();
+    clearCommands();
+    await registerSetupCommands({
+      ...w.deps,
+      app: { ...w.deps.app, env: { BAUM_DESKTOP_BAUM: "/dev/baum" } },
+    }).moveTauriLinks();
+    expect(readlinkSync(w.links[0] ?? "")).toBe(w.exe);
   });
 });
