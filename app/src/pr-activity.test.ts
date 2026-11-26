@@ -28,7 +28,8 @@ const conversation = (
   ({ id, state, updated_at, repository: "acme/demo", pull_request: 7 }) as ConversationSummary;
 
 const KEY = "acme/demo#7";
-const start = advance({ prs: {} }, [entry()], [], [], 1)!;
+/** Seen and opened once, so its activity counts from here. */
+const start = advance({ prs: {} }, [entry()], [], [KEY], 1)!;
 const unread = (stored: ReturnType<typeof advance>) => stored!.prs[KEY]!.unread;
 
 it("takes a pull request seen the first time as read, once the conversations are read", () => {
@@ -94,7 +95,13 @@ it("reads a pull request listed by several clones once", () => {
 });
 
 it("keeps the review and threads while a new head's details are unknown", () => {
-  const seen = advance({ prs: {} }, [entry({}, { review: "approved", unresolved: 3 })], [], [], 1)!;
+  const seen = advance(
+    { prs: {} },
+    [entry({}, { review: "approved", unresolved: 3 })],
+    [],
+    [KEY],
+    1,
+  )!;
   const pushed = advance(
     seen,
     [entry({ head_sha: "bbb2222" }, { review: "", unresolved: null })],
@@ -110,6 +117,23 @@ it("keeps the review and threads while a new head's details are unknown", () => 
     3,
   );
   expect(unread(fetched ?? pushed)).toEqual({ pushes: 1 });
+});
+
+it("counts nothing for a pull request whose page was never open", () => {
+  const seen = advance({ prs: {} }, [entry()], [], [], 1)!;
+  const pushed = advance(seen, [entry({ head_sha: "bbb2222" }, { version_count: 2 })], [], [], 2)!;
+  expect(unread(pushed)).toEqual({});
+  // Opening it starts the count from what it shows then.
+  const opened = advance(
+    pushed,
+    [entry({ head_sha: "bbb2222" }, { version_count: 2 })],
+    [],
+    [KEY],
+    3,
+  )!;
+  expect(opened.prs[KEY]!.opened).toBe(true);
+  const after = advance(opened, [entry({ head_sha: "ccc3333" }, { version_count: 2 })], [], [], 4)!;
+  expect(unread(after)).toEqual({ pushes: 1 });
 });
 
 it("clears the pull requests whose page is open", () => {

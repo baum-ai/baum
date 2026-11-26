@@ -37,6 +37,8 @@ type PullRecord = {
   at: number;
   last: Observed;
   unread: Activity;
+  /** Its page has been open: only then is what happens on it counted. */
+  opened?: true;
 };
 type Stored = { prs: Record<string, PullRecord> };
 
@@ -156,7 +158,8 @@ function add(a: Activity, b: Activity): Activity {
 /** The record after a read: each open pull request's changes added to what
  *  is unread, those open on screen (`viewing`) read, and a pull request seen
  *  the first time taken as it is, once the panel's conversations are read.
- *  Null when nothing changed. */
+ *  Only a pull request whose page has been open counts anything, so the list
+ *  does not light up for every one it holds. Null when nothing changed. */
 export function advance(
   stored: Stored,
   entries: Entry[],
@@ -179,15 +182,18 @@ export function advance(
     // A first sight waits for the panel's conversations and GitHub's details.
     if (!record && (!conversations || entry.unresolved === null)) continue;
     const last = observe(entry, conversations, record?.last);
+    const viewed = viewing.includes(key);
+    const opened = viewed || !!record?.opened;
     const unread =
-      viewing.includes(key) || !record ? {} : add(record.unread, changes(record.last, last));
+      viewed || !record || !opened ? {} : add(record.unread, changes(record.last, last));
     if (
       record &&
+      opened === !!record.opened &&
       JSON.stringify(record.last) === JSON.stringify(last) &&
       JSON.stringify(record.unread) === JSON.stringify(unread)
     )
       continue;
-    prs[key] = { at: now, last, unread };
+    prs[key] = opened ? { at: now, last, unread, opened } : { at: now, last, unread };
     changed = true;
   }
   if (!changed) return null;

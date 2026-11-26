@@ -1,17 +1,18 @@
 import { expect, type Page, test } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
 
-type Stored = { prs: Record<string, { unread: Record<string, number> }> };
+type Stored = { prs: Record<string, { unread: Record<string, number>; opened?: true }> };
 
 /** Sets the unread activity of pull requests in the daemon's record, as
- *  reads of the app would have counted it. */
+ *  reads of the app would have counted it for pull requests opened before. */
 async function setUnread(page: Page, unread: Record<string, Record<string, number>>) {
   await page.evaluate(async (unread) => {
     // The app may save its own reads meanwhile: try again on a newer revision.
     for (let attempt = 0; attempt < 5; attempt++) {
       const read = await fetch("api/ui-state/activity", { cache: "no-store" });
       const { revision, value } = (await read.json()) as { revision: number; value: Stored };
-      for (const [key, counts] of Object.entries(unread)) value.prs[key]!.unread = counts;
+      for (const [key, counts] of Object.entries(unread))
+        value.prs[key] = { ...value.prs[key]!, unread: counts, opened: true };
       const saved = await fetch("api/ui-state/activity", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
