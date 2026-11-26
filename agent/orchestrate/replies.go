@@ -75,7 +75,7 @@ type riskReply struct {
 }
 
 // tileBrief is a section's word on a planned tile. Focus is a code tile's
-// one to three new-side lines that matter most, which the page highlights.
+// new-side lines that matter most, which the page highlights.
 type tileBrief struct {
 	ID     string            `json:"id"`
 	Shows  string            `json:"shows"`

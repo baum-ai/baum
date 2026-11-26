@@ -3036,7 +3036,7 @@ builds the rail's model (the sections and the file list) from it.
   tile (`{hunk, lines, focus}`) draws its excerpt as Files changed draws a
   hunk (`CodeDiff`): under its file's path, which opens the file in Files
   changed, with old and new line numbers and the lines it removed among and
-  just before its range. The one to three `focus` lines carry a bar and the
+  just before its range. The `focus` lines carry a bar and the
   rest are dimmed. An excerpt over 14 lines shows 12 (from just above its
   first focus line, moved down to take in its last when they fit) until
   "Show all N lines" opens it; the `@@` header gives the ranges drawn. When the index holds

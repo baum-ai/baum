@@ -108,7 +108,7 @@ all phrases, ending the same way.
   characters; `cites` are the hunks, with `lines`, that it rests on. For a
   `code` tile, `shows` is its title (two to five plain words) and its first
   hunk cite, with `lines` around the few lines the reader must see (at most
-  30), is the excerpt the host shows; `focus` names the one to three lines
+  30), is the excerpt the host shows; `focus` names the few lines
   of it (new-side line numbers) that carry the point, which the page
   highlights while it dims the rest; keep them close together, as a long
   excerpt opens folded at the first. Leave `focus` null for other tiles, or

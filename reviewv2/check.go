@@ -496,14 +496,11 @@ func (f *findings) codeData(where string, data json.RawMessage, refs *Refs) {
 	if code.Lines != nil && len(code.Lines) != 2 {
 		f.add(where, "lines is not a first and last line")
 	}
-	if len(code.Focus) > MaxCodeFocus {
-		f.add(where, "focus names more than %d lines", MaxCodeFocus)
-	}
 	first, last := 1, math.MaxInt
 	if len(code.Lines) == 2 {
 		first, last = code.Lines[0], code.Lines[1]
 	}
-	if len(code.Focus) <= MaxCodeFocus && len(FocusWithin(code.Focus, first, last)) != len(code.Focus) {
+	if len(FocusWithin(code.Focus, first, last)) != len(code.Focus) {
 		f.add(where, "focus names a line outside lines, or one twice")
 	}
 }

@@ -1104,7 +1104,7 @@ writes (`view.DiagramSchema`, checked by `view.CheckDiagram`, refused rather
 than cut when a text is over its limit or a source is not a hunk of the
 version), its caption and source lifted to the tile
 (`reviewv2.LiftNative`); a code tile names a hunk and, optionally, lines of
-its new side (at most 80) and one to three of them to highlight (`focus`),
+its new side (at most 80) and the few of them to highlight (`focus`),
 and the host reads those lines from the clone at
 the version's head (`gitlocal.Repo.Blob`), so its text is never the agent's;
 an images tile names image files on this computer by absolute path (at most
@@ -2125,8 +2125,8 @@ characters and two to five steps `st_` of one sentence within 220; risks `rsk_`
 within 300 characters), `CheckContext` (four parts of at most two
 sentences and 320 characters, the area required), `CheckTile` (title within
 80, caption within 200, native data within `tiles/view`'s limits through
-`view.CheckNative`, a code tile's hunk and lines on its new side, and at
-most three focus lines within them) and
+`view.CheckNative`, a code tile's hunk and lines on its new side, and its
+focus lines within them) and
 `CheckOverview` (summary text, verdict line within 120 and at most three
 points within 200, `risk_why` within two sentences and 260 characters,
 screenshots and intent that the pull request has, a main diagram that is a

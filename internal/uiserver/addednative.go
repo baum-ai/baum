@@ -183,8 +183,8 @@ func (a LocalAPI) codeExcerpt(ctx context.Context, c repos.Clone, shown shownVer
 		}
 		first, last = code.Lines[0], code.Lines[1]
 	}
-	if len(code.Focus) > reviewv2.MaxCodeFocus || len(reviewv2.FocusWithin(code.Focus, first, last)) != len(code.Focus) {
-		return nil, reviewv2.Anchor{}, fmt.Errorf("focus names one to %d different lines of the excerpt, %d to %d", reviewv2.MaxCodeFocus, first, last)
+	if len(reviewv2.FocusWithin(code.Focus, first, last)) != len(code.Focus) {
+		return nil, reviewv2.Anchor{}, fmt.Errorf("focus names each line once, within the excerpt, %d to %d", first, last)
 	}
 	code.Focus = reviewv2.FocusWithin(code.Focus, first, last)
 	if last-first+1 > maxCodeLines {

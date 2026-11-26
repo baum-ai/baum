@@ -94,7 +94,7 @@ func MapSchema(types []string) []byte {
 // SectionSchema is a section agent's reply schema.
 func SectionSchema(types []string) []byte {
 	// A code tile's focus: the new-side lines the page highlights.
-	focus := nullable(array(obj{"type": "integer", "minimum": 1}, 1, reviewv2.MaxCodeFocus))
+	focus := nullable(array(obj{"type": "integer", "minimum": 1}, 1, 0))
 	brief := object(obj{"id": text(80), "shows": text(600), "cites": cites(reviewv2.MaxCites), "focus": focus, "drop": obj{"type": "boolean"}, "reason": nullable(text(400))})
 	point := object(obj{"text": text(450), "more": nullable(text(1200)), "cites": cites(reviewv2.MaxCites)})
 	// A block uses the fields of its type; the others are null.

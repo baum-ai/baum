@@ -261,11 +261,8 @@ type CodeData struct {
 	Text  string `json:"text,omitempty"`
 }
 
-// MaxCodeFocus is how many lines a code tile may highlight.
-const MaxCodeFocus = 3
-
 // FocusWithin is focus kept to the lines from first to last, each once, in
-// order, at most MaxCodeFocus of them; nil when none is left.
+// order; nil when none is left.
 func FocusWithin(focus []int, first, last int) []int {
 	var out []int
 	for _, line := range focus {
@@ -274,9 +271,6 @@ func FocusWithin(focus []int, first, last int) []int {
 		}
 	}
 	slices.Sort(out)
-	if len(out) > MaxCodeFocus {
-		out = out[:MaxCodeFocus]
-	}
 	return out
 }
 
