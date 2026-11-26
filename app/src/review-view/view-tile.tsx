@@ -185,7 +185,7 @@ export function ViewTileCard({
       className={cn(
         "view-tile min-w-0 scroll-mt-4 outline-none",
         bare
-          ? "space-y-2 rounded-md data-[review-block-active]:bg-surface-wash"
+          ? "space-y-2 rounded-md data-[review-block-active]:bg-surface-wash data-[review-block-active]:shadow-[0_0_0_0.5rem_var(--surface-wash)]"
           : "space-y-3 rounded-lg border border-default bg-surface-card p-4 data-[review-block-active]:border-strong",
       )}
     >

@@ -40,7 +40,7 @@ const SCORE_INK: Record<Tone, string> = {
 /** A part of the Overview j and k move to, washed while they are on it, as a
  *  section's blocks are. */
 const STOP =
-  "min-w-0 scroll-mt-4 rounded-md outline-none data-[review-block-active]:bg-surface-wash";
+  "min-w-0 scroll-mt-4 rounded-md outline-none data-[review-block-active]:bg-surface-wash data-[review-block-active]:shadow-[0_0_0_0.5rem_var(--surface-wash)]";
 
 /** The Overview, always in the same order: the summary, the risk (with the
  *  verdict under it when something must happen before merging), what it
