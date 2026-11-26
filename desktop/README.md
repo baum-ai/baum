@@ -1033,6 +1033,8 @@ so the harness can tell the page's calls from a frame's. It fails if:
 - the page's own `target="_blank"` link does not open the browser exactly
   once, a same-window link to another site is not refused, or a link to the
   daemon's own page does not navigate;
+- a click on the page's video does not put it in full screen, or Esc does
+  not leave it;
 - `open_link` does not open a link once, a second within the second is not
   dropped, or a `file:`, `data:`, `javascript:`, loopback or userinfo URL is
   not refused; `window.open` in a burst opens more than once, every 100 ms

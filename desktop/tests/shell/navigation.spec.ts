@@ -494,11 +494,13 @@ test("page-fullscreen: a click puts the page's video in full screen, Esc leaves 
   await waitFor("full screen", 5_000, () =>
     shell.main.evaluate(() => document.fullscreenElement?.tagName === "VIDEO"),
   );
-  await shell.app.evaluate(({ webContents }, url) => {
+  const pressed = await shell.app.evaluate(({ webContents }, url) => {
     const contents = webContents.getAllWebContents().find((w) => w.getURL() === url);
     contents?.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
     contents?.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
+    return contents !== undefined;
   }, url);
+  expect(pressed, "the page's web contents").toBe(true);
   await waitFor("leaving full screen", 5_000, () =>
     shell.main.evaluate(() => document.fullscreenElement === null),
   );
