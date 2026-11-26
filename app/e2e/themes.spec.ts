@@ -92,7 +92,6 @@ test("puts a dark theme in the light slot and the page follows its base", async 
       getComputedStyle(element).getPropertyValue("--surface-page").trim(),
     );
   expect(await surface("Default dark")).not.toBe(await surface("Default light"));
-  await page.screenshot({ path: "test-results/appearance-light.png", animations: "disabled" });
 
   // Any base sits in either slot: the dark theme in the light slot gives a dark page.
   await mode("Light").click();
@@ -100,11 +99,6 @@ test("puts a dark theme in the light slot and the page follows its base", async 
   await expect(light.getByRole("radio", { name: "Dusk" })).toBeChecked();
   await expect(html(page)).toHaveAttribute("data-theme", "dark");
   await expect.poll(() => paper(page)).toBe("#e8eef4");
-  await page.screenshot({
-    path: "test-results/themes-dark-in-light-slot.png",
-    animations: "disabled",
-  });
-  await page.screenshot({ path: "test-results/appearance-dark.png", animations: "disabled" });
 
   // Arrow keys move within a row of thumbnails, as native radios do.
   await light.getByRole("radio", { name: "Dusk" }).focus();
@@ -325,7 +319,6 @@ test("previews a proposed theme, restores it on dismiss and saves it with a name
   await expect(html(page)).toHaveAttribute("data-theme", "dark");
   await expect.poll(() => paper(page)).toBe("#e8eef4");
   await expect(proposal.getByLabel("Use it as")).toHaveValue("dark");
-  await page.screenshot({ path: "test-results/themes-preview.png", animations: "disabled" });
 
   // A newer proposal replaces the open one: only Sand is left and previewed.
   await expect(panel(page).getByText("Working", { exact: true })).toHaveCount(0);

@@ -62,7 +62,6 @@ test("opens the session panel on a pull request and starts a session there", asy
   await expect(panel(page).getByText("Read docs/guide.md")).toBeVisible();
   await expect(panel(page).getByText("Working", { exact: true })).toBeVisible();
   await expect(panel(page).getByRole("button", { name: "Stop" })).toBeVisible();
-  await page.screenshot({ path: "test-results/session-panel-running.png", animations: "disabled" });
 
   // The Sessions menu stays open while the turn goes on under it.
   await panel(page).getByRole("button", { name: "Sessions" }).click();
@@ -82,10 +81,6 @@ test("opens the session panel on a pull request and starts a session there", asy
   ).toBeVisible();
   await expect(panel(page).locator(".session-panel-directory code")).toContainText("console");
   await expect(panel(page).getByText("Auto", { exact: true })).toBeVisible();
-  await page.screenshot({
-    path: "test-results/session-panel-answered.png",
-    animations: "disabled",
-  });
 
   // The key in the composer hides it, and brings it back on the same
   // session.
@@ -126,10 +121,6 @@ test("opens the session panel on a pull request and starts a session there", asy
   await expect(menu.getByRole("menuitem", { name: /Reply|End session|Focus session/ })).toHaveCount(
     0,
   );
-  await page.screenshot({
-    path: "test-results/session-panel-sessions.png",
-    animations: "disabled",
-  });
 });
 
 test("messages sent while the agent works are queued and sent once it answers", async ({
@@ -209,10 +200,6 @@ test("the panel follows the page the person has open", async ({ page }) => {
   await footnote.scrollIntoViewIfNeeded();
   const panelTop = (await panel(page).boundingBox())!.y;
   expect((await footnote.boundingBox())!.y + 10).toBeLessThan(panelTop);
-  await page.screenshot({
-    path: "test-results/session-panel-settings.png",
-    animations: "disabled",
-  });
 
   // ⌘K (Ctrl+K here) hides it as the key does.
   await page.keyboard.press("Control+k");
@@ -244,7 +231,6 @@ test("from the top, the panel leaves the pull request's bar in view", async ({ p
     expect((await merge.boundingBox())!.y).toBeGreaterThan(box.y + box.height);
     const title = page.getByRole("heading", { name: "Reuse the existing PR page" });
     expect((await title.boundingBox())!.y).toBeGreaterThan(box.y + box.height);
-    await page.screenshot({ path: "test-results/session-panel-top.png", animations: "disabled" });
   } finally {
     await page.evaluate(() =>
       fetch("api/settings/panel", {
@@ -286,15 +272,6 @@ test("a repository's prompt the agent proposes from a review is saved from the r
     // Against the text in use: the one line added, not the whole prompt.
     await expect(proposal.locator('.prompt-diff span[data-kind="add"]')).toContainText([line]);
     await expect(proposal).not.toContainText("open it to save");
-    await proposal.scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: "test-results/session-panel-prompt.png",
-      animations: "disabled",
-    });
-    await proposal.screenshot({
-      path: "test-results/session-panel-prompt-card.png",
-      animations: "disabled",
-    });
     await proposal.getByRole("button", { name: "Save", exact: true }).click();
     await expect(proposal).toHaveCount(0);
 
@@ -350,7 +327,6 @@ test("a comment the agent proposes joins the pending review only after Save", as
   // Nothing joined the review before Save.
   if (before) await expect(count).toHaveText(String(before));
   else await expect(count).toHaveCount(0);
-  await page.screenshot({ path: "test-results/session-panel-comment.png", animations: "disabled" });
   await proposal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(proposal).toHaveCount(0);
   await expect(count).toHaveText(String(before + 1));
@@ -390,7 +366,6 @@ test("a menu opened beside the panel draws over it, and the panel stays open", a
       [(left + right) / 2, (top + bottom) / 2],
     );
     expect(front).toBe(true);
-    await page.screenshot({ path: "test-results/menu-over-session-panel.png" });
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
     await expect(panel(page)).toBeVisible();

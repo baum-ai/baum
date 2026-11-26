@@ -222,13 +222,13 @@ func TestAddAnImagesTile(t *testing.T) {
 func TestAnAddedImageIsDownscaled(t *testing.T) {
 	f, _ := newAddedFixture(t)
 	f.put(t, titled(t, "First title"))
-	shot := writePNG(t, t.TempDir(), "large.png", 3200, 1000)
+	shot := writePNG(t, t.TempDir(), "large.png", 3136, 32)
 	added, err := (AddedTilesAPI{API: *f.api}).Add(context.Background(), "acme/widgets", 42, agentcontext.TileAdd{Type: "images", Data: json.RawMessage(fmt.Sprintf(`{"items":[{"path":%q}]}`, shot))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var images reviewv2.ImagesData
-	if tile := servedTile(f.served(t, ""), added.Tile); tile == nil || json.Unmarshal(tile.Data, &images) != nil || len(images.Items) != 1 || images.Items[0].Width != 1568 {
+	if tile := servedTile(f.served(t, ""), added.Tile); tile == nil || json.Unmarshal(tile.Data, &images) != nil || len(images.Items) != 1 || images.Items[0].Width != 1568 || images.Items[0].Height != 16 {
 		t.Fatalf("the tile: %+v", tile)
 	}
 }
