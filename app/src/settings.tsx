@@ -188,6 +188,7 @@ export const settingsSections = [
   "appearance",
   "reviews",
   "fixes",
+  "panel",
   "connections",
   "computer",
   "prompts",
@@ -199,6 +200,7 @@ const sectionTitles: Record<SettingsSection, string> = {
   appearance: "Appearance",
   reviews: "Reviews",
   fixes: "Fixes",
+  panel: "Session panel",
   connections: "Connections",
   computer: "This computer",
   prompts: "Prompts",
@@ -218,7 +220,7 @@ const SECTION_CONTROLS = [
 
 /** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
  *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
- *  previous section from anywhere, and 1 to 8 jump to one. j/↓ and k/↑ step
+ *  previous section from anywhere, and 1 to 9 jump to one. j/↓ and k/↑ step
  *  through the shown section's controls; from the section list j goes to its
  *  first control and k to its last, as Enter, l or → go to the first. Enter or
  *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
@@ -1273,9 +1275,9 @@ const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
   { value: "right", label: "Right" },
 ];
 
-/** The session panel's setting: the agent and model a new session opens with
- *  (the fix agent's unless chosen) and the access it gets. The edge it opens
- *  from is under General (`PanelPositionSetting`). */
+/** Settings › Session panel: the agent and model a new session opens with
+ *  (the fix agent's unless chosen), the access it gets and the edge of the
+ *  window the panel opens from. */
 export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly string[] }) {
   const [saved, setSaved] = useState<PanelSettings | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -1296,6 +1298,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
     agent: saved.agent_source === "panel" ? panelHarness[saved.agent] : "",
     model: saved.agent_source === "panel" ? saved.model : "",
     mode: saved.mode,
+    position: saved.position,
   };
   const key = JSON.stringify(choice);
   const [draft, setDraft] = useState(choice);
@@ -1311,6 +1314,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
       // its model follows too.
       ...(next.agent ? { model: next.model } : {}),
       mode: next.mode,
+      position: next.position,
     });
   };
   const following = `Now ${agentName(saved.agent)}${saved.model ? ` · ${modelName(saved.model)}` : ""}, the fix agent.`;
@@ -1376,54 +1380,28 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
             onChange={(mode) => change({ mode })}
           />
         </SettingRow>
-      </div>
-      <p className="settings-footnote">
-        Changes apply to the next session you start; a session keeps the agent and access it started
-        with.
-      </p>
-    </section>
-  );
-}
-
-/** The edge of the window the session panel opens from, under General: it
- *  saves only the position, so the panel's agent and access under Fixes
- *  stay as they are. */
-export function PanelPositionSetting() {
-  const [saved, setSaved] = useState<PanelSettings["position"] | null>(null);
-  const [loadError, setLoadError] = useState("");
-  const load = () => readPanelSettings().then((settings) => setSaved(settings.position));
-  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, and again when it changes
-  useEffect(() => {
-    load().catch((e: unknown) => setLoadError(errorText(e)));
-    return onPanelSettingsChanged(() => void load().catch(() => {}));
-  }, []);
-  const { save, error, failures } = useAutoSave(async () => {
-    await load();
-    panelSettingsChanged();
-  }, "api/settings/panel");
-  const [draft, setDraft] = useState(saved);
-  useEffect(() => setDraft(saved), [saved, failures]);
-  if (!saved || !draft) return loadError ? <Alert>{loadError}</Alert> : null;
-  return (
-    <>
-      {error ? <Alert>{error}</Alert> : null}
-      <div className="local-panel settings-list">
         <SettingRow
           label="Opens from"
           detail="The edge of the window the session panel slides in from."
         >
           <SegmentedControl
             label="Opens from"
-            value={draft}
+            value={draft.position}
             items={panelPositions}
             onChange={(position) => {
-              setDraft(position);
+              // Saves only the position, so a model that follows the fix
+              // agent's is not saved as the panel's own.
+              setDraft({ ...draft, position });
               save({ position });
             }}
           />
         </SettingRow>
       </div>
-    </>
+      <p className="settings-footnote">
+        Agent and access changes apply to the next session you start; a session keeps the agent and
+        access it started with.
+      </p>
+    </section>
   );
 }
 
@@ -1884,8 +1862,12 @@ export function SettingsPage({
     },
     {
       id: "fixes",
-      sub: `${defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews"} · session panel`,
+      sub: defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews",
       tone: fix && !fix.fixable ? "caution" : undefined,
+    },
+    {
+      id: "panel",
+      sub: "Agent, access and position",
     },
     {
       id: "connections",
@@ -2078,14 +2060,12 @@ export function SettingsPage({
             )
           ) : section === "fixes" ? (
             defaults ? (
-              <>
-                <FixesSection defaults={defaults} changed={agentsChanged} signedOut={signedOut} />
-                {/* The panel's agent follows the fix agent unless chosen. */}
-                <SessionPanelSection signedOut={signedOut} />
-              </>
+              <FixesSection defaults={defaults} changed={agentsChanged} signedOut={signedOut} />
             ) : (
               loading
             )
+          ) : section === "panel" ? (
+            <SessionPanelSection signedOut={signedOut} />
           ) : section === "prompts" ? (
             <PromptsSection prompts={prompts} />
           ) : section === "tiles" ? (
@@ -3617,7 +3597,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Keyboard, session panel and plan usage preferences on this device."
+        detail="Keyboard and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -3661,8 +3641,6 @@ function GeneralSection() {
           />
         </SettingRow>
       </div>
-      <h3 className="settings-subhead">Session panel</h3>
-      <PanelPositionSetting />
       <h3 className="settings-subhead">Plan usage</h3>
       <PlanUsageSettings />
     </section>
