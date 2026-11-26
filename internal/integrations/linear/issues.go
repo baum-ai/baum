@@ -36,7 +36,7 @@ func (p *Provider) query(ctx context.Context, token, query string, vars any, dat
 	if err != nil {
 		return errRequest
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == 401 {
 		return errReconnect
 	}

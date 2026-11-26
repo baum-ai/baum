@@ -2,6 +2,7 @@
 package linear
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -22,6 +23,9 @@ import (
 )
 
 const callback = "http://127.0.0.1:37841/oauth/linear/callback"
+
+// releaseClientID is the public OAuth application ID embedded by release builds.
+var releaseClientID string
 
 var errRequest = errors.New("Linear request failed")
 var errReconnect = errors.New("Linear authorization expired")
@@ -54,7 +58,7 @@ type Provider struct {
 }
 
 func New(ctx context.Context, clientID string) *Provider {
-	return &Provider{lifetime: ctx, clientID: clientID, client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: credentialstore.ProcessStore{Service: "baum.linear.app"}}
+	return &Provider{lifetime: ctx, clientID: cmp.Or(clientID, releaseClientID), client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, store: credentialstore.ProcessStore{Service: "baum.linear.app"}}
 }
 func (*Provider) ID() string   { return "linear" }
 func (*Provider) Name() string { return "Linear" }
@@ -169,7 +173,7 @@ func (p *Provider) Connect(context.Context) (string, error) {
 		p.cache = nil
 		p.message = ""
 		p.reconnect = false
-		fmt.Fprintln(w, "Linear connected. You can return to baum.")
+		_, _ = fmt.Fprintln(w, "Linear connected. You can return to baum.")
 	})
 	p.pending = server
 	p.message = ""
@@ -221,7 +225,7 @@ func (p *Provider) exchange(ctx context.Context, form url.Values) (credential, e
 	if err != nil {
 		return credential{}, errRequest
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out struct {
 		Access  string `json:"access_token"`
 		Refresh string `json:"refresh_token"`
