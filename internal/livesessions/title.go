@@ -250,6 +250,10 @@ func (t *Transcripts) listed() []Listed {
 		if empty(s.Agent, title, activity) {
 			continue
 		}
+		if at, ok := interruptedWait(s, activity); ok && t.Tracker.Interrupted(s.Agent, s.ID, at) {
+			s.LastActivityAt, s.LastEvent = at, EventStop
+			s.WaitingReason, s.WaitingSince, s.WaitingMessage = WaitTurnFinished, at, ""
+		}
 		l := Listed{Session: settle(s, activity), Title: title, Summary: excerpt, Activity: activity}
 		refusal := t.endRefusal(l.Session, checks)
 		l.Endable, l.Messageable = refusal == nil, t.messageable(l.Session)
@@ -608,8 +612,12 @@ func readClaude(path string, from, to int64, scan *scanState) error {
 				if text, ok := claudeText(line, false); ok {
 					// Commands and their output come wrapped in tags, and an
 					// interruption is noted as a user line; neither was typed.
-					typed := !strings.HasPrefix(text, "<") && !strings.HasPrefix(text, "[Request interrupted")
+					interrupted := strings.HasPrefix(text, "[Request interrupted")
+					typed := !strings.HasPrefix(text, "<") && !interrupted
 					scan.act.prompted(text, typed)
+					if at, ok := claudeTime(line); interrupted && ok {
+						scan.act.interrupted = at
+					}
 				}
 			}
 		}
@@ -755,6 +763,18 @@ func claudeQueued(line []byte, whole bool) string {
 // claudePeerNote opens what Claude Code adds after a peer's message, telling
 // its model where it came from.
 const claudePeerNote = "\n\nThis came from another Claude session"
+
+// claudeTime is when a Claude Code transcript line was written.
+func claudeTime(line []byte) (time.Time, bool) {
+	var v struct {
+		Timestamp string `json:"timestamp"`
+	}
+	if json.Unmarshal(line, &v) != nil {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, v.Timestamp)
+	return at.UTC(), err == nil
+}
 
 // claudeText is the text of a Claude Code user line: a compaction summary
 // with summary, else one the user typed, not a meta line or a tool result.

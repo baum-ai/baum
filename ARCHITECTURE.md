@@ -7245,7 +7245,15 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   asks), the store calls `Interrupted`, and the tracker's
   `Tracker.Interrupted` makes the session's `permission` or `input` wait a
   `turn_finished` one from then (unless an event since is newer): it waits
-  for its user's next prompt. Likewise a request the app answered calls
+  for its user's next prompt. The disconnect is not always there to see:
+  a request the store did not hold (one it answers nothing at once, or one
+  turned down in the Claude app) ends with no hook event at all. So the
+  session list also reads the interruption Claude Code notes in the
+  transcript (`[Request interrupted by user…]`): one at or after a
+  `permission` or `input` wait began calls `Tracker.Interrupted` with the
+  line's time, the same as the disconnect. This also settles a wait
+  restored after a daemon restart, since the transcript is read again from
+  its start. Likewise a request the app answered calls
   `Answered`, and `Tracker.Answered` ends the session's wait as a tool event
   would: the agent goes on (after a denial too) but reports nothing until
   the tool call ends, which for a long command would leave it shown waiting.
