@@ -2924,11 +2924,10 @@ When the daemon runs no session panel (`GET api/console/conversations`
 answers `available: false`), the button carries a `!` and says so, the panel
 explains that baum could not open its sessions, and no page is reported.
 
-Settings › Fixes holds the panel's setting (**Session panel**,
-`api/settings/panel`): its agent (**Same as fixes** follows the fix agent and
-its model), the model of an agent chosen there and the access of a new
-session. The edge it opens from (**Opens from**) is under Settings › General,
-which saves only `position`. On the Sessions page a panel's session carries a
+Settings › Session panel (`section=panel`) holds the panel's setting
+(`api/settings/panel`): its agent (**Same as fixes** follows the fix agent and
+its model), the model of an agent chosen there, the access of a new session
+and the edge it opens from (**Opens from**). On the Sessions page a panel's session carries a
 **Panel** tag, a session in its own empty folder is named "Session panel" and
 placed in "Own folder", and its menu offers **Open in panel** instead of
 reply, focus and end (a running one says so under its card). A finished turn

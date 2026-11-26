@@ -20,7 +20,7 @@ import {
   useSessionPanel,
 } from "./session-panel";
 import { PreferencesProvider } from "./preferences";
-import { PanelPositionSetting, SessionPanelSection } from "./settings";
+import { SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
 
 /** The host as the app mounts it, with the conversations it reads. */
@@ -1049,27 +1049,14 @@ it("saves the session panel's setting as it changes", async () => {
     agent: "codex",
     model: "gpt-6-luna",
     mode: "auto",
+    position: "bottom",
   });
-  // The edge it opens from is under General, not here.
-  expect(button("Top")).toBeFalsy();
   await act(async () => button("Workspace")!.click());
   await until(() => expect(puts().at(-1)!.body).toMatchObject({ mode: "workspace" }));
-});
-
-it("saves only the edge the session panel opens from, under General", async () => {
-  await act(async () =>
-    root.render(
-      <ToastProvider>
-        <PanelPositionSetting />
-      </ToastProvider>,
-    ),
-  );
-  await until(() => expect(button("Top")).toBeTruthy());
+  // The edge it opens from is in the same section.
   expect(button("Bottom")!.getAttribute("aria-pressed")).toBe("true");
   await act(async () => button("Top")!.click());
-  const puts = () => calls.filter((c) => c.path === "api/settings/panel" && c.method === "PUT");
-  await until(() => expect(puts()).toHaveLength(1));
-  expect(puts().at(-1)!.body).toEqual({ position: "top" });
+  await until(() => expect(puts().at(-1)!.body).toMatchObject({ position: "top" }));
 });
 
 it("picks the pull request's own open conversation for an Ask, else a new one", () => {

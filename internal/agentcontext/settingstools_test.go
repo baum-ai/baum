@@ -72,6 +72,8 @@ func (d *settingsDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 "fix_backend":"codex","fix_model":"gpt-5","effort":"high","fix_effort":"low","job_concurrency":3,"review_time_limit_minutes":20,"run_time_limit_minutes":45}`, sentinelEnv, sentinelToken, sentinelHome)
 	case "/api/settings/labs":
 		reply(`{"tile_reviews":true,"extra":"SENTINEL_LABS"}`)
+	case "/api/settings/panel":
+		reply(`{"agent":"codex","model":"gpt-5","mode":"full","position":"right","agent_source":"panel","model_source":"fix","extra":"SENTINEL_PANEL"}`)
 	case "/api/settings/appearance":
 		reply(`{"theme":"dark","key_hints":false,"page_modifier":"alt","review_page":"tiles","extra":"SENTINEL_APPEARANCE",
 "light_theme":"default-light","dark_theme":"c-1","themes":[{"id":"default-light","name":"Default light","base":"light","builtin":true,"tokens":{}},{"id":"default-dark","name":"Default dark","base":"dark","builtin":true,"tokens":{}},{"id":"c-1","name":"Midnight","base":"dark","tokens":{"--color-paper":"#101820"}}]}`)
@@ -165,7 +167,7 @@ func runDirect(t *testing.T, s *Server, consumer Consumer, page *PageContext, na
 	return tool.Call(context.Background(), c, b)
 }
 
-var settingsToolNames = []string{"settings_general", "settings_appearance", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"}
+var settingsToolNames = []string{"settings_general", "settings_appearance", "settings_reviews", "settings_fixes", "settings_panel", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"}
 var repositoryToolNames = []string{"repository_reviews", "repository_prompts", "repository_registration"}
 
 // Every Settings and repository page tool, called as a chat with and without
@@ -186,6 +188,7 @@ func TestSettingsToolsCarryNoSecret(t *testing.T) {
 			`{"id":"c-1","name":"Midnight","base":"dark","tokens":{"--color-paper":"#101820"},"builtin":false}`, `"theme_tokens":{"seeds":["--color-ink"`, `"roles":["--action-primary"`, `"theme_defaults":{"dark":{`, `"slot_values":{"dark":{`, `"--color-paper":"#101820"`, `"theme_note":`}, nil},
 		{"settings_reviews", nil, []string{`"automatic":{"enabled":true,"pull_requests":"authored"}`, `"backend":"claude","model":"opus","effort":"high"`, `"decision_capture":{"enabled":true,"backend":"","model":"","effort":"","effective_backend":"claude","backend_undetermined":false,"effective_model":"haiku","model_ignored":false}`, `"tile_reviews":true`}, nil},
 		{"settings_fixes", nil, []string{`{"backend":"codex","model":"gpt-5","effort":"low","same_as_reviews":false}`}, nil},
+		{"settings_panel", nil, []string{`{"agent":"codex","model":"gpt-5","mode":"full","position":"right","agent_source":"panel","model_source":"fix"}`}, nil},
 		{"settings_connections", nil, []string{`"state":"pending"`, `"host":"other host"`, `"login":"octo"`, `"source":"environment"`, `"override":true`, `"saved":true`, `"workflow":true`, `"error":"auth_request_failed"`, `"organizations_not_reachable":["acme-corp"]`, `"codex_hooks":{"state":"untrusted","checked_at":"2026-11-12T09:30:00Z"}`}, nil},
 		{"settings_computer", nil, []string{`"job_concurrency":3`, `"review_time_limit_minutes":20`, `"run_time_limit_minutes":45`, `"agent_env_names":["API_KEY","OTHER","ZED_TOKEN"]`, `"agent_env_source":"app"`, `"codex_approvals":true`,
 			`{"id":"claude","label":"claude","status":"ok","version":"2.1.0"}`, `{"id":"codex","label":"codex","status":"problem","version":"0.9 ~/bin"}`, `{"id":"backend-auto","label":"backend: auto","status":"ok","version":"2.1.0"}`, `{"id":"anthropic-api-key","label":"ANTHROPIC_API_KEY (anthropic backend)","status":"info"}`, `"diagnostics_status":"problem"`, `"diagnostics_problems":1`}, nil},
@@ -250,7 +253,7 @@ func TestSettingsToolsReportWhatIsUnavailable(t *testing.T) {
 	s := New(Options{API: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/settings":
+		case "/api/settings", "/api/settings/panel":
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprintf(w, `{"message":"SENTINEL %s"}`, sentinelToken)
 		case "/api/settings/appearance":
@@ -261,7 +264,7 @@ func TestSettingsToolsReportWhatIsUnavailable(t *testing.T) {
 	}), PlanChoices: func(context.Context) ([]json.RawMessage, error) {
 		return nil, errors.New("SENTINEL " + sentinelToken)
 	}})
-	for _, tool := range []string{"settings_reviews", "settings_fixes", "settings_computer"} {
+	for _, tool := range []string{"settings_reviews", "settings_fixes", "settings_panel", "settings_computer"} {
 		text, err := runDirect(t, s, Consumer{Kind: Chat}, nil, tool, nil)
 		if err == nil || strings.Contains(err.Error(), "SENTINEL") || strings.Contains(err.Error(), sentinelToken) {
 			t.Errorf("%s: %v %s", tool, err, text)
