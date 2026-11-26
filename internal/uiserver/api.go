@@ -236,10 +236,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			writeJSON(w, map[string]any{"available": false, "code": code})
 		})
 	}
-	if a.Integrations != nil {
-		mux.Handle("/api/integrations", a.Integrations)
-		mux.Handle("/api/integrations/", a.Integrations)
-	}
+	connections := provider(a.Integrations, "integrations_unavailable")
+	mux.Handle("/api/integrations", connections)
+	mux.Handle("/api/integrations/", connections)
 	merge := provider(a.Merge, "merge_unavailable")
 	mux.Handle("GET /api/prs/merge-options", merge)
 	mux.Handle("POST /api/prs/merge", merge)
