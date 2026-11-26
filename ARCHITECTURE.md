@@ -7403,8 +7403,7 @@ page it was sent from) set it on every open conversation's token and the ones
 minted later, so `current_page` and proposals follow the person; changes to
 baum's own state still go through proposals the person saves. `Send` starts a
 turn in the background and answers at once: it refuses a conversation that is
-running (`ErrBusy`) or closed, or whose directory is gone, saves the page it
-came from, and runs the agent in the directory with the message as the
+closed or whose directory is gone, saves the page it came from, and runs the agent in the directory with the message as the
 prompt, the conversation's session resumed and the daemon's `/api/mcp` as its
 MCP server (`Options.MCPURL`, read at each turn, since the app server listens
 only after the daemon's application starts). The agent backend is built once per agent, model,
@@ -7416,7 +7415,16 @@ turn over the limit fails naming it. When the agent cannot find the session
 to resume (`agent.ErrSessionNotFound`), the turn fails saying so, the stored
 session is cleared and the token is replaced by a new one bound to no session
 (a token binds to one session, once), so the next turn starts a new session
-in the same directory. Once shutdown begins, `Create` and `Send` are refused
+in the same directory. A message sent while a turn runs is queued on the
+conversation (`queued`, stored with it: id, text, the page it came from;
+at most `MaxQueued`, and `MaxMessageBytes` together) with a `queued` event.
+When the turn answers, the queued messages start the next turn as one prompt,
+a blank line between them, about the page of the last; a turn stopped,
+failed or cut short by shutdown or a restart leaves them queued. A `Send` to
+an idle conversation that still has queued messages puts them before its
+message; `POST .../queued/send` sends them on their own (`409 busy` while a
+turn runs) and `DELETE .../queued/{id}` removes one (`404 queued_not_found`
+once it was sent or removed). `Close` drops them. Once shutdown begins, `Create` and `Send` are refused
 (`ErrShuttingDown`); shutdown waits for a `Create` in flight (a fetch it runs
 is cancelled, giving an empty directory), fails running turns with the reason
 and revokes every token. A turn's usage is priced as the backend's
@@ -7436,7 +7444,7 @@ server; what its commands and hooks inherit follows the person's own
 `shell_environment_policy`.
 
 Progress is published as `console` events, `{"conversation","kind","state"}`
-with the kind `created`, `state`, `session` (the agent named its session),
+with the kind `created`, `state`, `queued` (a message was queued or removed), `session` (the agent named its session),
 `archived`, `text` (at most once a second per conversation while the answer grows, since
 the event stream replays only its last 128 events), `finished` (with
 `cost_usd` when the turn could be priced) or `proposals` (the conversation's
@@ -7491,7 +7499,9 @@ routes answer as the local API does for a capability it lacks: a read with
 | `POST /api/console/conversations` | opens one from `{"agent","model","mode","page"}`, each optional (the panel's setting); 201 with the conversation |
 | `GET /api/console/conversations/{id}` | every field of the conversation, its pages included, `session_key`, and `progress` (the running or last turn since the daemon started: `text`, `message`, `tool`, `session`, `state`, `cost_usd`) or null |
 | `GET /api/console/conversations/{id}/transcript` | the transcript of the session the conversation's agent reported, answered as `GET /api/live-sessions/{agent}/{id}/transcript` is (`?version=` included), read with `Transcripts.Read`: found by that session id in the agent's own session store, whether or not the tracker still lists it; nothing in the request names the file. Before the agent reported a session, or when its file is gone, `available: false` with why |
-| `POST /api/console/conversations/{id}/messages` | sends `{"text","page"}` (the page optional) as a turn; 202 with the conversation, running |
+| `POST /api/console/conversations/{id}/messages` | sends `{"text","page"}` (the page optional) as a turn, after any messages still queued; while a turn runs, queues it instead; 202 with the conversation, its `queued` included |
+| `POST /api/console/conversations/{id}/queued/send` | sends the queued messages now, as one turn; 202 with the conversation, 409 `busy` while a turn runs, 404 `queued_not_found` when none are queued |
+| `DELETE /api/console/conversations/{id}/queued/{queued}` | removes a queued message; 200 with the conversation, 404 `queued_not_found` once it was sent or removed |
 | `POST /api/console/conversations/{id}/cancel` | stops the running turn (none running is no error) and answers the conversation |
 | `POST /api/console/conversations/{id}/close` | closes it: stops its turn, revokes its token, drops its proposals |
 | `POST /api/console/conversations/{id}/archive` | closes it and removes what baum made for it (`Archive`); `{"discard":true}` removes it even when that loses work, which is otherwise 409 `unclean_directory`; answers the conversation with `archived_at` |

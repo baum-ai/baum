@@ -50,6 +50,7 @@ func openStore(path, reason string, now time.Time) (*store, error) {
 var addedColumns = [][2]string{
 	{"created_branch", "INTEGER NOT NULL DEFAULT 0"},
 	{"directory_note", "TEXT NOT NULL DEFAULT ''"},
+	{"queued", "TEXT NOT NULL DEFAULT '[]'"},
 	{"archived", "INTEGER NOT NULL DEFAULT 0"},
 }
 
@@ -72,11 +73,19 @@ func addColumns(db *sql.DB) error {
 
 func (s *store) close() error { return s.db.Close() }
 
-const columns = `id, agent, model, mode, directory, repository, pull_request, branch, created_worktree, session_id, pages, title, created, updated, state, error, cost_usd, cost_partial, created_branch, directory_note, archived`
+const columns = `id, agent, model, mode, directory, repository, pull_request, branch, created_worktree, session_id, pages, title, created, updated, state, error, cost_usd, cost_partial, created_branch, directory_note, queued, archived`
 
 // save writes the whole conversation, inserting it or replacing its row.
 func (s *store) save(c Conversation) error {
 	pages, err := json.Marshal(c.Pages)
+	if err != nil {
+		return err
+	}
+	list := c.Queued
+	if list == nil {
+		list = []Queued{}
+	}
+	queued, err := json.Marshal(list)
 	if err != nil {
 		return err
 	}
@@ -88,13 +97,13 @@ func (s *store) save(c Conversation) error {
 	if c.ArchivedAt != nil {
 		archived = c.ArchivedAt.UnixMilli()
 	}
-	_, err = s.db.Exec(`INSERT INTO console_conversations(`+columns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err = s.db.Exec(`INSERT INTO console_conversations(`+columns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET agent=excluded.agent, model=excluded.model, mode=excluded.mode, directory=excluded.directory, repository=excluded.repository,
 pull_request=excluded.pull_request, branch=excluded.branch, created_worktree=excluded.created_worktree, session_id=excluded.session_id, pages=excluded.pages,
 title=excluded.title, created=excluded.created, updated=excluded.updated, state=excluded.state, error=excluded.error, cost_usd=excluded.cost_usd, cost_partial=excluded.cost_partial,
-created_branch=excluded.created_branch, directory_note=excluded.directory_note, archived=excluded.archived`,
+created_branch=excluded.created_branch, directory_note=excluded.directory_note, queued=excluded.queued, archived=excluded.archived`,
 		c.ID, c.Agent, c.Model, c.Mode, c.Directory, c.Repository, c.PullRequest, c.Branch, c.CreatedWorktree, c.Session, string(pages), c.Title,
-		c.CreatedAt.UnixMilli(), c.UpdatedAt.UnixMilli(), c.State, c.Error, cost, c.CostPartial, c.CreatedBranch, c.DirectoryNote, archived)
+		c.CreatedAt.UnixMilli(), c.UpdatedAt.UnixMilli(), c.State, c.Error, cost, c.CostPartial, c.CreatedBranch, c.DirectoryNote, string(queued), archived)
 	return err
 }
 
@@ -102,17 +111,20 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scan(row scanner) (Conversation, error) {
 	var c Conversation
-	var pages string
+	var pages, queued string
 	var created, updated, archived int64
 	var cost sql.NullFloat64
 	if err := row.Scan(&c.ID, &c.Agent, &c.Model, &c.Mode, &c.Directory, &c.Repository, &c.PullRequest, &c.Branch, &c.CreatedWorktree, &c.Session,
-		&pages, &c.Title, &created, &updated, &c.State, &c.Error, &cost, &c.CostPartial, &c.CreatedBranch, &c.DirectoryNote, &archived); err != nil {
+		&pages, &c.Title, &created, &updated, &c.State, &c.Error, &cost, &c.CostPartial, &c.CreatedBranch, &c.DirectoryNote, &queued, &archived); err != nil {
 		return Conversation{}, err
 	}
 	// A page list that does not parse is shown as none rather than hiding
 	// the conversation.
 	if json.Unmarshal([]byte(pages), &c.Pages) != nil || c.Pages == nil {
 		c.Pages = []agentcontext.PageContext{}
+	}
+	if json.Unmarshal([]byte(queued), &c.Queued) != nil || c.Queued == nil {
+		c.Queued = []Queued{}
 	}
 	c.CreatedAt, c.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	if cost.Valid {
