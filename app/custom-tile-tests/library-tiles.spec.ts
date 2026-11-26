@@ -8,6 +8,8 @@ import {
   servePatch,
   serveTiles,
   SHOTS,
+  TILE_WIDTHS,
+  tileColorSchemes,
   tileOn,
   watchErrors,
 } from "./helpers";
@@ -20,8 +22,6 @@ import {
 // sandboxed frames but read as the page's own, never as "Custom tile".
 
 const PR13 = "repository=acme%2Fdemo&pr=13";
-const WIDTHS = [1440, 900, 390] as const;
-const SCHEMES = ["light", "dark"] as const;
 
 /** The patch of the Go file the interface change cites (an added file of 56
  *  lines), so its detail has code to show. */
@@ -91,8 +91,8 @@ test("library and authored tiles on their sections", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-for (const width of WIDTHS)
-  for (const scheme of SCHEMES)
+for (const width of TILE_WIDTHS)
+  for (const scheme of tileColorSchemes(width))
     test(`library and authored tiles at ${width} in ${scheme}`, async ({ page }) => {
       const errors = watchErrors(page);
       await servePatch(page);

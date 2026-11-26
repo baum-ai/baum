@@ -2588,12 +2588,12 @@ How it works section the tile stands on). With that variable the fixture
 stores acme/demo#7's versions and #13 as `baum.review/2` documents with
 their tiles (`browserV2`): #7's with the synthetic custom tiles on the
 section of its first hunk, #13's with its composition's library and
-authored tiles. The well-behaved tile at 1440, 900 and
-390px in light and dark (pictures into `test-results/custom-tiles` with
-`CUSTOM_TILE_SHOTS=1`), a review generated with library and authored tiles
-(`library-tiles.spec.ts`, acme/demo#13, with the same widths, themes and
-pictures), and the escape probes on the real frame route
-(`tile-frames.spec.ts`), with a server on port 4170 that must hear nothing.
+authored tiles. The layout checks exercise the well-behaved tile and the library and
+authored tiles at 1440px and 900px in light mode and 390px in dark mode.
+A separate test changes the theme on an open frame. With `CUSTOM_TILE_SHOTS=1`
+both suites capture all three widths in both themes in `test-results/custom-tiles`.
+The escape probes on the real frame route (`tile-frames.spec.ts`) use a server
+on port 4170 that must hear nothing.
 The synthetic tiles share a section, so each test serves the document with
 only the ones it drives (`showOnly`, which drops the others' tiles and tile
 blocks). `just local_app::e2e-webkit`

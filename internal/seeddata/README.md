@@ -85,5 +85,6 @@ just oss-go test ./internal/seeddata
 with another, `TestTheDaemonReadsIt` reads it back through the registry,
 discovery, the review index and the inboxes, and `TestDefaultsMeetTheCriteria`
 writes the default dataset and checks it meets the profiling criteria
-(skipped with `-short`); `TestAFailedGenerationLeavesNoBaumData` makes the
+(skipped with `-short`). Monorepo CI writes the full dataset for generator
+changes and full sweeps. `TestAFailedGenerationLeavesNoBaumData` makes the
 last step fail and checks nothing of the dataset is left.

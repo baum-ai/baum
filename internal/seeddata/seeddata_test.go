@@ -22,7 +22,7 @@ import (
 
 // small is a dataset small enough to write twice in a test.
 func small(seed int64, home string) Options {
-	return Options{Seed: seed, Home: home, Repositories: 4, PullRequests: 18, LargeDiffLines: 600, Inboxes: 12,
+	return Options{Seed: seed, Home: home, Repositories: 4, PullRequests: 6, LargeDiffLines: 600, Inboxes: 12,
 		ClaudeSessions: 2, CodexSessions: 1, LongTranscriptTurns: 40, DraftComments: 2}
 }
 

@@ -4,6 +4,14 @@ import { launchURL } from "../e2e/inbox-helpers";
 /** Where pictures go, when they are asked for: CUSTOM_TILE_SHOTS=1. */
 export const SHOTS = process.env.CUSTOM_TILE_SHOTS ? "test-results/custom-tiles" : "";
 
+export const TILE_WIDTHS = [1440, 900, 390] as const;
+
+// Layout checks cover every width and both themes. Pictures need every pairing.
+export function tileColorSchemes(width: number): readonly ("light" | "dark")[] {
+  if (SHOTS) return ["light", "dark"];
+  return width === 390 ? ["dark"] : ["light"];
+}
+
 /** The review page of acme/demo#7, which the fixture serves with the
  *  synthetic custom tiles when started with BAUM_APP_CUSTOM_TILES=1. The
  *  daemon places each on the How it works section whose hunks it cites. */
