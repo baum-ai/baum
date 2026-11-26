@@ -7712,6 +7712,7 @@ dialog.local-file-dialog {
   color: var(--text-tertiary);
 }
 .local-file-code {
+  position: relative;
   max-height: min(65vh, 48rem);
   overflow: auto;
   border: 1px solid var(--border-subtle);
@@ -7721,6 +7722,12 @@ dialog.local-file-dialog {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1.55;
+}
+/* In a side column the code takes the column's height and scrolls there. */
+.local-file-code[data-fill] {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 .local-file-line {
   display: grid;

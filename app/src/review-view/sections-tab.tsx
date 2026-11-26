@@ -1,8 +1,18 @@
-import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import pluralize from "pluralize";
 import { chipLinkClass } from "@baum/viewer/components/chip-classes";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import {
+  ChevronLeftIcon,
   ChevronRightIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -18,7 +28,10 @@ import { useReviewFiles, useReviewSources } from "@baum/viewer/components/review
 import { Part, PROSE, ReviewScoreBadge, TierBadge } from "@baum/viewer/components/review-parts";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { tabPanelProps } from "@baum/viewer/components/tabs";
-import { Badge, Button, CardHeader, LiveDot } from "@baum/viewer/components/ui";
+import { PaneDivider } from "@baum/viewer/components/pane-divider";
+import { Badge, Button, CardHeader, IconButton, LiveDot } from "@baum/viewer/components/ui";
+import { usePaneWidth } from "@baum/viewer/use-conversation-width";
+import { useStoredSetting } from "@baum/viewer/use-stored-setting";
 import {
   anchorFile,
   contextRefUrl,
@@ -63,7 +76,10 @@ import {
   useSectionViewKeys,
   viewKeyStep,
 } from "./section-views";
+import { SIDE_COLLAPSED_KEY, SIDE_LIMITS, useBracketKey } from "./side-column";
 import { useSideReveal } from "./side-reveal";
+import { RepositoryFileDialog, RepositoryFileView } from "../repository-file";
+import { type RepositoryFileSource, useRepositoryFileSource } from "../repository-file-source";
 import { BLOCK_LABEL, TONE_MEANS } from "./native-tiles";
 import { ViewTileCard } from "./view-tile";
 import { openExternal } from "../outside-links";
@@ -725,7 +741,10 @@ const CONTEXT_PARTS: { key: keyof V2Context; label: string }[] = [
 ];
 
 /** "Where this fits": the review's context, each part with the files it rests
- *  on, then the tiles placed on it. */
+ *  on, then the tiles placed on it. A file it names opens whole, at the
+ *  review's head (never its diff: the context is about the code around the
+ *  change): in a column beside the context when the section is wide enough,
+ *  as the other sections show their views, else in a dialog over the page. */
 function WhereThisFits({
   document,
   review,
@@ -743,9 +762,26 @@ function WhereThisFits({
 }) {
   const context = review.context;
   const tiles = tilesOn(review, CONTEXT_ID);
-  return (
-    <div className="space-y-7">
-      <CardHeader size="pane" title="Where this fits" />
+  const source = useRepositoryFileSource(document);
+  const root = useRef<HTMLDivElement>(null);
+  const wide = useWideSection(root);
+  const named = useMemo(() => contextFiles(document, context), [document, context]);
+  const split = wide && source !== null && named.length > 0;
+  const [stored, store] = useStoredSetting(SIDE_COLLAPSED_KEY);
+  const collapsed = stored !== "false";
+  const [picked, setPicked] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<string | null>(null);
+  const shown = picked !== null && named.includes(picked) ? picked : (named[0] ?? null);
+  useBracketKey(() => store(String(!collapsed)), split);
+  const open = source
+    ? (path: string) => {
+        if (!split) return setDialog(path);
+        setPicked(path);
+        if (collapsed) store("false");
+      }
+    : undefined;
+  const body = (
+    <div className="min-w-0 space-y-7">
       {!context && pending ? (
         <p role="status" className="flex items-center gap-2 text-base text-secondary">
           <LiveDot />
@@ -764,7 +800,12 @@ function WhereThisFits({
                     <ul className="flex flex-wrap gap-1.5" aria-label={`${label} files`}>
                       {part.files.map((path, position) => (
                         <li key={`${path}-${position}`} className="max-w-full min-w-0">
-                          <ContextChip document={document} reference={{ path, symbol: null }} />
+                          <ContextChip
+                            document={document}
+                            reference={{ path, symbol: null }}
+                            onOpen={open}
+                            shown={split && !collapsed && trimPath(path) === shown}
+                          />
                         </li>
                       ))}
                     </ul>
@@ -786,16 +827,174 @@ function WhereThisFits({
       ) : null}
     </div>
   );
+  return (
+    <div ref={root} className="space-y-7">
+      <CardHeader size="pane" title="Where this fits" />
+      {split && shown ? (
+        <ContextFileSplit
+          collapsed={collapsed}
+          collapse={(next) => store(String(next))}
+          path={shown}
+          source={source}
+        >
+          {body}
+        </ContextFileSplit>
+      ) : (
+        body
+      )}
+      {dialog && source ? (
+        <RepositoryFileDialog
+          reference={{ path: dialog, symbol: null }}
+          source={source.source}
+          href={source.href(dialog)}
+          close={() => setDialog(null)}
+        />
+      ) : null}
+    </div>
+  );
 }
 
-/** A file the context names: a changed one opens in the Code tab, another
- *  in the app's file dialog where it has one, anything else on GitHub. */
+const trimPath = (path: string) => path.replace(/\/+$/, "");
+
+/** The files the context names that open whole, in the order it names them:
+ *  directories have no text to show. */
+function contextFiles(document: ReviewDocument, context: V2Context | null): string[] {
+  if (!context) return [];
+  const paths = CONTEXT_PARTS.flatMap(({ key }) => context[key]?.files ?? [])
+    .filter((path) => !isContextDirectory(document, path))
+    .map(trimPath);
+  return [...new Set(paths)];
+}
+
+/** "Where this fits" beside the file it shows, as a wide section stands
+ *  beside its views: the column shares their width and fold (`]`), and
+ *  folds to a strip that a file's chip opens again. */
+function ContextFileSplit({
+  collapsed,
+  collapse,
+  path,
+  source,
+  children,
+}: {
+  collapsed: boolean;
+  collapse: (next: boolean) => void;
+  path: string;
+  source: RepositoryFileSource;
+  children: ReactNode;
+}) {
+  const grid = useRef<HTMLDivElement>(null);
+  const left = useRef<HTMLDivElement>(null);
+  const column = useRef<HTMLDivElement>(null);
+  const pane = usePaneWidth(SIDE_LIMITS);
+  return (
+    <div
+      ref={grid}
+      data-context-split=""
+      data-collapsed={collapsed ? "" : undefined}
+      data-pane-full={collapsed ? undefined : ""}
+      style={{ "--side-width": `${pane.width}px` } as CSSProperties}
+      className={cn(
+        "grid items-start",
+        collapsed
+          ? "grid-cols-[minmax(0,1fr)_2rem] gap-4"
+          : "grid-cols-[minmax(0,1fr)_2rem_minmax(0,var(--side-width))]",
+      )}
+    >
+      <div ref={left} className="min-w-0">
+        {children}
+      </div>
+      {collapsed ? (
+        <div className="sticky top-12 flex justify-center pt-1">
+          <IconButton
+            label="Show file"
+            title="Show file (])"
+            aria-keyshortcuts="]"
+            aria-expanded={false}
+            onClick={() => collapse(false)}
+          >
+            <ChevronLeftIcon size={14} />
+          </IconButton>
+        </div>
+      ) : (
+        <>
+          <PaneDivider
+            width={pane.width}
+            onWidth={pane.choose}
+            onPreview={(width) => grid.current?.style.setProperty("--side-width", `${width}px`)}
+            onFit={pane.fit}
+            reviewRef={left}
+            paneRef={column}
+            limits={SIDE_LIMITS}
+            label="Resize file"
+            className="self-stretch"
+          />
+          <div
+            ref={column}
+            data-context-file=""
+            className="sticky top-12 flex max-h-[calc(var(--review-visible,100dvh)-1rem)] min-w-0 flex-col"
+          >
+            <div className="flex flex-none items-center justify-between gap-2 border-b border-subtle pt-1 pb-2">
+              <div className="min-w-0">
+                <p className="truncate font-mono text-xs text-primary" title={path}>
+                  {path}
+                </p>
+                <p className="text-xs text-tertiary">As of the review's head</p>
+              </div>
+              <div className="flex flex-none items-center gap-1">
+                <a
+                  href={source.href(path)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="View on GitHub"
+                  aria-label="View on GitHub"
+                  className={cn(
+                    "grid size-7 place-items-center rounded-sm text-tertiary hover:bg-surface-wash hover:text-primary",
+                    FOCUS_RING,
+                  )}
+                >
+                  <ExternalLinkIcon size={12} />
+                </a>
+                <IconButton
+                  label="Hide file"
+                  title="Hide file (])"
+                  aria-keyshortcuts="]"
+                  aria-expanded
+                  onClick={() => collapse(true)}
+                >
+                  <ChevronRightIcon size={14} />
+                </IconButton>
+              </div>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col pt-3">
+              <RepositoryFileView
+                key={path}
+                reference={{ path, symbol: null }}
+                source={source.source}
+                fill
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A file the context names. With `onOpen` (a host that reads repository
+ *  files) a file opens whole there; without it a changed one opens in the
+ *  Code tab, another in the app's file dialog where it has one. A directory,
+ *  and anything else, opens on GitHub. `shown` marks the file the column
+ *  beside the context shows. */
 function ContextChip({
   document,
   reference,
+  onOpen,
+  shown = false,
 }: {
   document: ReviewDocument;
   reference: ReviewContextRef;
+  onOpen?: (path: string) => void;
+  shown?: boolean;
 }) {
   const files = useReviewFiles();
   const sources = useReviewSources();
@@ -819,6 +1018,23 @@ function ContextChip({
       <span className="min-w-[4ch] shrink-[2] truncate text-secondary">{name}</span>
     </span>
   );
+  if (onOpen && !directory)
+    return (
+      <button
+        type="button"
+        title={title}
+        aria-pressed={shown}
+        data-shown={shown ? "" : undefined}
+        className={cn(
+          chipLinkClass,
+          "cursor-pointer text-left data-[shown]:border-default data-[shown]:bg-surface-selected data-[shown]:text-primary",
+          FOCUS_RING,
+        )}
+        onClick={() => onOpen(path)}
+      >
+        {label}
+      </button>
+    );
   const changed = !directory && files?.has(path);
   const openFile = sources?.openRepositoryFile;
   if (changed || (!directory && openFile))
