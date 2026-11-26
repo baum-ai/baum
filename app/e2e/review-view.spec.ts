@@ -768,6 +768,11 @@ test("k back to the first block, and to the first place, shows the review's head
 });
 
 test("shows the linked issue beneath the pull request title", async ({ page }) => {
+  // Other tests disconnect the fixture's GitHub account. Supply its PR
+  // description here and exercise the daemon's provider registry and resolver.
+  await page.route("**/api/prs/description?*", (route) =>
+    route.fulfill({ json: { body: "Tracks https://linear.app/acme/issue/ENG-42" } }),
+  );
   await signedIn(page, PR7);
   const issue = page.getByRole("link", { name: /ENG-42 Improve review navigation/ });
   await expect(issue).toHaveAttribute("href", "https://linear.app/acme/issue/ENG-42");
