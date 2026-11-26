@@ -15,7 +15,10 @@ import (
 	"github.com/baum-ai/baum/internal/credentialstore"
 )
 
-type memoryStore struct{ value json.RawMessage }
+type memoryStore struct {
+	value json.RawMessage
+	fail  bool
+}
 
 func (s *memoryStore) Load(context.Context) (json.RawMessage, error) {
 	if s.value == nil {
@@ -23,8 +26,14 @@ func (s *memoryStore) Load(context.Context) (json.RawMessage, error) {
 	}
 	return s.value, nil
 }
-func (s *memoryStore) Save(_ context.Context, v json.RawMessage) error { s.value = v; return nil }
-func (s *memoryStore) Delete(context.Context) error                    { s.value = nil; return nil }
+func (s *memoryStore) Save(_ context.Context, v json.RawMessage) error {
+	if s.fail {
+		return credentialstore.ErrStore
+	}
+	s.value = v
+	return nil
+}
+func (s *memoryStore) Delete(context.Context) error { s.value = nil; return nil }
 
 type transport func(*http.Request) (*http.Response, error)
 
@@ -86,6 +95,16 @@ func TestConnectLookupRefreshDisconnect(t *testing.T) {
 		t.Fatal(st)
 	}
 	p.credential.Expires = time.Now()
+	store := p.store.(*memoryStore)
+	store.fail = true
+	if _, err := p.token(ctx); err == nil || p.rotated == nil {
+		t.Fatal("lost rotation during keyring outage")
+	}
+	store.fail = false
+	if _, err := p.token(ctx); err != nil || p.rotated != nil {
+		t.Fatal("did not persist retained rotation", err)
+	}
+
 	description := "https://linear.app/other/issue/B-1 https://linear.app/acme/issue/a-1/example https://linear.app/acme/issue/A-1"
 	for range 2 {
 		if issues := p.Issues(ctx, description); len(issues) != 1 || issues[0].State != "Done" {

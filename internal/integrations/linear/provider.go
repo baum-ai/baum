@@ -39,6 +39,8 @@ type credential struct {
 	Workspace string
 }
 type Provider struct {
+	// A rotated token must survive a temporary OS keyring failure.
+	rotated    *credential
 	mu         sync.Mutex
 	lifetime   context.Context
 	clientID   string
@@ -80,6 +82,7 @@ func (p *Provider) save(ctx context.Context, c credential) error {
 		return err
 	}
 	p.credential = &c
+	p.rotated = nil
 	return nil
 }
 func (p *Provider) Status(ctx context.Context) integrations.Connection {
@@ -115,6 +118,7 @@ func (p *Provider) Disconnect(ctx context.Context) error {
 		return err
 	}
 	p.credential = nil
+	p.rotated = nil
 	p.cache = nil
 	p.message = ""
 	p.reconnect = false
@@ -237,7 +241,15 @@ func (p *Provider) exchange(ctx context.Context, form url.Values) (credential, e
 }
 func (p *Provider) token(ctx context.Context) (string, error) {
 	c := p.credential
+	if p.rotated != nil {
+		c = p.rotated
+	}
 	if time.Until(c.Expires) > time.Minute {
+		if p.rotated != nil {
+			if err := p.save(ctx, *c); err != nil {
+				return "", err
+			}
+		}
 		return c.Access, nil
 	}
 	next, err := p.exchange(ctx, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {c.Refresh}})
@@ -245,6 +257,7 @@ func (p *Provider) token(ctx context.Context) (string, error) {
 		return "", err
 	}
 	next.Account, next.Workspace = c.Account, c.Workspace
+	p.rotated = &next
 	if err := p.save(ctx, next); err != nil {
 		return "", err
 	}
