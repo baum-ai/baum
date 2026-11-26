@@ -384,7 +384,7 @@ function SectionOverview({
 
 /** What the keys (j and k) move between and fill while it is the one. */
 const BLOCK =
-  "min-w-0 scroll-mt-4 rounded-md outline-none data-[review-block-active]:bg-surface-wash";
+  "min-w-0 scroll-mt-4 rounded-md outline-none data-[review-block-active]:bg-surface-wash data-[review-block-active]:shadow-[0_0_0_0.5rem_var(--surface-wash)]";
 
 /** One block of a section's body, by its type. A tile block is the tile
  *  bare, under its title as the block's label; a text block's optional title
