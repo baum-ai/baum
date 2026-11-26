@@ -466,8 +466,12 @@ The daemon outlives the app, so the app's presence is a tray icon.
   when it loses focus or on Escape. As in a native menu, `↓` and `↑` move
   through its items (from the first or last, wrapping), `Home` and `End` go
   to either end, and `Enter` or `Space` presses the focused one. The right
-  click keeps the full menu. Linux tray hosts
-  report no clicks, so Linux has the menu only. The panel is the bundled
+  click keeps the full menu. Linux has no panel. In the Tauri shell its
+  tray hosts report no clicks, so Linux has the menu only; in the Electron
+  shell a left click opens baum (as Open baum does) and the right click shows
+  the menu. Which click activates the icon is the host's choice: a double
+  click on some, and GNOME's AppIndicator extension shows the menu on a left
+  click. The panel is the bundled
   `tray.html`, created hidden at startup.
 - **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
   disabled line such as "3 pull requests in your Inbox", the tooltip appends
