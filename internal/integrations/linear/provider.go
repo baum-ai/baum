@@ -158,7 +158,7 @@ func (p *Provider) Connect(context.Context) (string, error) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if p.pending != server {
-			http.Error(w, "Sign-in expired", 410)
+			http.Error(w, "Sign-in expired", http.StatusGone)
 			return
 		}
 		p.pending = nil
@@ -167,7 +167,7 @@ func (p *Provider) Connect(context.Context) (string, error) {
 		w.Header().Set("Cache-Control", "no-store")
 		if err := p.finish(ctx, verifier, r.URL.Query().Get("code")); err != nil {
 			p.message = "Sign-in did not complete. Try connecting again."
-			http.Error(w, p.message, 400)
+			http.Error(w, p.message, http.StatusBadRequest)
 			return
 		}
 		p.cache = nil
