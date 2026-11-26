@@ -183,7 +183,7 @@ func TestTheDaemonReadsIt(t *testing.T) {
 // of pull requests across many repositories, a 5,000-line diff, many
 // inboxes and long transcripts of both agents.
 func TestDefaultsMeetTheCriteria(t *testing.T) {
-	if testing.Short() {
+	if testing.Short() || os.Getenv("BAUM_SKIP_FULL_SEED_TEST") == "true" {
 		t.Skip("writes the full dataset")
 	}
 	// Writing it spawns thousands of git processes, which takes over 8
