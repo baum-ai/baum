@@ -86,7 +86,7 @@ func TestConnectLookupRefreshDisconnect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if (resp.StatusCode == 200) != (s != "wrong") {
 			t.Fatal(resp.StatusCode)
 		}

@@ -169,7 +169,7 @@ func (p *Provider) Connect(context.Context) (string, error) {
 		p.cache = nil
 		p.message = ""
 		p.reconnect = false
-		fmt.Fprintln(w, "Linear connected. You can return to baum.")
+		_, _ = fmt.Fprintln(w, "Linear connected. You can return to baum.")
 	})
 	p.pending = server
 	p.message = ""
@@ -221,7 +221,7 @@ func (p *Provider) exchange(ctx context.Context, form url.Values) (credential, e
 	if err != nil {
 		return credential{}, errRequest
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out struct {
 		Access  string `json:"access_token"`
 		Refresh string `json:"refresh_token"`
