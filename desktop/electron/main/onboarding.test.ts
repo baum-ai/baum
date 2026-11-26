@@ -34,7 +34,7 @@ import {
   updateAt,
 } from "./onboarding.ts";
 import type { AppProcess } from "./run-baum.ts";
-import { childPath, runBaum, withoutDir } from "./run-baum.ts";
+import { childPath, dropForeignMounts, inForeignMount, runBaum, withoutDir } from "./run-baum.ts";
 import { FILE } from "./settings.ts";
 
 const unix = process.platform !== "win32";
@@ -474,6 +474,51 @@ describe.skipIf(!unix)("the setup commands", () => {
     // A child of an AppImage inherits APPIMAGE but runs from elsewhere.
     expect(childPath(app("/usr/bin/code"))).toBeNull();
     expect(childPath(app("/usr/bin/baum-desktop", { PATH: "/usr/bin" }))).toBeNull();
+  });
+
+  it("drops another AppImage's mount, inherited from the app that started this one", () => {
+    // The Tauri app's updater started the Electron app with its environment.
+    const old = "/tmp/.mount_baum-dBdkACK";
+    const own = "/tmp/.mount_baum-dLjg5nt";
+    const env: NodeJS.ProcessEnv = {
+      APPIMAGE: "/home/user/Applications/baum.AppImage",
+      APPDIR: own,
+      PATH: `${old}/usr/bin/:${old}/usr/sbin/:/home/user/.local/bin:/usr/bin`,
+      LD_LIBRARY_PATH: `${old}/usr/lib/:${old}/usr/lib/x86_64-linux-gnu/`,
+      PYTHONPATH: `${old}/usr/share/pyshared/:`,
+      GTK_EXE_PREFIX: `${old}//usr`,
+      XDG_DATA_DIRS: `${old}/usr/share/:${own}/usr/share:/usr/share`,
+      HOME: "/home/user",
+    };
+    const app: AppProcess = { platform: "linux", env, execPath: `${own}/baum-desktop` };
+    expect(dropForeignMounts(app).sort()).toEqual([
+      "GTK_EXE_PREFIX",
+      "LD_LIBRARY_PATH",
+      "PATH",
+      "PYTHONPATH",
+      "XDG_DATA_DIRS",
+    ]);
+    expect(env).toEqual({
+      APPIMAGE: "/home/user/Applications/baum.AppImage",
+      APPDIR: own,
+      PATH: "/home/user/.local/bin:/usr/bin",
+      XDG_DATA_DIRS: `${own}/usr/share:/usr/share`,
+      HOME: "/home/user",
+    });
+    expect(dropForeignMounts(app)).toEqual([]);
+    expect(inForeignMount(app, `${old}/usr`)).toBe(true);
+    expect(inForeignMount(app, own)).toBe(false);
+    expect(inForeignMount(app, "/home/user")).toBe(false);
+  });
+
+  it("treats every mount as another's when the app is not an AppImage", () => {
+    const env: NodeJS.ProcessEnv = { PATH: "/tmp/.mount_baum-x/usr/bin:/usr/bin" };
+    expect(
+      dropForeignMounts({ platform: "linux", env, execPath: "/usr/bin/baum-desktop" }),
+    ).toEqual(["PATH"]);
+    expect(env.PATH).toBe("/usr/bin");
+    const mac: NodeJS.ProcessEnv = { PATH: "/tmp/.mount_baum-x/usr/bin:/usr/bin" };
+    expect(dropForeignMounts({ platform: "darwin", env: mac, execPath: "/x" })).toEqual([]);
   });
 });
 
