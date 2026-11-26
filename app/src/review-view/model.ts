@@ -645,13 +645,16 @@ type Declaration = {
   name: string | null;
   indent: number;
   closed?: boolean;
+  /** The names of the groups the hunk shows it inside, outermost first. */
+  scope?: string;
 };
 
 const GO_FUNC = /^func\s+(?:\(\s*(?:\w+\s+)?\*?(\w+)(?:\[[^\]]*\])?\s*\)\s*)?([A-Za-z_]\w*)\s*[[(]/;
 const GO_BLOCK = /^(type|var|const|import)\b\s*(\(|[A-Za-z_]\w*)?/;
 const JS_TEST =
   /^(\s*)(?:it|test)(\.(?:only|skip|concurrent|todo|fails|each|for)\b[^(]*)?\(\s*(?:(["'`])((?:\\.|(?!\3).)*)\3)?/;
-const JS_GROUP = /^\s*(?:describe|suite|test\.describe)(?:\.\w+)*\s*\(/;
+const JS_GROUP =
+  /^\s*(?:describe|suite|test\.describe)(?:\.\w+)*\s*\(\s*(?:(["'`])((?:\\.|(?!\1).)*)\1)?/;
 const JS_FUNC =
   /^(?:export\s+)?(?:(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)|(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>)/;
 
@@ -674,7 +677,11 @@ function declaration(language: Language, text: string): Declaration | null {
     // `type T int` or `var x = 1` ends on its line.
     return { kind: "helper", name, indent: 0, closed: !/[{(]\s*$/.test(text) };
   }
-  if (JS_GROUP.test(text)) return { kind: "group", name: null, indent };
+  const group = JS_GROUP.exec(text);
+  if (group) {
+    const closed = /\)\s*;?\s*$/.test(text) && !/[{(]\s*$/.test(text);
+    return { kind: "group", name: group[2] ?? null, indent, closed };
+  }
   const func = indent === 0 ? JS_FUNC.exec(text) : null;
   if (func)
     return { kind: "helper", name: func[1] ?? func[2]!, indent, closed: !/[{(]\s*$/.test(text) };
@@ -758,20 +765,32 @@ function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | n
   const language = languageOf(path);
   if (language === null) return [];
   if (language === "other") return null;
-  const drafts = new Map<string, Draft>();
-  const itemOf = (kind: TestOutlineItem["kind"], name: string): Draft => {
-    const key = `${kind}:${name}`;
-    let draft = drafts.get(key);
-    if (!draft) {
-      draft = { kind, name, change: "changed", additions: 0, deletions: 0, order: drafts.size };
-      drafts.set(key, draft);
-    }
+  // Every item in the diff's order, and the latest one under each key: a
+  // test's key has the groups it is in, so like-named tests in two suites
+  // stay apart.
+  const drafts: Draft[] = [];
+  const latest = new Map<string, Draft>();
+  const keyOf = (kind: TestOutlineItem["kind"], name: string, scope = "") =>
+    `${kind}:${scope}\u0000${name}`;
+  const fresh = (kind: TestOutlineItem["kind"], name: string, scope?: string): Draft => {
+    const draft: Draft = {
+      kind,
+      name,
+      change: "changed",
+      additions: 0,
+      deletions: 0,
+      order: drafts.length,
+    };
+    drafts.push(draft);
+    latest.set(keyOf(kind, name, scope), draft);
     return draft;
   };
+  const itemOf = (kind: TestOutlineItem["kind"], name: string, scope?: string): Draft =>
+    latest.get(keyOf(kind, name, scope)) ?? fresh(kind, name, scope);
   const ownerOf = (open: Declaration): Draft =>
     open.kind === "group" || open.name === null
       ? itemOf("other", OTHER_LINES)
-      : itemOf(open.kind === "test" ? "test" : "helper", open.name);
+      : itemOf(open.kind === "test" ? "test" : "helper", open.name, open.scope);
   const count = (draft: Draft, line: IndexedHunkLine) => {
     if (line.kind === "add") draft.additions += 1;
     else if (line.kind === "remove") draft.deletions += 1;
@@ -794,6 +813,16 @@ function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | n
       named && (named.kind === "test" || language === "go") && named.indent === 0
         ? named
         : "unknown";
+    // The groups (`describe`) open at this point of the hunk, innermost
+    // last: a test that closes gives the lines back to the group around it.
+    const groups: Declaration[] = [];
+    const around = (closing: Declaration): Declaration | "top" => {
+      const group = groups.at(-1);
+      if (group) return group;
+      // An indented test whose group starts above the hunk: the lines after
+      // it are still that group's setup.
+      return closing.indent > 0 ? { kind: "group", name: null, indent: closing.indent - 1 } : "top";
+    };
     // Changed comments at the margin belong to the declaration under them.
     let pending: IndexedHunkLine[] = [];
     const settle = (draft: Draft) => {
@@ -812,10 +841,21 @@ function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | n
       const opened = declaration(language, text);
       if (opened) {
         if (opened.kind === "test" && opened.name === null) return null;
+        if (opened.kind !== "helper" && groups.length > 0)
+          opened.scope = groups.map((group) => group.name ?? "").join("\u0000");
         if (opened.kind === "test" && line.kind === "add" && removed) replaced.set(removed, opened);
         removed = opened.kind === "test" && line.kind === "remove" ? opened.name : null;
         if (opened.kind !== "group" || changed) {
-          const draft = ownerOf(opened);
+          let draft = ownerOf(opened);
+          // Each test or helper is declared once a side: another declaration
+          // under the same key, but for a line changed in place, is another
+          // test (a like-named one in a group the hunk doesn't show).
+          if (
+            opened.kind !== "group" &&
+            draft.declared &&
+            (draft.declared === line.kind || draft.declared === "context" || !changed)
+          )
+            draft = fresh(draft.kind, draft.name, opened.scope);
           settle(draft);
           if (opened.kind !== "group") {
             draft.declared = draft.declared && draft.declared !== line.kind ? "context" : line.kind;
@@ -823,7 +863,8 @@ function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | n
           }
           count(draft, line);
         }
-        current = opened.closed ? "top" : opened;
+        if (opened.kind === "group" && !opened.closed) groups.push(opened);
+        current = opened.closed ? around(opened) : opened;
         continue;
       }
       const indent = text.length - text.trimStart().length;
@@ -838,7 +879,11 @@ function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | n
           continue;
         }
         if (changed) count(ownerOf(current), line);
-        if (closes && indent <= current.indent) current = "top";
+        if (closes && indent <= current.indent) {
+          const closing: Declaration = current;
+          while ((groups.at(-1)?.indent ?? -1) >= indent) groups.pop();
+          current = closing.kind === "group" ? (groups.at(-1) ?? "top") : around(closing);
+        }
         continue;
       }
       // Outside any declaration the hunk shows: a line at the margin is top
@@ -856,12 +901,13 @@ function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | n
     }
     if (pending.length > 0) settle(itemOf("other", OTHER_LINES));
   }
-  const items = [...drafts.values()].filter((draft) => draft.additions + draft.deletions > 0);
+  const items = drafts.filter((draft) => draft.additions + draft.deletions > 0);
   for (const item of items)
     item.change =
       item.declared === "add" ? "added" : item.declared === "remove" ? "removed" : "changed";
   // A test or helper removed is renamed when Git lined another up in its
-  // place, or one was added under a like name.
+  // place, or one was added under a like name. One of the same name is a
+  // like-named test in another group, not a rename.
   const renamed = new Set<Draft>();
   for (const gone of items) {
     if (gone.change !== "removed" || gone.kind === "other") continue;
@@ -872,11 +918,18 @@ function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | n
           added.change === "added" &&
           added.kind === "test" &&
           added.name === successor?.name &&
+          added.name !== gone.name &&
           !renamed.has(added),
       ) ?? null;
     let score = 0.6;
     for (const added of best ? [] : items) {
-      if (added.change !== "added" || added.kind !== gone.kind || renamed.has(added)) continue;
+      if (
+        added.change !== "added" ||
+        added.kind !== gone.kind ||
+        added.name === gone.name ||
+        renamed.has(added)
+      )
+        continue;
       const like = likeness(gone.name, added.name);
       if (like >= score) [best, score] = [added, like];
     }

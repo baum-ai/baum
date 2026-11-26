@@ -592,6 +592,91 @@ describe("the tests a section's hunks add or change", () => {
     ]);
   });
 
+  it("keeps like-named tests in two suites apart", () => {
+    // Both suites in the hunk: each test is under its own.
+    expect(
+      brief(
+        items([
+          testHunk("app/x.test.tsx", [
+            ["context", 'describe("the list", () => {'],
+            ["add", '  it("renders", () => {'],
+            ["add", "    draw();"],
+            ["add", "  });"],
+            ["context", "});"],
+            ["context", 'describe("the card", () => {'],
+            ["remove", '  it("renders", () => {'],
+            ["remove", "    paint();"],
+            ["remove", "  });"],
+            ["context", "});"],
+          ]),
+        ]),
+      ),
+    ).toEqual([
+      ["test", "renders", "added", 3, 0],
+      ["test", "renders", "removed", 0, 3],
+    ]);
+    // Their suites above the hunk: each declaration is still its own test.
+    expect(
+      brief(
+        items([
+          testHunk(
+            "app/x.test.tsx",
+            [
+              ["add", '  it("renders", () => {'],
+              ["add", "  });"],
+              ["context", "});"],
+              ["context", 'describe("the card", () => {'],
+              ["context", '  it("renders", () => {'],
+              ["remove", "    paint();"],
+              ["context", "  });"],
+            ],
+            "@@ -10,6 +10,8 @@",
+          ),
+        ]),
+      ),
+    ).toEqual([
+      ["test", "renders", "added", 2, 0],
+      ["test", "renders", "changed", 0, 1],
+    ]);
+  });
+
+  it("counts a suite's setup after one of its tests closes", () => {
+    expect(
+      brief(
+        items([
+          testHunk("app/x.test.tsx", [
+            ["context", 'describe("the page", () => {'],
+            ["context", '  it("draws", () => {'],
+            ["context", "    draw();"],
+            ["context", "  });"],
+            ["add", "  beforeEach(() => reset());"],
+            ["context", '  it("keeps", () => {});'],
+            ["add", "  const rows = 3;"],
+            ["context", "});"],
+          ]),
+        ]),
+      ),
+    ).toEqual([["other", "Other lines", "changed", 2, 0]]);
+    // The suite starts above the hunk: the lines after its test are its setup.
+    expect(
+      brief(
+        items([
+          testHunk(
+            "app/x.test.tsx",
+            [
+              ["context", '  it("draws", () => {'],
+              ["context", "    draw();"],
+              ["context", "  });"],
+              ["add", "  beforeEach(() => reset());"],
+              ["context", "});"],
+            ],
+            "@@ -10,4 +10,5 @@",
+          ),
+        ]),
+      ),
+    ).toEqual([["other", "Other lines", "changed", 1, 0]]);
+  });
+
   it("names each file with its change and line counts; data files have no items", () => {
     const outline = testOutline([
       {
