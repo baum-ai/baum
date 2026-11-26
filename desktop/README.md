@@ -1903,7 +1903,7 @@ GitHub release. Pushing the tag to baum-ai/baum runs
 
 ```text
 test, viewer-dist, desktop-test          checks of the tagged release commit
-  └─ release                             parent on main? goreleaser: CLI archives, draft release
+  └─ release                             parent on main or release/*? goreleaser: CLI archives, draft release
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
             ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
@@ -1998,6 +1998,20 @@ changelog notes, when the desktop files are attached. A tag with a pre-release s
 (`v1.2.3-rc.1`) becomes a GitHub pre-release. Full releases of the app do not
 update to it, since they read the latest full release; installed release
 candidates do, through `desktop-rc-updates`.
+
+To leave out work that is already on `main`, release from a release branch.
+Create `release/vX.Y.Z` in the monorepo at the last `main` commit to keep,
+and bring later changes into it as pull requests of cherry-picks from `main`
+(`git cherry-pick -x`, with `-m 1` for a merge commit). The publish workflow
+pushes its `oss/` history to the branch of the same name here, which forks
+from this `main` at the same commit, and Check runs on it. Once that is green,
+run the tagging workflow on the monorepo's `main` with `base` set to the
+branch's published commit. The ordering check compares what each release took
+from `main`: the commit where the previous release's parent leaves `main`
+must be in the new release's history. So the next release from `main` follows
+a release branch, but a release branch that forks before the previous
+release's `main` commit cannot be released after it. Fixes therefore land on
+`main` first.
 
 If a job fails, re-run the failed jobs: uploads replace files of the same
 name, and nothing is public until `desktop-publish` finishes, because the
