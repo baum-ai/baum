@@ -132,7 +132,7 @@ export type LiveTranscriptState =
   | { kind: "unavailable"; message: string }
   | { kind: "failed"; message: string };
 
-const transcriptPath = (agent: string, id: string, version: string | null) =>
+export const transcriptPath = (agent: string, id: string, version: string | null) =>
   `api/live-sessions/${encodeURIComponent(agent)}/${encodeURIComponent(id)}/transcript${
     version ? `?version=${encodeURIComponent(version)}` : ""
   }`;
@@ -489,9 +489,12 @@ export function SessionTranscriptPage({
   prHref,
   Link,
   openInPanel,
+  focusTurn,
 }: {
   agent: string;
   id: string;
+  /** The turn whose prompt is marked and scrolled into view. */
+  focusTurn?: number;
   session: LiveSession | null;
   /** The message queued for the session's next stop, if any. */
   queued?: AgentMessage;
@@ -524,7 +527,8 @@ export function SessionTranscriptPage({
   useEffect(() => {
     pageScroll().to(0);
   }, [agent, id]);
-  useFollowScroll(state.kind === "ready" ? state.version : undefined);
+  // Opened at a prompt, it stays there rather than at the end.
+  useFollowScroll(state.kind === "ready" ? state.version : undefined, focusTurn == null);
   const top = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const { reading, close } = useMessageKeys(body, top);
@@ -582,6 +586,7 @@ export function SessionTranscriptPage({
           retry={retry}
           live={session !== null && session.state !== "ended"}
           title={session?.title}
+          focusTurn={focusTurn}
         />
       </div>
       {session ? <SessionReplyBar session={session} queued={queued} /> : null}
@@ -597,9 +602,11 @@ const TranscriptBody = memo(function TranscriptBody({
   retry,
   live,
   title,
+  focusTurn,
 }: {
   state: LiveTranscriptState;
   retry: () => void;
+  focusTurn?: number;
   /** The session still runs, so it has no outcome yet. */
   live: boolean;
   /** The listed session's title, for a transcript that holds none, such as
@@ -626,45 +633,10 @@ const TranscriptBody = memo(function TranscriptBody({
       summary={state.summary}
       live={live}
       title={title}
+      focusTurn={focusTurn}
     />
   );
 });
-
-/** A listed session's transcript inside the PR page's Sessions pane, read
- *  through the daemon's live record as the Sessions page reads it, and
- *  reread while the session runs. */
-export function EmbeddedLiveTranscript({ session }: { session: LiveSession }) {
-  const poll =
-    session.state === "running" ? POLL_RUNNING : session.state === "idle" ? POLL_IDLE : null;
-  // The session's record changing (a new event, or its end) reads the
-  // transcript again, as the app's live events do for the Sessions page:
-  // polling stops once it ends, and its last turn must still be read.
-  const signal = `${session.state}\n${session.last_activity_at}\n${session.last_event}`;
-  const [seen, setSeen] = useState({ signal, tick: 0 });
-  if (seen.signal !== signal) setSeen({ signal, tick: seen.tick + 1 });
-  const { state, retry } = useLiveTranscript(session.agent, session.session_id, {
-    tick: seen.tick,
-    poll,
-  });
-  switch (state.kind) {
-    case "loading":
-      return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
-    case "unavailable":
-      return <p className="local-transcript-note">{state.message}</p>;
-    case "failed":
-      return <ReadFailed what="the transcript" message={state.message} retry={retry} />;
-  }
-  return (
-    <TranscriptCard
-      transcript={state.transcript}
-      version={state.version}
-      summary={state.summary}
-      live={session.state !== "ended"}
-      title={session.title}
-      embedded
-    />
-  );
-}
 
 /** The transcript's loader, answering from the transcript shown. */
 function useLocalSource(transcript: LocalTranscript, version: string | undefined) {
@@ -708,9 +680,12 @@ export function TranscriptReader({
   live,
   title,
   openLastReply = false,
+  focusTurn,
 }: {
   transcript: LocalTranscript;
   version: string;
+  /** The turn whose prompt is marked and scrolled into view. */
+  focusTurn?: number;
   summary?: string;
   live: boolean;
   title?: string;
@@ -729,6 +704,7 @@ export function TranscriptReader({
           source={source}
           layout="log"
           openLastReply={openLastReply}
+          focusTurn={focusTurn}
         />
       ) : (
         <p className="local-transcript-note">

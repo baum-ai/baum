@@ -307,10 +307,12 @@ function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
           !e.metaKey &&
           !e.ctrlKey &&
           !e.shiftKey &&
-          href.startsWith(appBase())
+          (href.startsWith(appBase()) || href.startsWith("?"))
         ) {
+          // A link the viewer writes as a query of the page it is on, such
+          // as a quote's session, stays in the app too.
           e.preventDefault();
-          navigate(href);
+          navigate(href.startsWith("?") ? appURL(href) : href);
         }
       }}
     />
@@ -1408,6 +1410,9 @@ function Workspace({ url }: { url: UrlState }) {
   useEffect(() => {
     document.title = `${windowTitle} · baum`;
   }, [windowTitle]);
+  // The prompt a link opened the session at, `&turn=<n>`.
+  const turnParam = url.search.get("turn");
+  const openTurn = turnParam && /^\d+$/.test(turnParam) ? Number(turnParam) : undefined;
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -1640,6 +1645,7 @@ function Workspace({ url }: { url: UrlState }) {
         if (backToOpener()) return;
         url.update((current) => {
           current.delete("session");
+          current.delete("turn");
           return current;
         });
       }
@@ -1828,6 +1834,7 @@ function Workspace({ url }: { url: UrlState }) {
               key={openSession}
               agent={openAgent}
               id={openID}
+              focusTurn={openTurn}
               session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
               queued={agentRequests.messages.find(
                 (m) => m.agent === openAgent && m.session_id === openID,

@@ -2023,8 +2023,15 @@ while one runs (amber while one waits on the person; the list slot's
 `indicator`, and the same dot on that session's own row). The Sessions pane is
 one list: the listed sessions first, each as a card (agent, working, waiting
 or ended, title, branch, last activity or end, Open transcript and its
-decisions) that opens the session alone with its transcript read live, then
-the linked ones (`pullRequestSessions` in `src/review.tsx`). A listed
+decisions), then the linked ones (`pullRequestSessions` in `src/review.tsx`).
+Opening a session there, from its row, a quote of its prompt or any other link
+to it, opens its transcript on the Sessions page (below) instead, at the prompt
+a link named (`&turn=<n>`), in the review's place in the history so Back and
+Escape return to the review. A linked session the daemon does not list goes
+there once the daemon answers that its transcript is on this computer (read
+from its agent's own store by its id), shown in the pane while it is asked;
+one from another computer, or of an agent the Sessions page does not know,
+stays in the pane. A listed
 session that is also linked shows as the listed one until it ends, and then
 as its linked row. "No agent sessions" shows only when there are none of
 either kind. The Summary keeps a "Sessions in progress" panel of the running
@@ -2035,7 +2042,7 @@ its agent showed, repository, branch, PR number, the session's title and its
 activity (latest tool calls with masked targets, files written, latest assistant
 message; see "Live sessions" in ARCHITECTURE.md) reach the app in the list,
 never a path; a session's transcript comes only when the Sessions page opens it
-(below), or the PR page's Sessions pane opens it. When a session ends the page
+(below). When a session ends the page
 reads its sessions from disk again, where the full session is. A daemon without the record serves
 none.
 The PR page keeps its linked sessions and commits visible during background

@@ -63,6 +63,7 @@ import {
   fixLabel,
   jobHref,
   navigate,
+  redirect,
   type LiveSession,
   type Provenance,
 } from "./api";
@@ -72,8 +73,8 @@ import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useVersionLoader } from "./version-cache";
-import { LiveSessionCard, liveSessionLabel } from "./sessions";
-import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
+import { LiveSessionCard, liveSessionLabel, transcriptHref } from "./sessions";
+import { parseLiveTranscript, TranscriptCard, transcriptPath } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
   PullRequestDecisionsPane,
@@ -189,6 +190,47 @@ export function Transcript({
   return <TranscriptCard transcript={load} title={title} focusTurn={focusTurn} embedded />;
 }
 
+/** The live sessions' agent for a linked session's vendor. */
+const LIVE_AGENTS: Record<string, string> = {
+  claude_code: "claude-code",
+  codex: "codex",
+  cursor: "cursor",
+};
+
+/** Linked sessions whose transcript the daemon has on this computer, by
+ *  `agent:id`, and those it is being asked about: where the answer should go,
+ *  the latest opening's page and address. */
+const onComputer = new Set<string>();
+const asking = new Map<string, { href: string; from: string }>();
+
+/** Opens a linked session on its page when its transcript is on this
+ *  computer, which only the daemon knows: one linked from another computer,
+ *  such as a teammate's, stays in the pane. Until the daemon answers, the
+ *  pane shows it, and the page replaces it if it is still the one open. A
+ *  session that is not here is asked about again the next time. */
+function openLinked(agent: string, id: string, focusTurn?: number): boolean {
+  const key = `${agent}:${id}`;
+  const href = transcriptHref({ agent, session_id: id }, focusTurn);
+  if (onComputer.has(key)) {
+    redirect(href);
+    return true;
+  }
+  const pending = asking.has(key);
+  asking.set(key, { href, from: location.href });
+  if (pending) return false;
+  void request<unknown>(transcriptPath(agent, id, null))
+    .then((body) => parseLiveTranscript(body)?.available === true)
+    .catch(() => false)
+    .then((here) => {
+      const latest = asking.get(key);
+      asking.delete(key);
+      if (!here) return;
+      onComputer.add(key);
+      if (latest && location.href === latest.from) redirect(latest.href);
+    });
+  return false;
+}
+
 /** The pull request's Sessions group: one list of the sessions linked to it
  *  through its commits (`linked`) and the sessions the daemon lists on it
  *  (`listed`: working, waiting, or ended and still listed). A listed session
@@ -203,6 +245,19 @@ export function pullRequestSessions(
   return sessionsSlot(linked, {
     renderSession,
     hosted: listedSessionRows(listed, linked, decisions),
+    // A session opens on its own page, where it can be continued.
+    open: (id, focusTurn) => {
+      const listedAgent = listed.find((s) => s.session_id === id)?.agent;
+      if (listedAgent) {
+        redirect(transcriptHref({ agent: listedAgent, session_id: id }, focusTurn));
+        return true;
+      }
+      const agent =
+        linked.status === "ready"
+          ? LIVE_AGENTS[linked.sessions.find((s) => s.id === id)?.vendor ?? ""]
+          : undefined;
+      return agent ? openLinked(agent, id, focusTurn) : false;
+    },
     empty:
       "Sessions on this computer show here while they work on this pull request, and once one of their commits is in it.",
   });
@@ -232,14 +287,8 @@ export function listedSessionRows(
       renderCard: (open) => (
         <LiveSessionCard session={s} open={open} Link={ViewerLink} decisions={decisions} />
       ),
-      renderPane: () => (
-        <>
-          <div className="pb-3">
-            <LiveSessionCard session={s} titled={false} Link={ViewerLink} decisions={decisions} />
-          </div>
-          <EmbeddedLiveTranscript session={s} />
-        </>
-      ),
+      // Opened, it leaves for its page on Sessions (`open` above).
+      renderPane: () => null,
     }));
 }
 /** The hosted PR page's shared viewer, with local sources for its slots. */

@@ -191,7 +191,7 @@ func callLiveSessionTranscript(ctx context.Context, c CallContext, args json.Raw
 		return "", err
 	}
 	if missing {
-		return "", fmt.Errorf("session %s:%s is no longer listed", agent, id)
+		return "", fmt.Errorf("session %s:%s is not served", agent, id)
 	}
 	return transcriptText(body, a.FromTurn, boundRows(a.Limit, defaultPrompts, maxPrompts))
 }

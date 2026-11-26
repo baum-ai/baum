@@ -436,7 +436,9 @@ the method and confidence of each. Both open each other through
 `ReviewListSlot` the `sessions` and `commits` props take, with the rail's
 labels. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
 puts the host's own content under a session opened alone, such as its
-transcript. The pane is then headed by the session's title, with its agent,
+transcript. Its `open` option (the slot's `open`) takes a session the host
+opens somewhere of its own instead, with the prompt a link named, whenever one
+is selected; returning false leaves it to the pane. The pane is then headed by the session's title, with its agent,
 branch, start, duration and files edited on one line (the rail leads back to
 the list) and its linked commits as links under it, and draws no
 card for it. `SessionCard`'s `headless` draws a session open with no header of

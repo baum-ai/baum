@@ -6,6 +6,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,6 +34,7 @@ import {
   triageRisks,
 } from "../review-document";
 import type { Selection } from "../review-selection";
+import { useUrlState } from "../navigation";
 import { reviewVersionChanges } from "../review-versions";
 import { useConversationCollapsed } from "../use-conversation-collapsed";
 import { type ConversationTab, useConversationTab } from "../use-conversation-tab";
@@ -152,6 +154,9 @@ export type ReviewListSlot = {
     actions: ReviewViewerActions,
     focusTurn?: number,
   ) => ReactNode;
+  /** Opens an item somewhere of the host's own instead of in the pane, at
+   *  `focusTurn` of a session; false leaves it to the pane. */
+  open?: (id: string, focusTurn?: number) => boolean;
 };
 
 /** A rail row a host fills with one pane of its own, such as the decisions
@@ -737,6 +742,32 @@ function ReviewWorkspace<F extends ReviewFile>({
   // reader reaches for either once the review has said where to look. Changes
   // and Risks stay open.
   const [sessionFocus, setSessionFocus] = useState<{ session: string; turn: number } | null>(null);
+  // A session the host opens on a page of its own leaves the review there,
+  // however it was selected (a row, a quote of its prompt, a link), at the
+  // prompt a link named, whether through the URL or a prompt anchor.
+  const openSession = useRef(sessions?.open);
+  openSession.current = sessions?.open;
+  const openedSession = selection.kind === "session" ? selection.id : null;
+  const turnParam = useUrlState().search.get("turn");
+  const openedTurn =
+    sessionFocus?.session === openedSession
+      ? sessionFocus?.turn
+      : turnParam && /^\d+$/.test(turnParam)
+        ? Number(turnParam)
+        : undefined;
+  // Asked again as the host's sessions arrive, for a page that opened on a
+  // session before it knew it.
+  const sessionsKnown =
+    sessions?.state.status === "ready"
+      ? sessions.state.items.map((item) => item.id).join("\n")
+      : (sessions?.state.status ?? "");
+  useLayoutEffect(() => {
+    if (openedSession) openSession.current?.(openedSession, openedTurn);
+  }, [openedSession, openedTurn, sessionsKnown]);
+  // A prompt anchor's turn is for that opening only.
+  useEffect(() => {
+    if (!openedSession) setSessionFocus(null);
+  }, [openedSession]);
   const [folded, setFolded] = useState({
     changes: false,
     risks: false,

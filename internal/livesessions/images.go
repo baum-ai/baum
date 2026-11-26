@@ -272,11 +272,11 @@ func imageTypesByTurn(images map[string]promptImages) map[string][]string {
 }
 
 // Image is the n-th image (from 0) pasted with the prompt turn of the
-// tracked session agent/id, and its media type, read from the session's
-// transcript as Get reads it. An error is ErrNotTracked, an *Unavailable,
-// ErrNoImage, or the context's.
+// session agent/id, and its media type, read from the session's transcript
+// as the transcript route reads it (Read), whether or not the tracker still
+// lists it. An error is an *Unavailable, ErrNoImage, or the context's.
 func (t *Transcripts) Image(ctx context.Context, agent, id, turn string, n int) (string, []byte, error) {
-	answer, err := t.Get(ctx, agent, id)
+	answer, err := t.Read(ctx, agent, id, "", "")
 	if err != nil {
 		return "", nil, err
 	}
