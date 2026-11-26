@@ -472,6 +472,67 @@ function link(dir: string, linkPath: string, backup: string | null, target: stri
   }
 }
 
+/** The app's links that still point at `from`, a path that is no longer its
+ *  baum, split by whether moving them needs the password prompt: those in a
+ *  directory the user can write never do. Links someone changed since, and
+ *  records not shaped as the app makes them, are left out. */
+export function linksAt(
+  records: InstallRecord[],
+  from: string,
+  canWrite: (dir: string) => boolean = writable,
+): { writable: InstallRecord[]; system: InstallRecord[] } {
+  const found = { writable: [] as InstallRecord[], system: [] as InstallRecord[] };
+  for (const record of records) {
+    try {
+      checkShape(record);
+    } catch {
+      continue;
+    }
+    if (!same(record.target, from) || !holds(record)) continue;
+    const dir = parentOf(record.link) ?? "/";
+    (canWrite(dir) ? found.writable : found.system).push(record);
+  }
+  return found;
+}
+
+/** Points the app's link, in a directory the user can write, at `to`, as
+ *  updating the app's own link does: no prompt, and the backup of a baum it
+ *  replaced back then is kept. */
+export function repoint(record: InstallRecord, to: string): InstallRecord {
+  const moved = { ...record, target: to, admin: false };
+  checkShape(moved);
+  const dir = parentOf(record.link);
+  if (dir === null) throw new Error("The link has no directory.");
+  try {
+    link(dir, record.link, null, to);
+  } catch (e) {
+    throw new Error(`Cannot point ${record.link} at ${to}: ${message(e)}`);
+  }
+  return moved;
+}
+
+/** Points the app's link in a system directory at `to` through the password
+ *  prompt, only where installing would ask for one: a directory root may
+ *  change for the user, and a target outside the home directory. */
+export async function repointAsRoot(
+  record: InstallRecord,
+  to: string,
+  home: string,
+  elevate: Elevate,
+  canElevate: (dir: string) => boolean = (dir) => mayElevate(dir, home),
+): Promise<InstallRecord> {
+  const moved = { ...record, target: to, admin: true };
+  checkShape(moved);
+  const dir = parentOf(record.link) ?? "/";
+  if (!canElevate(dir) || under(to, home)) {
+    throw new Error(
+      `The app does not ask for an administrator's password to change ${record.link}. Point it at ${to} yourself, or install the command again.`,
+    );
+  }
+  await elevate.run(INSTALL_SCRIPT, [dir, record.link, "", to]);
+  return moved;
+}
+
 /** Removes what the app installed and nothing else: the link, while it still
  *  points at the recorded target, and puts back a baum it replaced. A link
  *  someone changed since is left alone. A link in a directory the user cannot

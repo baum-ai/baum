@@ -46,6 +46,7 @@ import {
 import { SHELL } from "./declaration.ts";
 import { developmentDir, frontend, isSetupPage, setupPage } from "./development.ts";
 import { EventStreamReader } from "./events.ts";
+import { forward, forwardedArgs } from "./forward-cli.ts";
 import {
   claimSingleInstance,
   hideOnClose,
@@ -501,6 +502,10 @@ function start(): void {
   // copy of baum where it keeps one (refreshed from the bundled one first).
   const page = setup.start();
   if (setup.managedCopy() !== null) cli.stable = async () => setup.cliPath();
+  // macOS: the command links the Tauri app made name this app's executable;
+  // those the user can write are moved now, before anything runs baum, and
+  // one in a system directory after the password prompt.
+  void setup.moveTauriLinks();
   const url = page === onboarding.SETUP_PAGE ? setupUrl() : bundledUrl(`/${page}`);
 
   main = new BrowserWindow({
@@ -619,7 +624,12 @@ function screenshots(window: BrowserWindow): void {
   });
 }
 
-if (!claimSingleInstance(app, () => main, nativeUpdater)) {
+// Started as baum (the Tauri app's path of it, see forward-cli.ts): run the
+// bundled baum instead, before claiming the single instance.
+const forwarded = forwardedArgs(process.argv, process.platform, app.isPackaged);
+if (forwarded !== null) {
+  forward(cli.bundled, forwarded, (code) => app.exit(code), log);
+} else if (!claimSingleInstance(app, () => main, nativeUpdater)) {
   // Another instance runs: it shows its window, and this one quits.
   app.quit();
 } else {

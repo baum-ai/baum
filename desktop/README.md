@@ -1288,6 +1288,7 @@ just desktop::dmg           # macOS: ad hoc signed DMG and zip in target/local-d
 just desktop::notices       # regenerate ../third_party/electron.txt (Electron's and npm packages' licences)
 just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
+just desktop::bridge-test-mac  # macOS: the Tauri app updates to the Electron app (see Bridge release)
 just desktop::run           # run the app on this Wayland session's display
 just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
 just desktop::profile       # time a scripted journey in the headless app (see Profiling)
@@ -2107,6 +2108,30 @@ the session panel's layout, the closed tour, and the viewer's conversation
 tab, width and folding), which go back to their defaults once. A deb is
 updated by installing the new deb, which has the same package name.
 
+On macOS the bundled baum moves. The Tauri app kept it at
+`baum.app/Contents/MacOS/baum`, which is the Electron app's own executable;
+the Electron app's baum is `Contents/Resources/bin/baum`. Two things still
+name the old path after the update, and the Electron app handles both
+(`electron/main/forward-cli.ts`, `Setup.moveTauriLinks` in
+`electron/main/onboarding.ts`):
+
+- The daemon the Tauri app started. It notices that its executable was
+  replaced and restarts itself from that path (`baum daemon run --detached
+  --port N`), and the git hooks it installed fall back to that path when
+  `baum` is not on Git's PATH. The packaged macOS app started with a baum
+  command (a first argument that is not a flag) runs the bundled baum with
+  the same arguments instead of starting the app: it leaves a daemon
+  running and exits at once, and waits for any other command and exits with
+  its status.
+- The command links the Tauri app made. Run through a link, the Electron
+  executable stops before any of the app's code runs, so `baum` and the
+  hooks would do nothing. At start, before it attaches to the daemon, the
+  app points each link it recorded at that old path at its bundled baum: in
+  a directory the user can write (such as `~/.local/bin`, where the Tauri app
+  put the link when it was on the PATH) without asking, and in a system
+  directory (`/usr/local/bin`) through the password prompt, once. A cancelled
+  prompt leaves the link, and setup and Settings offer Install for it.
+
 `just desktop::bridge-test` checks the bridge end to end on Linux
 (`scripts/bridge-test.sh`): it signs the Electron AppImage and a stand-in
 macOS archive with a throwaway key, writes `latest.json` with
@@ -2122,9 +2147,27 @@ which must start (from the Tauri app's restart, with its arguments) and
 open the daemon's page, not setup, at the zoom `desktop.json` saved, with
 the Tauri app's stable copy of `baum` and menu entry. It then runs the Electron update
 (1.2.3-test.1 to 1.2.4-test.1, through Settings' commands) and a damaged
-signature, which must be rejected and remembered. What it cannot check is
+signature, which must be rejected and remembered.
+
+`just desktop::bridge-test-mac` checks the macOS bridge on a Mac
+(`scripts/bridge-test-mac.sh`; neither app builds or runs in a container,
+so only its Go build uses Docker). It builds the Tauri app at 1.2.2 (with
+`bridge-test`, its updater pointed at a local server) and the Electron app at
+1.2.3 (ad hoc signed by `macos-finalize.sh`), each with its own version of
+baum, signs the archive with a throwaway key and writes `latest.json` with
+`updater-manifest.sh`. In a throwaway home it starts the Tauri app through
+LaunchServices with start at login on and the command linked in
+`~/.local/bin`. The Tauri app must replace itself with the Electron app,
+which must open the daemon's page at the saved zoom, point the link at its
+bundled baum without a prompt, and take over the Tauri app's daemon through
+the forwarded restart, while the window stays on the daemon's page; `baum`
+on the PATH, and a command run through the old path, must reach the new
+daemon. What neither test can check is
 the signed macOS app: try the first release candidate on a Mac with the
-Tauri app installed, from `/Applications`, before the full release.
+Tauri app installed, from `/Applications`, before the full release, and
+check that the window stays on the daemon's page for a minute after the
+update and that `baum daemon status` in a new terminal reports the new
+version.
 
 Keep publishing `latest.json` for at least three stable releases after the
 first Electron one, so copies that were not running for a while still find

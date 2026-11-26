@@ -55,6 +55,16 @@ bridge-test: frontend sidecar electron-cache
     {{ heavy }} desktop-test scripts/bridge-test.sh prepare target/bridge
     {{ heavy }} desktop-bridge scripts/bridge-test.sh run target/bridge
 
+# The bridge release on macOS (scripts/bridge-test-mac.sh): the real Tauri
+# app updates itself to the real, ad hoc signed Electron app, which takes
+# over the daemon and the command the Tauri app left. Builds both apps on
+# this Mac (no container can) into target/bridge-mac, signed with a
+# throwaway key.
+bridge-test-mac: frontend viewer
+    {{ heavy }} oss-test bash desktop/scripts/bridge-test-mac.sh baum target/bridge-mac
+    scripts/bridge-test-mac.sh prepare target/bridge-mac
+    scripts/bridge-test-mac.sh run target/bridge-mac
+
 # Build an ad hoc signed macOS DMG into target/local-dmg (--install also installs it)
 dmg *args: frontend viewer (sidecar "aarch64-apple-darwin") (sidecar "x86_64-apple-darwin")
     scripts/macos-local.sh {{ args }}
