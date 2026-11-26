@@ -263,13 +263,28 @@ type Tile struct {
 }
 
 // CodeData is a code tile's data: the model names the hunk and, optionally,
-// its first and last line on the new side; the host fills Text, the new
-// side's lines from the diff, and Lines when the model gave none
-// (Complete).
+// its first and last line on the new side and the few lines of them that
+// matter (Focus, new-side line numbers, which the page highlights); the
+// host fills Text, the new side's lines from the diff, and Lines when the
+// model gave none (Complete).
 type CodeData struct {
 	Hunk  string `json:"hunk"`
 	Lines []int  `json:"lines,omitempty"`
+	Focus []int  `json:"focus,omitempty"`
 	Text  string `json:"text,omitempty"`
+}
+
+// FocusWithin is focus kept to the lines from first to last, each once, in
+// order; nil when none is left.
+func FocusWithin(focus []int, first, last int) []int {
+	var out []int
+	for _, line := range focus {
+		if line >= first && line <= last && !slices.Contains(out, line) {
+			out = append(out, line)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // TypeImages is a tile of images a person added to their review page

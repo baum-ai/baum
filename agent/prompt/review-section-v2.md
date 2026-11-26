@@ -53,7 +53,7 @@ named in the input; it is in the run directory.
 { keep,
   body: [ { type, title, kind, text, items: [ { text, more, tone, cites } ], tile } ],
   risks: [ { id, tier, category, text, cites } ],
-  tiles: [ { id, shows, cites, drop, reason } ], propose }
+  tiles: [ { id, shows, cites, focus, drop, reason } ], propose }
 ```
 
 `keep` is false unless you keep the previous version's section as it was
@@ -135,11 +135,16 @@ all phrases, ending the same way.
   characters; `cites` are the hunks, with `lines`, that it rests on. For a
   `code` tile, `shows` is its title (two to five plain words) and its first
   hunk cite, with `lines` around the few lines the reader must see (at most
-  30), is the excerpt the host shows. Set `drop` with a `reason` (one plain
+  30), is the excerpt the host shows; `focus` names the few lines
+  of it (new-side line numbers) that carry the point, which the page
+  highlights while it dims the rest; keep them close together, as a long
+  excerpt opens folded at the first. Leave `focus` null for other tiles, or
+  when no line stands out. Set `drop` with a `reason` (one plain
   sentence) when the tile would only restate your text, or the code does
   not bear it out, and do not place it in the body. The page never shows
   `shows`; the tile agent reads it.
-- `propose`: at most one more tile, `{id, type, shows, cites}`, only when
+- `propose`: at most one more tile, `{id, type, shows, cites, focus}`
+  (`focus` as for a planned tile), only when
   the section's content reads better as a tile the map did not plan: a
   table when you would otherwise list cases, limits or values a reader
   compares, a flow when you would otherwise number a path, a before and

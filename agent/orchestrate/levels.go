@@ -396,6 +396,9 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, h 
 			if len(hunkCites(brief.Cites)) > 0 {
 				t.Cites = brief.Cites
 			}
+			if t.Type == TypeCode {
+				o.setFocus(t.ID, brief.Focus)
+			}
 		}
 		o.setTile(t)
 		out = append(out, t)
@@ -539,6 +542,7 @@ func (o *orchestration) claimProposal(result *sectionResult) {
 	}
 	o.tiles = append(o.tiles, *extra)
 	o.mu.Unlock()
+	o.setFocus(extra.ID, result.ProposeFocus)
 	if extra.ID == id {
 		return
 	}
@@ -597,28 +601,51 @@ func (o *orchestration) tileLevel(ctx context.Context, t reviewv2.Tile, owner st
 	o.publish()
 }
 
-// codeTile is a code tile: its first hunk cite, with the lines the section
-// chose, and its brief as its title. The host fills the text.
-func (o *orchestration) codeTile(t reviewv2.Tile) {
-	var hunk string
-	var lines []int
-	for _, raw := range t.Cites {
+// codeData is a code tile's data before the host fills it: its first hunk
+// cite, with the lines the section chose; false when it cites no hunk.
+func codeData(cites []reviewv2.Anchor) (reviewv2.CodeData, bool) {
+	for _, raw := range cites {
 		var a anchor
-		if json.Unmarshal(raw, &a) == nil && a.Type == "hunk" {
-			hunk, lines = a.ID, a.Lines
-			break
+		if json.Unmarshal(raw, &a) == nil && a.Type == "hunk" && a.ID != "" {
+			data := reviewv2.CodeData{Hunk: a.ID}
+			if len(a.Lines) == 2 {
+				data.Lines = a.Lines
+			}
+			return data, true
 		}
 	}
-	if hunk == "" {
+	return reviewv2.CodeData{}, false
+}
+
+// setFocus keeps the lines a section highlights in a code tile until
+// codeTile writes its data; the host keeps those within the excerpt. A
+// pending tile keeps no data, so a draft leaves it pending.
+func (o *orchestration) setFocus(tile string, focus []int) {
+	if len(focus) == 0 {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.focus == nil {
+		o.focus = map[string][]int{}
+	}
+	o.focus[tile] = focus
+}
+
+// codeTile is a code tile: its first hunk cite, with the lines the section
+// chose and the ones it highlights, and its brief as its title. The host
+// fills the text.
+func (o *orchestration) codeTile(t reviewv2.Tile) {
+	data, ok := codeData(t.Cites)
+	if !ok {
 		t.State = reviewv2.TileFailed
 		o.setTile(t)
 		o.record(LevelTiles, t.ID, StatusFailed, "a code tile needs a hunk")
 		return
 	}
-	data := reviewv2.CodeData{Hunk: hunk}
-	if len(lines) == 2 {
-		data.Lines = lines
-	}
+	o.mu.Lock()
+	data.Focus = o.focus[t.ID]
+	o.mu.Unlock()
 	t.Data, _ = json.Marshal(data)
 	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), reviewv2.MaxTileTitle)
 	t.State = reviewv2.TileReady

@@ -3,6 +3,17 @@ import type { CodeDiffHunk, CodeDiffLine } from "./components/code-diff";
 
 const hunkHeader = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+/** An indexed hunk's diff as `CodeDiff` draws it. */
+export const codeDiffHunk = (diff: NonNullable<IndexedHunk["diff"]>): CodeDiffHunk => ({
+  header: diff.header,
+  lines: diff.lines.map((line) => ({
+    kind: line.kind,
+    text: line.text,
+    oldLine: line.kind !== "add" ? line.old_line : undefined,
+    newLine: line.kind !== "remove" ? line.new_line : undefined,
+  })),
+});
+
 const parsedPatches = new Map<string, CodeDiffHunk[]>();
 
 /** Parsed once per patch text, since every evidence block of a file reads it.

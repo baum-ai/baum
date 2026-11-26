@@ -252,18 +252,19 @@ func TestAddACodeTile(t *testing.T) {
 		`{"hunk":"h_000000000000"}`,
 		fmt.Sprintf(`{"hunk":%q,"text":"made up"}`, hunk.id),
 		fmt.Sprintf(`{"hunk":%q,"lines":[%d,%d]}`, hunk.id, hunk.first-1, hunk.last),
+		fmt.Sprintf(`{"hunk":%q,"lines":[%d,%d],"focus":[%d]}`, hunk.id, hunk.first, hunk.first, hunk.first+1),
 	} {
 		if _, err := adder.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "code", Data: json.RawMessage(data)}); err == nil {
 			t.Errorf("%s was taken", data)
 		}
 	}
-	added, err := adder.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "code", Data: json.RawMessage(fmt.Sprintf(`{"hunk":%q,"lines":[%d,%d]}`, hunk.id, hunk.first, hunk.first))})
+	added, err := adder.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "code", Data: json.RawMessage(fmt.Sprintf(`{"hunk":%q,"lines":[%d,%d],"focus":[%d]}`, hunk.id, hunk.first, hunk.first, hunk.first))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tile := servedTile(f.served(t, ""), added.Tile)
 	var code reviewv2.CodeData
-	if tile == nil || tile.State != reviewv2.TileReady || json.Unmarshal(tile.Data, &code) != nil || code.Text != fmt.Sprintf("line %d", hunk.first) {
+	if tile == nil || tile.State != reviewv2.TileReady || json.Unmarshal(tile.Data, &code) != nil || code.Text != fmt.Sprintf("line %d", hunk.first) || !slices.Equal(code.Focus, []int{hunk.first}) {
 		t.Fatalf("the tile: %+v", tile)
 	}
 }

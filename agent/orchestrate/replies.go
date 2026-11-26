@@ -77,10 +77,13 @@ type riskReply struct {
 	Cites    []json.RawMessage `json:"cites"`
 }
 
+// tileBrief is a section's word on a planned tile. Focus is a code tile's
+// new-side lines that matter most, which the page highlights.
 type tileBrief struct {
 	ID     string            `json:"id"`
 	Shows  string            `json:"shows"`
 	Cites  []json.RawMessage `json:"cites"`
+	Focus  []int             `json:"focus"`
 	Drop   bool              `json:"drop"`
 	Reason *string           `json:"reason"`
 }
@@ -90,6 +93,7 @@ type proposal struct {
 	Type  string            `json:"type"`
 	Shows string            `json:"shows"`
 	Cites []json.RawMessage `json:"cites"`
+	Focus []int             `json:"focus"`
 }
 
 type contextReply struct {
@@ -289,7 +293,9 @@ type sectionResult struct {
 	Risks   []reviewv2.Risk
 	Briefs  map[string]tileBrief
 	Propose *reviewv2.Tile
-	Dropped map[string]string
+	// ProposeFocus is a proposed code tile's focus lines.
+	ProposeFocus []int
+	Dropped      map[string]string
 	// Kept is a reply that kept the previous version's body and risks.
 	Kept bool
 	// Rechecked is a reply sent back for previous claims it repeats over
@@ -429,6 +435,9 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 				placeable[p.ID] = final
 			}
 			out.Propose = &reviewv2.Tile{ID: final, Type: t.Name, Owner: section.ID, Shows: shows, Cites: kept, State: reviewv2.TilePending}
+			if t.Name == TypeCode {
+				out.ProposeFocus = p.Focus
+			}
 		}
 	}
 	placed := map[string]bool{}

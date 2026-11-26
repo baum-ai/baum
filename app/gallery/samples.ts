@@ -1,3 +1,5 @@
+import { HUNKS } from "../src/review-view/fixture-1303-hunks";
+
 /** Hand-written diagrams for the gallery: per type the smallest one, the
  *  largest one the composition schema (`oss/schema/composition-2.json`) and
  *  the host's check (`oss/tiles/view/native.go`) allow, with every count and
@@ -435,6 +437,51 @@ const unknownType: Sample = {
   data: { source: [], events: [{ at: "09:00", text: "Deployed" }] },
   expect: "invalid",
 };
+
+// ---------- code ----------
+
+/** Code tiles as baum.review/2 stores them, on the fixture's hunks (the
+ *  composition has no code tile, so no schema bounds apply): the page draws
+ *  each as its hunk's diff. `text` is the new side the host fills. */
+export type CodeSample = Omit<Sample, "data"> & {
+  data: { hunk: string; lines?: [number, number]; focus?: number[]; text?: string };
+};
+
+const newSide = (hunk: string, first: number, last: number) =>
+  (HUNKS.find((each) => each.id === hunk)?.diff?.lines ?? [])
+    .flatMap((line) =>
+      line.kind !== "remove" && line.new_line >= first && line.new_line <= last ? [line.text] : [],
+    )
+    .join("\n");
+
+const codeExcerpt = (
+  id: string,
+  title: string,
+  hunk: string,
+  lines: [number, number],
+  focus?: number[],
+): CodeSample => ({
+  id,
+  type: "code",
+  title,
+  placement: SECTION,
+  data: { hunk, lines, ...(focus ? { focus } : {}), text: newSide(hunk, lines[0], lines[1]) },
+  expect: "valid",
+});
+
+export const CODE_SAMPLES: CodeSample[] = [
+  codeExcerpt("code_shutdown", "Phones close first", "h_shutdown", [992, 1003], [997, 998]),
+  codeExcerpt("code_plain", "The device list", "h_devices", [21, 26]),
+  codeExcerpt("code_long", "The reads a phone may make", "h_routes", [17, 49], [45, 46]),
+  {
+    id: "code_unfilled",
+    type: "code",
+    title: "An excerpt the host didn't fill",
+    placement: SECTION,
+    data: { hunk: "h_shutdown", lines: [992, 994] },
+    expect: "invalid",
+  },
+];
 
 export const SAMPLES: Sample[] = [
   flowMinimal,

@@ -1105,7 +1105,8 @@ writes (`view.DiagramSchema`, checked by `view.CheckDiagram`, refused rather
 than cut when a text is over its limit or a source is not a hunk of the
 version), its caption and source lifted to the tile
 (`reviewv2.LiftNative`); a code tile names a hunk and, optionally, lines of
-its new side (at most 80), and the host reads those lines from the clone at
+its new side (at most 80) and the few of them to highlight (`focus`),
+and the host reads those lines from the clone at
 the version's head (`gitlocal.Repo.Blob`), so its text is never the agent's;
 an images tile names image files on this computer by absolute path (at most
 6). Each is sniffed (`bundle.SniffImage`: PNG, JPEG, GIF or WebP), downscaled
@@ -2095,7 +2096,7 @@ IDs, merged into its `$defs` (`schema.CompileReview2`,
 tile types have their data shape: `flow`, `columns`, `sequence` and `table`
 are `tiles/view`'s shapes without `caption` and `source`, which a tile
 carries beside its data as `caption` and `cites` (a test keeps the two
-equal), and `code` is `{hunk, lines?, text?}`. Any other type (a library,
+equal), and `code` is `{hunk, lines?, focus?, text?}`. Any other type (a library,
 saved or dedicated type drawn in a frame from `definition`, or a converted
 `v1_table`, `v1_code` or `v1_prose` exhibit) has an open object. The schema
 holds no text limits beyond generous bounds: converted `baum.review/1` versions
@@ -2144,7 +2145,8 @@ characters and two to five steps `st_` of one sentence within 220; risks `rsk_`
 within 300 characters), `CheckContext` (four parts of at most two
 sentences and 320 characters, the area required), `CheckTile` (title within
 80, caption within 200, native data within `tiles/view`'s limits through
-`view.CheckNative`, a code tile's hunk and lines on its new side) and
+`view.CheckNative`, a code tile's hunk and lines on its new side, and its
+focus lines within them) and
 `CheckOverview` (summary text, verdict line within 120 and at most three
 points within 200, `risk_why` within two sentences and 260 characters,
 screenshots and intent that the pull request has, videos that are its
@@ -2167,9 +2169,10 @@ code; the reading time (`ReviewMinutes`: the prose's words at 400 a minute,
 keeps the version it was introduced in, a previous risk a section no longer
 names is mitigated in this version unless the section's details are pending
 or failed); a code tile's `text` (the new side of its hunk between its
-lines) from the diff; and every tile's state. A previous version of either
-schema is read through `reviewv2.Read`. A completed document always has a
-`generation` record; a converted one never does.
+lines) from the diff, its `focus` kept to lines of the excerpt; and every
+tile's state. A previous version of either schema is read through
+`reviewv2.Read`. A completed document always has a `generation` record; a
+converted one never does.
 
 **Conversion.** `reviewv2.FromV1` converts a stored `baum.review/1` version
 and its view composition: the header, stats, index, risk score and reading
@@ -2953,9 +2956,10 @@ the levels of `agent/orchestrate` instead of the staged review:
    `readyTiles`). Otherwise a tile is drawn again, and a tile the section
    drops is neither kept nor drawn. Native types share the tile prompt; a
    dedicated type goes through the library's fill
-   (`agent.Generator.FillTile`); a code tile is filled by the host. The
-   types the person added or pinned (`generate.Tiles.Always`) get a tile
-   whatever the map plans.
+   (`agent.Generator.FillTile`); a code tile is filled by the host, from the
+   hunk, lines and `focus` its section's brief gave. The types the person
+   added or pinned (`generate.Tiles.Always`) get a tile whatever the map
+   plans.
 4. **The overview**, by resuming the map's session (or in a fresh call
    with the map in its input). After a `baum.review/2` version, and unless
    `Run.NoReuse`, its input adds that version's overview as model-written

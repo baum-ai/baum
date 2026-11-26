@@ -9,7 +9,7 @@ import { JumpLink } from "@baum/viewer/components/review-parts";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { NavRow } from "./nav-row";
 import { Button, SegmentedControl } from "@baum/viewer/components/ui";
-import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
+import { codeDiffHunk, indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import { hunkUrl, type IndexedHunk, type ReviewDocument } from "@baum/viewer/review-document";
 import { LoadingStatus } from "../nine-dots";
 import { useFileGrouping } from "./file-grouping";
@@ -297,16 +297,6 @@ function FileView({
 
 type Shown = { hunk: IndexedHunk; diff: CodeDiffHunk | null };
 
-const asDiffHunk = (diff: NonNullable<IndexedHunk["diff"]>): CodeDiffHunk => ({
-  header: diff.header,
-  lines: diff.lines.map((line) => ({
-    kind: line.kind,
-    text: line.text,
-    oldLine: line.kind !== "add" ? line.old_line : undefined,
-    newLine: line.kind !== "remove" ? line.new_line : undefined,
-  })),
-});
-
 /** The file's hunks as the review indexed them. A hunk whose code the review
  *  left out is read from the compared version's patch (not while two
  *  versions are compared). */
@@ -346,9 +336,9 @@ export function FileDiff({
     };
   }, [file.path, version, first, source]);
   const shown: Shown[] = file.hunks.map((hunk) => {
-    if (hunk.diff) return { hunk, diff: asDiffHunk(hunk.diff) };
+    if (hunk.diff) return { hunk, diff: codeDiffHunk(hunk.diff) };
     const loaded = patch ? indexedHunkFromFilePatch(patch, hunk) : null;
-    return { hunk, diff: loaded ? asDiffHunk(loaded) : null };
+    return { hunk, diff: loaded ? codeDiffHunk(loaded) : null };
   });
   const drawn = shown.filter((item): item is { hunk: IndexedHunk; diff: CodeDiffHunk } =>
     Boolean(item.diff),

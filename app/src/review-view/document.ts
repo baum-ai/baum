@@ -432,7 +432,7 @@ function parseTile(value: Record<string, unknown>, hunks: IndexedHunk[]): ViewTi
  *  citations stand on the tile in baum.review/2 and in its data in the faces;
  *  a code tile (`{hunk, lines}`, its text filled by the host) becomes the
  *  excerpt the code face draws. */
-function tileData(
+export function tileData(
   type: string,
   data: unknown,
   caption: string | undefined,
@@ -470,13 +470,22 @@ const LANGUAGES: Record<string, string> = {
 };
 
 /** A code tile's excerpt: the text the host filled (`text`), with the
- *  language its hunk's path picks. Null when the host filled none. */
+ *  language its hunk's path picks, its hunk, lines and the lines it
+ *  highlights (`focus`). Null when the host filled none. */
 function codeExcerpt(
   data: Record<string, unknown>,
   caption: string | undefined,
   cites: Anchor[],
   hunks: IndexedHunk[],
-): { language: string; content: string; caption?: string; source: Anchor[] } | null {
+): {
+  language: string;
+  content: string;
+  caption?: string;
+  source: Anchor[];
+  hunk: string;
+  lines?: [number, number];
+  focus?: number[];
+} | null {
   const id = data.hunk as string;
   if (!isString(data.text) || !data.text) return null;
   const hunk = hunks.find((each) => each.id === id);
@@ -491,10 +500,16 @@ function codeExcerpt(
     lines ? { type: "hunk", id, lines } : { type: "hunk", id },
     ...cites.filter((anchor) => !(anchor.type === "hunk" && anchor.id === id)),
   ];
+  const focus = Array.isArray(data.focus)
+    ? data.focus.filter((line): line is number => typeof line === "number")
+    : [];
   return {
     language: isString(data.language) ? data.language : (LANGUAGES[extension] ?? "text"),
     content: data.text,
     ...(caption ? { caption } : {}),
     source,
+    hunk: id,
+    ...(lines ? { lines } : {}),
+    ...(focus.length > 0 ? { focus } : {}),
   };
 }

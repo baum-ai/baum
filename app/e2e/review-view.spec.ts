@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { REVIEW_1303 } from "../src/review-view/fixture-1303";
+import { HUNKS } from "../src/review-view/fixture-1303-hunks";
 import { reviewDocumentFor } from "../../viewer/test/review-document";
 import { launchURL } from "./inbox-helpers";
 
@@ -84,6 +85,64 @@ test("the rail switches places, keeps them in the address and survives a reload"
   await expect(page).toHaveURL(/tile=code/);
   await page.goBack();
   await expect(page).toHaveURL(/section=sec_allowlist/);
+  expect(errors).toEqual([]);
+});
+
+/** #1303 with its code tile showing `lines` of `hunk`, `focus` marked. */
+function withCode(hunk: string, lines: [number, number], focus: number[]) {
+  const text = (HUNKS.find((each) => each.id === hunk)?.diff?.lines ?? [])
+    .flatMap((line) =>
+      line.kind !== "remove" && line.new_line >= lines[0] && line.new_line <= lines[1]
+        ? [line.text]
+        : [],
+    )
+    .join("\n");
+  return {
+    document: {
+      ...REVIEW_1303,
+      tiles: REVIEW_1303.tiles.map((tile) =>
+        tile.id === "code_remote_routes" ? { ...tile, data: { hunk, lines, focus, text } } : tile,
+      ),
+    },
+  };
+}
+
+test("a code tile draws its hunk's diff, folds a long one and opens its file", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const tile = page.locator('[data-tile="code_remote_routes"]');
+  const shot = async (name: string) => {
+    if (!SHOTS) return;
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await tile.screenshot({ path: join(SHOTS, `${name}-${scheme}.png`) });
+    }
+    await page.emulateMedia({ colorScheme: "light" });
+  };
+  await open(
+    page,
+    `${PR7}&pane=section&section=sec_allowlist`,
+    withCode("h_shutdown", [992, 1003], [997, 998]),
+  );
+  const rows = tile.locator("tbody tr");
+  // The hunk's header, the removed line and the twelve lines.
+  await expect(rows).toHaveCount(14);
+  await expect(rows.nth(4)).toContainText("Shutdown:     queue.Shutdown,");
+  await expect(tile.locator("tbody tr[data-focus]")).toHaveCount(2);
+  await shot("code-tile-diff");
+  await open(
+    page,
+    `${PR7}&pane=section&section=sec_allowlist`,
+    withCode("h_routes", [17, 49], [45, 46]),
+  );
+  await expect(rows).toHaveCount(13);
+  await shot("code-tile-folded");
+  await tile.getByRole("button", { name: "Show all 33 lines" }).click();
+  await expect(rows).toHaveCount(34);
+  await tile.getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true }).click();
+  await expect(page).toHaveURL(/tile_item=oss%2Finternal%2Fuiserver%2Fremote\.go/);
   expect(errors).toEqual([]);
 });
 
@@ -171,9 +230,9 @@ test("a wide section shows its Overview beside its other views, which stay in si
   await expect(views.getByRole("tab")).toHaveText(["Code 1", "Tests 1", "Session 0", "Docs 1"]);
   await expect(views.getByRole("tab", { name: "Code" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("[data-section-body]")).toBeVisible();
-  const diff = page.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" });
-  await expect(diff).toBeVisible();
   const side = page.locator("[data-section-side]");
+  const diff = side.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" });
+  await expect(diff).toBeVisible();
   const overview = await page.locator("[data-section-body]").boundingBox();
   const beside = await side.boundingBox();
   expect(beside!.x).toBeGreaterThan(overview!.x + overview!.width);
@@ -231,6 +290,7 @@ test("a wide section's excerpts open in its side column, which collapses and res
   await views.getByRole("tab", { name: "Tests" }).click();
   await overview
     .getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true })
+    .and(page.getByTitle(/^Diff hunk/))
     .click();
   await expect(page).toHaveURL(/section_view=code/);
   await expect(diff).toBeInViewport();
@@ -256,6 +316,7 @@ test("a wide section's excerpts open in its side column, which collapses and res
   await overview.getByRole("button", { name: /Deny by default/ }).click();
   await overview
     .getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true })
+    .and(page.getByTitle(/^Diff hunk/))
     .click();
   await expect(
     side.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" }),

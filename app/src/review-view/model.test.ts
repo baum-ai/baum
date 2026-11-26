@@ -139,6 +139,8 @@ describe("parseReviewV2", () => {
       content:
         '\t{"POST", "/api/prs/review"},\n\t{"POST", "/api/prs/resolve-thread"},\n\t{"POST", "/api/prs/refresh"},\n\t{"POST", "/api/agent-requests/{id}/answer"},',
       source: [{ type: "hunk", id: "h_routes", lines: [61, 64] }],
+      hunk: "h_routes",
+      lines: [61, 64],
     });
     const read = parseReviewV2({
       ...REVIEW_1303,
@@ -149,7 +151,7 @@ describe("parseReviewV2", () => {
           owner: "sec_allowlist",
           title: "X",
           state: "ready",
-          data: { hunk: "h_routes", lines: [61, 64], text: "x := 1" },
+          data: { hunk: "h_routes", lines: [61, 64], focus: [62, "x"], text: "x := 1" },
         },
         {
           id: "code_y",
@@ -161,7 +163,7 @@ describe("parseReviewV2", () => {
         },
       ],
     })!.tiles;
-    expect(read[0]!.data).toMatchObject({ language: "go", content: "x := 1" });
+    expect(read[0]!.data).toMatchObject({ language: "go", content: "x := 1", focus: [62] });
     expect(read[1]!.data).toEqual({ hunk: "h_routes", lines: [61, 64] });
   });
 });

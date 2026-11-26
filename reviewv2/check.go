@@ -3,6 +3,7 @@ package reviewv2
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -483,7 +484,7 @@ func (f *findings) nativeData(where, typ string, data json.RawMessage, refs *Ref
 }
 
 // codeData checks a code tile's data: the hunk it shows and, optionally,
-// the lines of it.
+// the lines of it and the few of those it highlights.
 func (f *findings) codeData(where string, data json.RawMessage, refs *Refs) {
 	var code CodeData
 	if json.Unmarshal(data, &code) != nil || code.Hunk == "" {
@@ -495,6 +496,13 @@ func (f *findings) codeData(where string, data json.RawMessage, refs *Refs) {
 	}
 	if code.Lines != nil && len(code.Lines) != 2 {
 		f.add(where, "lines is not a first and last line")
+	}
+	first, last := 1, math.MaxInt
+	if len(code.Lines) == 2 {
+		first, last = code.Lines[0], code.Lines[1]
+	}
+	if len(FocusWithin(code.Focus, first, last)) != len(code.Focus) {
+		f.add(where, "focus names a line outside lines, or one twice")
 	}
 }
 

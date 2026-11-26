@@ -3139,8 +3139,15 @@ builds the rail's model (the sections and the file list) from it.
   row with a changed cell has the Changed pill and bar on its first cell,
   with the same "Show only changes" switch, which also unfolds a long
   table. A code
-  tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
-  in that range. Exhibits draw as the generic tiles do, and library and
+  tile (`{hunk, lines, focus}`) draws its excerpt as Files changed draws a
+  hunk (`CodeDiff`): under its file's path, which opens the file in Files
+  changed, with old and new line numbers and the lines it removed among and
+  just before its range. The `focus` lines carry a bar and the
+  rest are dimmed. An excerpt over 14 lines shows 12 (from just above its
+  first focus line, moved down to take in its last when they fit) until
+  "Show all N lines" opens it; the `@@` header gives the ranges drawn. When the index holds
+  no diff for the hunk, the text the host filled stands as unchanged lines.
+  Exhibits draw as the generic tiles do, and library and
   chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that
   failed and one that cannot be read say so in its place.
 - **Comments and keys.** `c` comments on the section read (in any of its
@@ -3282,7 +3289,7 @@ their bullets and numbers.
 
 A dev page (`gallery/`, served by `vite.gallery.config.ts`, never part of the
 app's build) draws the review page's native diagrams (flow, columns, sequence,
-table) with its own `ViewTileCard`, without opening the app: in a card on the
+table) and code tiles with its own `ViewTileCard`, without opening the app: in a card on the
 overview and in "Where this fits", bare in a section, and a failed, pending or
 unreadable tile as the page shows it. Editing `native-tiles.tsx`, `flow.css`,
 the palette or a sample redraws it in place. From the repository root:
@@ -3296,7 +3303,7 @@ It serves `http://127.0.0.1:5181` from the `ui-test` service.
 for a mount that misses file events. The recipe publishes the port on
 127.0.0.1 only; `pnpm gallery` run elsewhere listens on `DIAGRAM_GALLERY_HOST`
 (127.0.0.1 by default). Each diagram shows its title, type,
-origin, placement and the page's verdict (`NATIVE[type].valid`), with a
+origin, placement and the page's verdict (`NATIVE[type].valid`, or the code face's check), with a
 one-line reason when the page cannot draw it. Controls, kept in the address:
 type, source, the section's width at a 1440 window, a 900 window and a 390
 phone (the overview's column is as wide), and light, dark or both side by side.
@@ -3306,7 +3313,9 @@ The diagrams come from:
   `gallery/samples.ts`: per type the smallest and the largest the schemas
   allow, realistic ones and one the page cannot read
   (`gallery/gallery.test.tsx` checks each against the page's check,
-  composition-2.json and review-2.json);
+  composition-2.json and review-2.json), and code tiles on the fixture's
+  hunks (with and without focus lines, a folded one, one the host didn't
+  fill);
 - replay runs under `$BAUM_REPLAY_OUT` or `~/.cache/baum/replay-runs`: each
   case's `document.json` and `composition.json`;
 - the desktop app's review stores (`<clone>/.git/baum/reviews/versions.sqlite`,

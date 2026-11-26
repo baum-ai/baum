@@ -144,7 +144,7 @@ func nativeTileID(typ string) (string, error) {
 func (a LocalAPI) codeExcerpt(ctx context.Context, c repos.Clone, shown shownVersion, raw json.RawMessage) (json.RawMessage, reviewv2.Anchor, error) {
 	var code reviewv2.CodeData
 	if err := strictData(raw, &code); err != nil || code.Hunk == "" || code.Text != "" {
-		return nil, reviewv2.Anchor{}, errors.New(`A code tile's data is {"hunk": a hunk's id, "lines": [first, last]} (lines optional); the host reads the code`)
+		return nil, reviewv2.Anchor{}, errors.New(`A code tile's data is {"hunk": a hunk's id, "lines": [first, last], "focus": [line, …]} (lines and focus optional); the host reads the code`)
 	}
 	var hunk *bundle.Hunk
 	for _, h := range library.DiffOf(shown.Document) {
@@ -166,6 +166,10 @@ func (a LocalAPI) codeExcerpt(ctx context.Context, c repos.Clone, shown shownVer
 		}
 		first, last = code.Lines[0], code.Lines[1]
 	}
+	if len(reviewv2.FocusWithin(code.Focus, first, last)) != len(code.Focus) {
+		return nil, reviewv2.Anchor{}, fmt.Errorf("focus names each line once, within the excerpt, %d to %d", first, last)
+	}
+	code.Focus = reviewv2.FocusWithin(code.Focus, first, last)
 	if last-first+1 > maxCodeLines {
 		return nil, reviewv2.Anchor{}, fmt.Errorf("A code tile shows at most %d lines: name fewer with lines", maxCodeLines)
 	}
