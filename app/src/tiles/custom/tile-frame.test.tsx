@@ -17,6 +17,23 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
 }
 
+/** A stand-in highlighter: each line one keyword token, cached by path once
+ *  highlighted, a microtask after it is asked. */
+const highlighter = vi.hoisted(() => ({
+  cache: new Map<string, { content: string; color: string }[][][]>(),
+}));
+vi.mock("@baum/viewer/highlight", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@baum/viewer/highlight")>()),
+  cachedHighlightedHunks: (path: string) => highlighter.cache.get(path) ?? null,
+  highlightHunks: async (path: string, hunks: { lines: { text: string }[] }[]) => {
+    const tokens = hunks.map((hunk) =>
+      hunk.lines.map((line) => [{ content: line.text, color: "var(--syntax-token-keyword)" }]),
+    );
+    highlighter.cache.set(path, tokens);
+    return tokens;
+  },
+}));
+
 let root: Root | null = null;
 
 /** jsdom gives a frame a new window as it navigates, where a browser keeps
@@ -188,6 +205,41 @@ describe("a custom tile's frame", () => {
     expect(Object.keys(refs)).toContain('["risk","rsk_retry_storm"]');
     post({ protocol: PROTOCOL, kind: "ready", metrics: { height: 100 } });
     expect(state(container)).toBe("ready");
+  });
+
+  it("waits for a detail's cited code to be highlighted, then sends it coloured", async () => {
+    const withDiff = structuredClone(source);
+    const hunk = withDiff.index.hunks.find((each) => each.id === "h_000000000003")!;
+    hunk.diff = {
+      header: "@@ -1,2 +1,2 @@",
+      lines: [
+        { kind: "remove", old_line: 1, text: "return a;" },
+        { kind: "add", new_line: 1, text: "return b;" },
+      ],
+    };
+    highlighter.cache.delete(hunk.path);
+    const lines = (message: unknown) =>
+      (message as { refs: Record<string, { excerpt?: { lines: unknown[] } }> }).refs[
+        '["hunk","h_000000000003",null]'
+      ]!.excerpt!.lines;
+    const coloured = [
+      { kind: "remove", old: 1, text: "return a;", tokens: [["return a;", "keyword"]] },
+      { kind: "add", new: 1, text: "return b;", tokens: [["return b;", "keyword"]] },
+    ];
+    const first = mount("detail", freshTile(), { source: withDiff });
+    first.post({ protocol: PROTOCOL, kind: "hello", kit: 1, registered: true });
+    expect(first.sent).toHaveLength(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(lines(first.sent.at(-1))).toEqual(coloured);
+    act(() => root?.unmount());
+    // Highlighted before, it is coloured from the first message.
+    const again = mount("detail", freshTile(), { source: withDiff });
+    again.post({ protocol: PROTOCOL, kind: "hello", kit: 1, registered: true });
+    expect(again.sent).toHaveLength(1);
+    expect(again.sent[0]).toMatchObject({ kind: "init" });
+    expect(lines(again.sent[0])).toEqual(coloured);
   });
 
   it("sends the app's theme as it changes", async () => {
