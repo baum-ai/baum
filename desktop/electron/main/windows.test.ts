@@ -23,18 +23,20 @@ describe("the app's windows", () => {
     expect(CHECK_WINDOW_PAGE).toEqual({ tileFrames: true, checkWindow: true, openLinks: false });
   });
 
-  it("grant notifications and clipboard writes to the app's origins only", () => {
+  it("grant notifications, clipboard writes and full screen to the app's origins only", () => {
     const app = (origin: string) => ["app://bundle", "http://127.0.0.1:4100"].includes(origin);
     const main = { isMainFrame: true };
     expect(permissionAllowed("notifications", "app://bundle/index.html", app, main)).toBe(true);
     expect(
       permissionAllowed("clipboard-sanitized-write", "http://127.0.0.1:4100/s/x", app, main),
     ).toBe(true);
+    expect(permissionAllowed("fullscreen", "app://bundle/index.html", app, main)).toBe(true);
     for (const [permission, url] of [
       ["notifications", "http://127.0.0.1:4200/"],
       ["notifications", "https://example.com/"],
       ["notifications", undefined],
       ["notifications", "not a url"],
+      ["fullscreen", "https://example.com/"],
       ["media", "app://bundle/index.html"],
       ["geolocation", "http://127.0.0.1:4100/"],
       ["clipboard-read", "http://127.0.0.1:4100/"],
