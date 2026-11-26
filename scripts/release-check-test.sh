@@ -36,15 +36,30 @@ release() {
   git tag "$2"
   git checkout -q main
 }
+# reject <tag> <message> [<release-branch>...]
 reject() {
-  if sh "$script" "$1" main >"$tmp/output" 2>&1; then
-    echo "unexpected acceptance: $1" >&2
+  tag=$1
+  message=$2
+  shift 2
+  if sh "$script" "$tag" main "$@" >"$tmp/output" 2>&1; then
+    echo "unexpected acceptance: $tag" >&2
     exit 1
   fi
-  grep -q 'does not come after' "$tmp/output"
+  if ! grep -q "$message" "$tmp/output"; then
+    cat "$tmp/output" >&2
+    exit 1
+  fi
+}
+# commit_on <branch> <message>: commit a change outside the built apps.
+commit_on() {
+  git checkout -q "$1"
+  printf '%s\n' "$2" >> source.txt
+  git add source.txt
+  git commit -qm "$2"
+  git checkout -q main
 }
 release "$old" v1.1.0
-reject v1.1.0
+reject v1.1.0 'does not come after'
 git tag -d v1.1.0 >/dev/null
 release "$base" v1.1.0
 sh "$script" v1.1.0 main
@@ -54,5 +69,30 @@ sh "$script" v1.2.0-rc.1 main
 release "$base" v1.2.0
 sh "$script" v1.2.0 main
 release "$legacy" v1.3.0
-reject v1.3.0
+reject v1.3.0 'does not come after'
+git tag -d v1.3.0 >/dev/null
+
+# A release branch forks from main and leaves out a change main has since
+# taken; its tag is released only when the branch is named.
+commit_on main 'Feature main has, the release leaves out'
+git branch release/v1.2 "$base"
+commit_on release/v1.2 'Fix cherry-picked from main'
+release release/v1.2 v1.2.1
+reject v1.2.1 'not on main or a release branch'
+sh "$script" v1.2.1 main release/v1.2
+# main comes after the branch's fork point, so its next release follows.
+commit_on main 'Fix on main'
+release main v1.3.0
+sh "$script" v1.3.0 main release/v1.2
+# A branch forked before that release cannot follow it.
+git branch release/v1.3 "$base"
+commit_on release/v1.3 'Fix on a branch that forked too early'
+release release/v1.3 v1.3.1
+reject v1.3.1 'does not come after' release/v1.2 release/v1.3
+git tag -d v1.3.1 >/dev/null
+# One that forks from the released commit can.
+git branch -f release/v1.3 v1.3.0^
+commit_on release/v1.3 'Fix for v1.3.1'
+release release/v1.3 v1.3.1
+sh "$script" v1.3.1 main release/v1.2 release/v1.3
 echo 'release-check ordering tests passed'

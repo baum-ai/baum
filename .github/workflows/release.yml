@@ -1,6 +1,7 @@
 name: Release
 
-# On a version tag of a release commit: a commit on main plus the built
+# On a version tag of a release commit: a commit on main (or on a release/*
+# branch) plus the built
 # viewer and local app, which no other commit carries, so go install of the tag
 # needs only Go. The monorepo's "Tag an open-source release" workflow makes it.
 #
@@ -164,14 +165,17 @@ jobs:
           persist-credentials: false
 
       # Only a reviewed commit is released: the tag must point at a release
-      # commit whose one parent is on main, past the previous release, and
-      # which adds nothing but the built apps. viewer-dist checks those match
-      # their sources. The tagging workflow ran the same checks before
-      # pushing the tag.
-      - name: The tag is a release commit of a commit on main, newer than the last release
+      # commit whose one parent is on main or a release/* branch, past the
+      # previous release, and which adds nothing but the built apps.
+      # viewer-dist checks those match their sources. The tagging workflow ran
+      # the same checks before pushing the tag.
+      - name: The tag is a release commit of a commit on main or a release branch, newer than the last release
         run: |
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          sh scripts/release-check.sh "$GITHUB_REF_NAME" origin/main
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main \
+            '+refs/heads/release/*:refs/remotes/origin/release/*'
+          # shellcheck disable=SC2046 # one argument per branch; ref names have no spaces
+          sh scripts/release-check.sh "$GITHUB_REF_NAME" origin/main \
+            $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/release/)
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
