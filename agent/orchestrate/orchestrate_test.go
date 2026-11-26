@@ -57,11 +57,27 @@ type fake struct {
 	starts     map[string]int
 	ends       map[string]int
 	requests   map[string]agent.Request
+	// holdUntil keeps a stage's reply until another stage has started (or
+	// a second has passed), so a test can check two calls overlap without
+	// depending on how soon the scheduler runs the second.
+	holdUntil map[string]string
+	started   map[string]chan struct{}
 }
 
 func newFake() *fake {
 	return &fake{replies: map[string]func(int) string{}, concurrent: true, sessions: true,
-		starts: map[string]int{}, ends: map[string]int{}, requests: map[string]agent.Request{}}
+		starts: map[string]int{}, ends: map[string]int{}, requests: map[string]agent.Request{},
+		holdUntil: map[string]string{}, started: map[string]chan struct{}{}}
+}
+
+// startedChan is closed once stage has started; f.mu must be held.
+func (f *fake) startedChan(stage string) chan struct{} {
+	c, ok := f.started[stage]
+	if !ok {
+		c = make(chan struct{})
+		f.started[stage] = c
+	}
+	return c
 }
 
 func (f *fake) Name() string          { return agent.BackendClaude }
@@ -81,14 +97,27 @@ func (f *fake) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	f.events++
 	if _, ok := f.starts[r.Stage]; !ok {
 		f.starts[r.Stage] = f.events
+		close(f.startedChan(r.Stage))
 	}
 	f.requests[r.Stage] = r
 	reply := f.replies[r.Stage]
+	var hold chan struct{}
+	if other, ok := f.holdUntil[r.Stage]; ok {
+		hold = f.startedChan(other)
+	}
 	f.mu.Unlock()
 	select {
 	case <-time.After(f.delay):
 	case <-ctx.Done():
 		return agent.Result{}, ctx.Err()
+	}
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return agent.Result{}, ctx.Err()
+		}
 	}
 	defer func() {
 		f.mu.Lock()
@@ -183,6 +212,9 @@ func testRun(t *testing.T, f *fake) Run {
 func TestGenerateWritesEveryLevel(t *testing.T) {
 	f := fullFake()
 	f.delay = 5 * time.Millisecond
+	// The overview's tile needs only the map, so it runs beside the
+	// sections: a section that waits for it to start must not wait long.
+	f.holdUntil["section-sec-retry"] = "tile-tl-path"
 	run := testRun(t, f)
 	var steps []string
 	run.Step = func(s string) { steps = append(steps, s) }
