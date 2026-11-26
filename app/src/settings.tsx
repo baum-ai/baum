@@ -1388,7 +1388,12 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
             label="Opens from"
             value={draft.position}
             items={panelPositions}
-            onChange={(position) => change({ position })}
+            onChange={(position) => {
+              // Saves only the position, so a model that follows the fix
+              // agent's is not saved as the panel's own.
+              setDraft({ ...draft, position });
+              save({ position });
+            }}
           />
         </SettingRow>
       </div>
