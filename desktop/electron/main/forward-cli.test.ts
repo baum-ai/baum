@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -45,7 +45,20 @@ describe.skipIf(process.platform === "win32")("running the bundled baum", () => 
     const seen = join(dir, "args");
     writeFileSync(cli, `#!/bin/sh\necho "$@" >"${seen}"\n${script}\n`);
     chmodSync(cli, 0o755);
-    return { cli, args: () => readFileSync(seen, "utf8").trim() };
+    return {
+      cli,
+      args: () => readFileSync(seen, "utf8").trim(),
+      /** Waits for the stand-in to have written its arguments: a detached
+       *  one is still starting when `forward` returns, and removing the
+       *  folder under its write fails the cleanup with ENOTEMPTY. */
+      started: async () => {
+        const until = Date.now() + 5000;
+        while (!existsSync(seen) || !readFileSync(seen, "utf8").endsWith("\n")) {
+          if (Date.now() > until) throw new Error("the stand-in baum never started");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      },
+    };
   }
 
   const run = (cli: string, args: string[]) =>
@@ -75,6 +88,8 @@ describe.skipIf(process.platform === "win32")("running the bundled baum", () => 
     const started = Date.now();
     expect((await run(b.cli, ["daemon", "run", "--detached"])).code).toBe(0);
     expect(Date.now() - started).toBeLessThan(5000);
+    await b.started();
+    expect(b.args()).toBe("daemon run --detached");
   });
 
   it("fails when the bundled baum is missing", async () => {
