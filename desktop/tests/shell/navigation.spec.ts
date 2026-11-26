@@ -480,3 +480,26 @@ test("the network check alone refuses a frame load", async () => {
     }, url);
   }
 });
+
+// A video's full-screen button (the click stands in for the native control)
+// asks Chromium for the `fullscreen` permission. Esc goes through the window's input path
+// (Playwright's key press reaches the page directly, past Electron).
+test("page-fullscreen: a click puts the page's video in full screen, Esc leaves it", async () => {
+  const { url } = await show({
+    name: "page-fullscreen",
+    policy: false,
+    click: true,
+    main: () => `<video style="${BIG}" onclick="this.requestFullscreen()"></video>`,
+  });
+  await waitFor("full screen", 5_000, () =>
+    shell.main.evaluate(() => document.fullscreenElement?.tagName === "VIDEO"),
+  );
+  await shell.app.evaluate(({ webContents }, url) => {
+    const contents = webContents.getAllWebContents().find((w) => w.getURL() === url);
+    contents?.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
+    contents?.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
+  }, url);
+  await waitFor("leaving full screen", 5_000, () =>
+    shell.main.evaluate(() => document.fullscreenElement === null),
+  );
+});

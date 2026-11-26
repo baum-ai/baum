@@ -228,7 +228,8 @@ function showSetup(): void {
   main.loadURL(setupUrl()).catch((e) => log(`cannot show setup: ${errorMessage(e)}`));
 }
 
-/** The origins whose pages may ask for notifications and clipboard writes. */
+/** The origins whose pages may ask for notifications, clipboard writes and
+ *  full screen. */
 function isAppOrigin(origin: string): boolean {
   return (
     origin === BUNDLED_ORIGIN ||

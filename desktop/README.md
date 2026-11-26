@@ -839,8 +839,9 @@ shell (`src/`, shipped until the bridge release) differs, a note says so.
 - No page reaches Node.js or Electron: every window has context isolation,
   a sandboxed renderer and preload, no Node.js integration and no
   `<webview>`, and no web contents the app did not set up opens a window or
-  attaches a webview. Pages of the app's origins may ask for notifications
-  and clipboard writes; every other permission, and every request from
+  attaches a webview. Pages of the app's origins may ask for notifications,
+  clipboard writes and full screen (a video's full-screen button; Esc
+  leaves it); every other permission, and every request from
   another origin, is refused.
 - Commands go over one IPC channel. The guard (`electron/main/bridge.ts`)
   runs one only when it comes from the main frame of one of the app's own
@@ -1230,8 +1231,8 @@ the Electron shell:
   counts as failed without a request. A status without a `pid` is not
   checked.
 - Only the main frame of a page on the app's own origins gets the
-  notification and clipboard-write permissions; frames inside a page, and
-  opaque origins, never do.
+  notification, clipboard-write and full-screen permissions; frames inside a
+  page, and opaque origins, never do.
 - The app keeps Tauri's identifier (`com.usebaum.desktop`), so it uses the
   same `desktop.json`. Chromium's files go in `chromium/` under the same
   folder.
