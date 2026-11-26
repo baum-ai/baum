@@ -776,3 +776,21 @@ func TestDescription(t *testing.T) {
 	_, err = Service{Client: empty.client()}.Description(ctx, repo, 8)
 	code(t, err, NotFound)
 }
+
+func TestDescriptionCacheFollowsIdentity(t *testing.T) {
+	ctx := context.Background()
+	fake := fakeGitHub{head: "abc", body: "original"}
+	s := Service{Client: fake.client(), Cache: &Cache{}}
+	check := func(want string) {
+		t.Helper()
+		got, err := s.Description(ctx, repo, 7)
+		if err != nil || got.Body != want {
+			t.Fatalf("description %q, %v", got.Body, err)
+		}
+	}
+	check("original")
+	fake.body = "another account"
+	check("original")
+	s.Cache.ResetIdentity()
+	check("another account")
+}

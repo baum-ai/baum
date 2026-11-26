@@ -726,6 +726,10 @@ type Description struct {
 // review's citation of it can be read in the app. The body is cut at
 // DescriptionLimit and its invalid UTF-8 dropped.
 func (s Service) Description(ctx context.Context, repository github.Repository, number int) (Description, error) {
+	key, gen := pullKey(repository, number), s.Cache.generation()
+	if d, ok := s.Cache.cachedDescription(key); ok {
+		return d, nil
+	}
 	reader, err := s.Client.REST(ctx, repository)
 	if err != nil {
 		return Description{}, &Error{Failed, unreachable}
@@ -750,7 +754,9 @@ func (s Service) Description(ctx context.Context, repository github.Repository, 
 	if len(body) > DescriptionLimit {
 		body = strings.ToValidUTF8(body[:DescriptionLimit], "") + "…"
 	}
-	return Description{Body: body, URL: pull.HTML}, nil
+	d := Description{Body: body, URL: pull.HTML}
+	s.Cache.storeDescription(key, gen, d)
+	return d, nil
 }
 
 func deref(s *string) string {

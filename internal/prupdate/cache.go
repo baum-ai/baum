@@ -35,9 +35,10 @@ type Cache struct {
 	ThreadTTL, ChecksTTL, AllChecksTTL time.Duration
 	Now                                func() time.Time
 
-	mu      sync.Mutex
-	threads map[string]cached[Threads]
-	checks  map[string]cached[Checks]
+	mu           sync.Mutex
+	descriptions map[string]cached[Description]
+	threads      map[string]cached[Threads]
+	checks       map[string]cached[Checks]
 	// allChecks are all of a head's checks.
 	allChecks map[string]cached[CheckList]
 	// logs are the tails of finished check runs' logs, least recently used
@@ -78,6 +79,7 @@ func (c *Cache) ResetIdentity() {
 	defer c.mu.Unlock()
 	c.threads, c.checks, c.allChecks = nil, nil, nil
 	c.logs, c.logOrder = nil, nil
+	c.descriptions = nil
 	c.gen++
 }
 
@@ -112,6 +114,26 @@ func store[T any](entries *map[string]cached[T], key string, value T, ttl time.D
 		}
 	}
 	(*entries)[key] = cached[T]{value, now}
+}
+
+// Descriptions are shared by source citations and linked-issue lookups.
+func (c *Cache) cachedDescription(key string) (Description, bool) {
+	if c == nil {
+		return Description{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return fresh(c.descriptions, key, time.Minute, c.now())
+}
+func (c *Cache) storeDescription(key string, gen uint64, d Description) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen == gen {
+		store(&c.descriptions, key, d, time.Minute, c.now())
+	}
 }
 
 // cachedThreads returns the pull request's cached threads. unresolved is
@@ -271,4 +293,5 @@ func (c *Cache) rerun(key string) {
 	// A re-run replaces check runs, so no kept log is trusted to be the
 	// latest one.
 	c.logs, c.logOrder = nil, nil
+	c.descriptions = nil
 }
