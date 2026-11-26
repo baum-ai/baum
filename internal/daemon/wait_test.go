@@ -11,10 +11,13 @@ import (
 
 func TestWaitingMethodHoldsItsConnectionAndEndsWithItsClient(t *testing.T) {
 	paths := testPaths(t)
+	laterStarted := make(chan struct{})
+	holdStarted := make(chan struct{})
 	release := make(chan struct{})
 	cancelled := make(chan struct{}, 1)
 	runInProcess(t, paths, Options{Version: "v1.2.3", Waits: map[string]Method{
 		"later": func(ctx context.Context, params json.RawMessage) (any, error) {
+			close(laterStarted)
 			select {
 			case <-release:
 				return params, nil
@@ -23,6 +26,7 @@ func TestWaitingMethodHoldsItsConnectionAndEndsWithItsClient(t *testing.T) {
 			}
 		},
 		"hold": func(ctx context.Context, _ json.RawMessage) (any, error) {
+			close(holdStarted)
 			<-ctx.Done()
 			cancelled <- struct{}{}
 			return nil, ctx.Err()
@@ -39,7 +43,11 @@ func TestWaitingMethodHoldsItsConnectionAndEndsWithItsClient(t *testing.T) {
 		answered <- response
 	}()
 	// Other connections are served while one waits.
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-laterStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the later handler did not start")
+	}
 	if _, err := client.Hello(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -55,12 +63,17 @@ func TestWaitingMethodHoldsItsConnectionAndEndsWithItsClient(t *testing.T) {
 
 	// A client that goes away cancels its request.
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		_, err := client.Wait(ctx, "hold", nil)
 		done <- err
 	}()
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-holdStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hold handler did not start")
+	}
 	cancel()
 	select {
 	case <-cancelled:
