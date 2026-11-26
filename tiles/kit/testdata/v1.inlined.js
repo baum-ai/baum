@@ -1231,6 +1231,23 @@ overflow_y:state.face==="glance"&&root.scrollHeight>root.clientHeight+2,
 render_ms:state.renderMS,
 };
 }
+function disclosuresOf(root){
+return[...root.querySelectorAll("details")].map((node)=>({
+label:summaryText(node),
+open:node.open,
+}));
+}
+function summaryText(node){
+const summary=node.querySelector(":scope > summary");
+return summary?summary.textContent.trim():"";
+}
+function keepDisclosures(root,before){
+const after=root.querySelectorAll("details");
+for(let i=0;i<after.length&&i<before.length;i++){
+const node=after[i];
+if(summaryText(node)===before[i].label&&node.open!==before[i].open)node.open=before[i].open;
+}
+}
 async function render(){
 const seq=++renderSeq;
 const began=performance.now();
@@ -1238,6 +1255,7 @@ Object.assign(state,{emptyUsed:false,failed:false,unresolved:new Set()});
 const root=el("div");
 root.id="baum-root";
 const old=docCall("getElementById","baum-root");
+const disclosures=old?disclosuresOf(old):null;
 if(old)old.replaceWith(root);
 else docGet("body").prepend(root);
 const draw=spec[state.face];
@@ -1267,6 +1285,7 @@ if(seq!==renderSeq)return;
 if(result!==root&&!(result instanceof Node&&result.parentNode===root)){
 insert(root,null,result,0);
 }
+if(disclosures)keepDisclosures(root,disclosures);
 state.renderMS=Math.round(performance.now()-began);
 }catch(error){
 if(seq===renderSeq)report("script_error",describeError(error),stackPosition(error));
