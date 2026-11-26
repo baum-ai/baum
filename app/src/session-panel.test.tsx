@@ -382,6 +382,40 @@ it("takes two Escapes to give the page its keys back, never letting it have one 
   }
 });
 
+it("leaves the keys where they were when the window comes back", async () => {
+  await host(pr);
+  const opener = button("Opener")!;
+  opener.focus();
+  await key(opener, "`", { ctrlKey: true });
+  expect(document.activeElement).toBe(composer());
+  await key(composer(), "Escape");
+  await key(panel()!, "Escape");
+  expect(document.activeElement).toBe(opener);
+  const leave = () => act(async () => void dispatchEvent(new Event("blur")));
+  const come = () => act(async () => void dispatchEvent(new Event("focus")));
+  // Coming back, the window puts the keys in the panel, which did not have
+  // them: they go back to the page.
+  await leave();
+  composer().focus();
+  await come();
+  expect(document.activeElement).toBe(opener);
+  // Landing there after the window's focus event, too.
+  await leave();
+  await come();
+  await act(async () => composer().focus());
+  expect(document.activeElement).toBe(opener);
+  // The person's own click puts them in the panel.
+  await act(async () => void composer().dispatchEvent(new Event("pointerdown", { bubbles: true })));
+  await act(async () => composer().focus());
+  expect(document.activeElement).toBe(composer());
+  // The panel that had them keeps them.
+  await leave();
+  composer().blur();
+  composer().focus();
+  await come();
+  expect(document.activeElement).toBe(composer());
+});
+
 it("keeps the page's keys while it has them, and reads its session with them", async () => {
   // A page's own key, as k moves a list's selection.
   const pageKey = vi.fn();

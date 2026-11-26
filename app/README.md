@@ -2775,7 +2775,11 @@ shows all of the marked message or less again, `a` opens or closes its
 turn's agent activity, `i` or `Enter` go back to the composer, and `q` hides
 the panel. Page Up
 and Page Down scroll the session from the composer too. A click in the page
-gives the page its keys back. The sheet lists them under "Session panel",
+gives the page its keys back. Going back to the app from another window
+leaves the keys where they were: the panel takes them only if it had them
+when the window lost them, until a click or key in the window says
+otherwise, so a webview that restores its focus elsewhere cannot hand them
+to it. The sheet lists them under "Session panel",
 and while Alt is held (with the app's other hints) a line at the panel's foot
 names the ones that work where the keys are: the reading keys, or in a field
 `Esc`, Page Up and Down and the panel's key; the page's own key bar gives way
