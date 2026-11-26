@@ -374,7 +374,7 @@ describe("Where this fits with a host that reads repository files", () => {
   const filePage = (initial: string) =>
     render(
       <Host initial={initial}>
-        <RepositoryFileSourceContext.Provider value={files}>
+        <RepositoryFileSourceContext.Provider value={() => files}>
           {/* The app's key for its sidebar, which leaves ] to the column. */}
           <Page document={review1303()} sidePaneKey="Control+]" />
         </RepositoryFileSourceContext.Provider>

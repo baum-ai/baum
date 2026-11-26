@@ -84,7 +84,7 @@ import {
 import { LoadingStatus } from "./nine-dots";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
-import { type RepositoryFileSource, RepositoryFileSourceContext } from "./repository-file-source";
+import { type RepositoryFileSources, RepositoryFileSourceContext } from "./repository-file-source";
 import { canMerge, MergeDialog } from "./merge";
 import {
   openActiveBlock,
@@ -638,14 +638,19 @@ export function LocalReview({
   // Where "Where this fits" reads the files it names, whole, at the head of
   // the version on screen. A draft is no saved version, so the daemon has no
   // document to read its files for.
-  const repositoryFiles = useMemo<RepositoryFileSource | null>(() => {
-    const document = viewedDocument ?? shownDocument;
-    if (showingDraft || !document) return null;
-    return {
-      source: `api/file?${query}`,
+  // Each pane reads its own version's files: two compared versions differ.
+  const latestVersion = doc?.review.version;
+  const repositoryFiles = useMemo<RepositoryFileSources | null>(() => {
+    if (showingDraft) return null;
+    return (document) => ({
+      source: `api/file?${selector(
+        clone,
+        pr.number,
+        document.review.version === latestVersion ? undefined : document.review.version,
+      )}`,
       href: (path) => contextRefUrl(document, path),
-    };
-  }, [showingDraft, viewedDocument, shownDocument, query]);
+    });
+  }, [showingDraft, clone, pr.number, latestVersion]);
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
   // Before there is a review, Files changed lists the pull request's files
   // in the viewer's own files pane; once one lands, the same place is the
@@ -1616,7 +1621,7 @@ function ReviewHosts({
   children,
 }: {
   tileHost: TileHost;
-  files: RepositoryFileSource | null;
+  files: RepositoryFileSources | null;
   children: ReactNode;
 }) {
   return (

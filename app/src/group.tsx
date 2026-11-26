@@ -16,7 +16,7 @@ import {
   type ReviewDocument,
 } from "@baum/viewer/review-document";
 import { RepositoryFileDialog } from "./repository-file";
-import { type RepositoryFileSource, RepositoryFileSourceContext } from "./repository-file-source";
+import { type RepositoryFileSources, RepositoryFileSourceContext } from "./repository-file-source";
 import {
   MAX_GROUP_MEMBERS,
   appURL,
@@ -287,15 +287,13 @@ function GroupReviewPage({
     : doc;
   // Where "Where this fits" reads the files it names, whole, at the stack's
   // head, from the group's own file route.
-  const repositoryFiles = useMemo<RepositoryFileSource | null>(
-    () =>
-      viewedDocument
-        ? {
-            source: `api/groups/${encodeURIComponent(group.id)}/file?version=${viewedDocument.review.version}`,
-            href: (path) => contextRefUrl(viewedDocument, path),
-          }
-        : null,
-    [group.id, viewedDocument],
+  // Each pane reads its own version's files: two compared versions differ.
+  const repositoryFiles = useMemo<RepositoryFileSources>(
+    () => (document) => ({
+      source: `api/groups/${encodeURIComponent(group.id)}/file?version=${document.review.version}`,
+      href: (path) => contextRefUrl(document, path),
+    }),
+    [group.id],
   );
   // The group review's threads are its members' (removed and landed included), as a
   // snapshot from when it was generated; the Activity tab reads them as

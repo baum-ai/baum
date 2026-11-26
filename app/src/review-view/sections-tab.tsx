@@ -762,7 +762,7 @@ function WhereThisFits({
 }) {
   const context = review.context;
   const tiles = tilesOn(review, CONTEXT_ID);
-  const source = useRepositoryFileSource();
+  const source = useRepositoryFileSource(document);
   const root = useRef<HTMLDivElement>(null);
   const wide = useWideSection(root);
   const named = useMemo(() => contextFiles(document, context), [document, context]);

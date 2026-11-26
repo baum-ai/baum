@@ -3063,7 +3063,8 @@ builds the rail's model (the sections and the file list) from it.
   context, its files as chips, and the tiles `context` owns) and opens on the
   first real section. A file chip there opens the whole file at the review's
   head, never its diff, even for a changed file: the page and the group page
-  give the route through `RepositoryFileSourceContext`, and `RepositoryFileView`
+  give the route through `RepositoryFileSourceContext`, for the version each
+  pane shows (two compared versions read their own), and `RepositoryFileView`
   reads it. When the section is wide enough for two columns (as a section's
   views), the file shows in a column beside the context, sharing the section
   column's width and fold (`]`, folded at first; a chip unfolds it and marks
