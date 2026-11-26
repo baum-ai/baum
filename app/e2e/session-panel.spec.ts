@@ -1,3 +1,5 @@
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
 
@@ -137,28 +139,34 @@ test("messages sent while the agent works are queued and sent once it answers", 
   // It may reuse the pull request's conversation from another test, which
   // queues the same way.
   const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
-  // The scripted agent takes its time, so there is time to queue.
-  await composer.fill("Why is the retry delay capped? Take your time.");
-  await composer.press("Enter");
-  await expect(panel(page).getByText("Working", { exact: true })).toBeVisible();
-
-  // While it works, Enter queues the next messages instead of refusing them.
-  await expect(composer).toHaveAttribute("placeholder", /queue your next message/);
-  await composer.fill("Does the cap apply to the first retry too?");
-  await composer.press("Enter");
-  await expect(composer).toHaveValue("");
   const queued = panel(page).getByRole("region", { name: "Queued messages" });
-  await expect(queued).toContainText("Queued for when the agent finishes1");
-  await composer.fill("Never mind that, what about jitter?");
-  await panel(page).getByRole("button", { name: "Queue", exact: true }).click();
-  await composer.fill("Add a test for the cap.");
-  await composer.press("Enter");
-  await expect(queued.getByRole("listitem")).toHaveCount(3);
-  // One is taken back before it goes.
-  await queued
-    .getByRole("button", { name: "Remove queued message: Never mind that, what about jitter?" })
-    .click();
-  await expect(queued.getByRole("listitem")).toHaveCount(2);
+  const hold = join(process.env.BAUM_APP_STATE_DIR!, "hold-panel-turn");
+  writeFileSync(hold, "");
+  try {
+    await composer.fill("Why is the retry delay capped? Wait for the queue.");
+    await composer.press("Enter");
+    await expect(panel(page).getByText("Working", { exact: true })).toBeVisible();
+
+    // While it works, Enter queues the next messages instead of refusing them.
+    await expect(composer).toHaveAttribute("placeholder", /queue your next message/);
+    await composer.fill("Does the cap apply to the first retry too?");
+    await composer.press("Enter");
+    await expect(composer).toHaveValue("");
+    await expect(queued).toContainText("Queued for when the agent finishes1");
+    await composer.fill("Never mind that, what about jitter?");
+    await panel(page).getByRole("button", { name: "Queue", exact: true }).click();
+    await expect(composer).toHaveValue("");
+    await composer.fill("Add a test for the cap.");
+    await composer.press("Enter");
+    await expect(queued.getByRole("listitem")).toHaveCount(3);
+    // One is taken back before it goes.
+    await queued
+      .getByRole("button", { name: "Remove queued message: Never mind that, what about jitter?" })
+      .click();
+    await expect(queued.getByRole("listitem")).toHaveCount(2);
+  } finally {
+    rmSync(hold, { force: true });
+  }
 
   // Once the turn answers, the queued messages go together as the next one.
   await expect(queued).toHaveCount(0, { timeout: 30_000 });
