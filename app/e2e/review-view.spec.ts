@@ -258,6 +258,73 @@ test("a wide section shows its Overview beside its other views, which stay in si
   expect(errors).toEqual([]);
 });
 
+test("Where this fits opens a file whole beside the context when wide, in a dialog when narrow", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.route(/\/api\/file\?/, (route) => {
+    const path = new URL(route.request().url()).searchParams.get("path")!;
+    const content = Array.from(
+      { length: 120 },
+      (_, n) => `func line${n + 1}() string { return "${path}" } // a long line of the file, whole`,
+    ).join("\n");
+    return route.fulfill({
+      json: { path, content: `package x\n\n${content}\n`, truncated: false },
+    });
+  });
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await open(page, `${PR7}&pane=section&section=context`);
+  const split = page.locator("[data-context-split]");
+  await expect(split).toBeVisible();
+  await expect(page.locator("[data-context-file]")).toHaveCount(0);
+  await page.getByRole("button", { name: "daemon.go" }).click();
+  const column = page.locator("[data-context-file]");
+  await expect(
+    column.getByRole("region", { name: "Contents of oss/internal/cli/daemon.go" }),
+  ).toBeVisible();
+  // Its diff never opens: the address stays on Where this fits.
+  await expect(page).not.toHaveURL(/tile=code/);
+  await expect(page.getByRole("button", { name: "daemon.go" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  const context = await split.locator("> div").first().boundingBox();
+  expect((await column.boundingBox())!.x).toBeGreaterThan(context!.x + context!.width);
+  // The code scrolls in the column, which stays in sight.
+  const code = column.getByRole("region");
+  await expect.poll(() => code.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect(column).toBeInViewport();
+  await page.getByRole("button", { name: "remote.go" }).click();
+  await expect(
+    column.getByRole("region", { name: "Contents of oss/internal/uiserver/remote.go" }),
+  ).toBeVisible();
+  expect(await overflows(page)).toBe(false);
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `context-file-1920-${scheme}.png`) });
+    }
+  }
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expect(split).toHaveCount(0);
+  await page.getByRole("button", { name: "server.go" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "oss/internal/uiserver/server.go" }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("region")).toContainText("package x");
+  if (SHOTS) {
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `context-file-900-${scheme}.png`) });
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
 test("a section keeps the reading measure until its side column opens, then takes the whole pane", async ({
   page,
 }) => {

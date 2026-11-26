@@ -16,6 +16,7 @@ import {
   type ReviewDocument,
 } from "@baum/viewer/review-document";
 import { RepositoryFileDialog } from "./repository-file";
+import { type RepositoryFileSources, RepositoryFileSourceContext } from "./repository-file-source";
 import {
   MAX_GROUP_MEMBERS,
   appURL,
@@ -284,6 +285,16 @@ function GroupReviewPage({
       ? history.state.document
       : null
     : doc;
+  // Where "Where this fits" reads the files it names, whole, at the stack's
+  // head, from the group's own file route.
+  // Each pane reads its own version's files: two compared versions differ.
+  const repositoryFiles = useMemo<RepositoryFileSources>(
+    () => (document) => ({
+      source: `api/groups/${encodeURIComponent(group.id)}/file?version=${document.review.version}`,
+      href: (path) => contextRefUrl(document, path),
+    }),
+    [group.id],
+  );
   // The group review's threads are its members' (removed and landed included), as a
   // snapshot from when it was generated; the Activity tab reads them as
   // GitHub has them now.
@@ -562,7 +573,7 @@ function GroupReviewPage({
     ) : null;
 
   return (
-    <>
+    <RepositoryFileSourceContext.Provider value={repositoryFiles}>
       <ReviewViewer
         sidePaneKey={SIDE_PANE_KEY}
         // A file a context chip names opens here, in a dialog over the page,
@@ -914,6 +925,6 @@ function GroupReviewPage({
           your agent runs in an isolated environment.
         </ConfirmDialog>
       ) : null}
-    </>
+    </RepositoryFileSourceContext.Provider>
   );
 }

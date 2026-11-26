@@ -1,11 +1,12 @@
 import { act, type ReactNode, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { type SearchUpdate, UrlStateProvider } from "@baum/viewer/navigation";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import { fixtureTile } from "../tiles/fixture-test-helper";
 import { TileHostContext, type TileHost } from "../tiles/host";
+import { RepositoryFileSourceContext } from "../repository-file-source";
 import type { TileContext } from "../tiles/types";
 import { parseReviewV2, type ReviewV2 } from "./document";
 import { REVIEW_1303, review1303 } from "./fixture-1303";
@@ -77,10 +78,18 @@ function Host({ initial = "", children }: { initial?: string; children: ReactNod
 
 let steps: { current: ReviewSteps | null } = { current: null };
 
-function Page({ document }: { document: ReviewDocument }) {
+function Page({
+  document,
+  sidePaneKey,
+}: {
+  document: ReviewDocument;
+  sidePaneKey?: "]" | "Control+]";
+}) {
   const places = useViewPlaces();
   steps = { current: null };
-  return <ReviewViewer document={document} places={places} steps={steps} />;
+  return (
+    <ReviewViewer document={document} places={places} steps={steps} sidePaneKey={sidePaneKey} />
+  );
 }
 
 async function render(node: ReactNode) {
@@ -354,6 +363,96 @@ describe("How it works", () => {
     const body = panel(container).querySelector<HTMLElement>("article")!;
     expect(body.querySelector("h2")?.textContent).toBe("What a phone can do");
     expect(body.querySelector("#sec_allowlist-rsk_always_allow")).not.toBeNull();
+  });
+});
+
+describe("Where this fits with a host that reads repository files", () => {
+  const files = {
+    source: "api/file?pr=1303",
+    href: (path: string) => `https://github.com/baum-ai/baum/blob/head/${path}`,
+  };
+  const filePage = (initial: string) =>
+    render(
+      <Host initial={initial}>
+        <RepositoryFileSourceContext.Provider value={() => files}>
+          {/* The app's key for its sidebar, which leaves ] to the column. */}
+          <Page document={review1303()} sidePaneKey="Control+]" />
+        </RepositoryFileSourceContext.Provider>
+      </Host>,
+    );
+  const asked = () => vi.mocked(fetch).mock.calls.map(([url]) => decodeURIComponent(String(url)));
+  let width = 0;
+
+  beforeAll(() => {
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value() {
+        this.open = true;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => width,
+    });
+  });
+  afterAll(() => {
+    // jsdom's own getter is on Element.
+    delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+  });
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = new URL(url, "http://app").searchParams.get("path")!;
+        return Promise.resolve(
+          Response.json({ path, content: `// ${path}\npackage x\n`, truncated: false }),
+        );
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    width = 0;
+  });
+
+  it("opens a file whole in a dialog when the section is narrow, a changed one too", async () => {
+    const container = await filePage("pane=section&section=context");
+    const body = panel(container).querySelector<HTMLElement>("article")!;
+    expect(body.querySelector("[data-context-split]")).toBeNull();
+    await click(button(body, "remote.go"));
+    // Not its diff: the Code tab stays shut.
+    expect(search.get("tile")).toBeNull();
+    const dialog = container.querySelector("dialog")!;
+    expect(dialog.querySelector("h2")?.textContent).toBe("oss/internal/uiserver/remote.go");
+    expect(dialog.textContent).toContain("// oss/internal/uiserver/remote.go");
+    expect(asked().map((url) => url.replace(/^.*\/api\//, "api/"))).toContain(
+      "api/file?pr=1303&path=oss/internal/uiserver/remote.go",
+    );
+  });
+
+  it("shows the file in a column beside the context when the section is wide", async () => {
+    width = 2000;
+    const container = await filePage("pane=section&section=context");
+    const body = panel(container).querySelector<HTMLElement>("article")!;
+    // Folded at first, like a section's views.
+    expect(body.querySelector("[data-context-file]")).toBeNull();
+    await click(button(body, "daemon.go"));
+    const column = body.querySelector<HTMLElement>("[data-context-file]")!;
+    expect(column.textContent).toContain("oss/internal/cli/daemon.go");
+    expect(column.textContent).toContain("// oss/internal/cli/daemon.go");
+    expect(container.querySelector("dialog")).toBeNull();
+    expect(button(body, "daemon.go").getAttribute("aria-pressed")).toBe("true");
+    expect(button(body, "remote.go").getAttribute("aria-pressed")).toBe("false");
+    await click(button(body, "remote.go"));
+    expect(column.textContent).toContain("// oss/internal/uiserver/remote.go");
+    expect(search.get("tile")).toBeNull();
+    // ] folds it, and opens it again on the file it showed.
+    await press("]");
+    expect(body.querySelector("[data-context-file]")).toBeNull();
+    await press("]");
+    expect(body.querySelector("[data-context-file]")?.textContent).toContain(
+      "oss/internal/uiserver/remote.go",
+    );
   });
 });
 

@@ -15,10 +15,11 @@ import { PaneDivider } from "@baum/viewer/components/pane-divider";
 import { useReviewFiles } from "@baum/viewer/components/review-contexts";
 import { tabPanelProps } from "@baum/viewer/components/tabs";
 import { IconButton } from "@baum/viewer/components/ui";
-import { type PaneLimits, usePaneWidth } from "@baum/viewer/use-conversation-width";
+import { usePaneWidth } from "@baum/viewer/use-conversation-width";
 import { useStoredSetting } from "@baum/viewer/use-stored-setting";
 import { SECTION_VIEWS, type SectionView, type SectionViews, viewOfPath } from "./model";
 import { SectionViewTabs, steppableViews, useSectionViewKeys, viewKeyStep } from "./section-views";
+import { SIDE_COLLAPSED_KEY, SIDE_LIMITS, useBracketKey } from "./side-column";
 import { SideRevealContext } from "./side-reveal";
 
 type SideView = Exclude<SectionView, "overview">;
@@ -27,19 +28,6 @@ type SideView = Exclude<SectionView, "overview">;
  *  line when it names one. `at` tells a second press of the same excerpt
  *  from the first, so it scrolls there again. */
 export type Reveal = { path: string; line?: number; at: number };
-
-/** The side column's width: about as wide as a diff reads well to start,
- *  remembered once the reader drags it, and always leaving the Overview
- *  enough to read. */
-const SIDE_LIMITS: PaneLimits = {
-  min: 360,
-  max: 1600,
-  fallback: 640,
-  keep: 360,
-  storageKey: "baum.review.section-side-width",
-};
-
-const COLLAPSED_KEY = "baum.review.section-side-collapsed";
 
 /** A wide section: its Overview on the left and its other views in a column
  *  beside it that stays in sight while the Overview scrolls. The column can
@@ -67,7 +55,7 @@ export function SectionSplit({
   const column = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const pane = usePaneWidth(SIDE_LIMITS);
-  const [stored, store] = useStoredSetting(COLLAPSED_KEY);
+  const [stored, store] = useStoredSetting(SIDE_COLLAPSED_KEY);
   // Collapsed until the reader first opens it: the Overview is what a
   // section is read by, and a big diff then costs nothing until asked for.
   const collapsed = stored !== "false";
@@ -215,36 +203,6 @@ export function SectionSplit({
       )}
     </div>
   );
-}
-
-/** `]` by itself, anywhere but a text field or a dialog: the side column's
- *  fold. (The review's right-hand sidebar takes Control+] in the app.) */
-function useBracketKey(toggle: () => void) {
-  const latest = useRef(toggle);
-  latest.current = toggle;
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (
-        event.key !== "]" ||
-        event.defaultPrevented ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.altKey ||
-        event.isComposing ||
-        document.querySelector("dialog[open]")
-      )
-        return;
-      if (
-        event.target instanceof HTMLElement &&
-        event.target.closest('input, textarea, select, [contenteditable], [role="textbox"]')
-      )
-        return;
-      event.preventDefault();
-      latest.current();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
 }
 
 /** Scrolls the side column (only it: the Overview stays where the reader
