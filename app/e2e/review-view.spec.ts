@@ -773,3 +773,29 @@ test("shows the linked issue beneath the pull request title", async ({ page }) =
   await expect(issue).toHaveAttribute("href", "https://linear.app/acme/issue/ENG-42");
   await expect(issue).toContainText("In progress");
 });
+
+test("a failed disconnect keeps the connection and can be tried again", async ({ page }) => {
+  let attempts = 0;
+  await page.route("**/api/integrations/linear/disconnect", (route) => {
+    attempts++;
+    return attempts === 1 ? route.fulfill({ status: 503 }) : route.fulfill({ status: 204 });
+  });
+  await page.route("**/api/integrations", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "linear",
+          name: "Linear",
+          state: attempts < 2 ? "connected" : "disconnected",
+          account: attempts < 2 ? "Sam" : undefined,
+        },
+      ],
+    }),
+  );
+  await signedIn(page, "page=settings&section=connections");
+  const panel = page.getByRole("region", { name: "Linear", exact: true });
+  await panel.getByRole("button", { name: "Disconnect" }).click();
+  await expect(page.getByText("Could not change the connection.", { exact: false })).toBeVisible();
+  await panel.getByRole("button", { name: "Disconnect" }).click();
+  await expect(panel.getByText("Disconnected", { exact: true })).toBeVisible();
+});

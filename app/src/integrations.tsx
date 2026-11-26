@@ -9,6 +9,7 @@ type Connection = {
   id: string;
   name: string;
   state: "disconnected" | "connected" | "pending" | "reconnect" | "unconfigured" | "unavailable";
+  resolves_issues?: boolean;
   account?: string;
   message?: string;
 };
@@ -150,7 +151,11 @@ function useLinkedIssues({ repository, number, updated_at }: PR) {
     setIssues([]);
     async function read() {
       const rows = await request<Connection[]>("api/integrations", undefined, "GET", abort.signal);
-      if (!Array.isArray(rows) || !rows.some((row) => row.state === "connected")) return;
+      if (
+        !Array.isArray(rows) ||
+        !rows.some((row) => row.state === "connected" && row.resolves_issues)
+      )
+        return;
       const pr = await request<{ body: string }>(
         `api/prs/description?repository=${encodeURIComponent(repository)}&pr=${number}`,
         undefined,

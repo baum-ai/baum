@@ -34,8 +34,9 @@ type IssueResolver interface {
 }
 
 type entry struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ResolvesIssues bool   `json:"resolves_issues,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
 	Connection
 }
 
@@ -44,7 +45,8 @@ func Handler(providers ...Provider) http.Handler {
 	mux.HandleFunc("GET /api/integrations", func(w http.ResponseWriter, r *http.Request) {
 		entries := make([]entry, 0, len(providers))
 		for _, p := range providers {
-			entries = append(entries, entry{p.ID(), p.Name(), p.Status(r.Context())})
+			_, resolves := p.(IssueResolver)
+			entries = append(entries, entry{ResolvesIssues: resolves, ID: p.ID(), Name: p.Name(), Connection: p.Status(r.Context())})
 		}
 		reply(w, entries)
 	})

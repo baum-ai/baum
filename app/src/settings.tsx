@@ -2110,8 +2110,8 @@ export function SettingsPage({
                 title="Connections"
                 detail={
                   setup.desktop
-                    ? "GitHub, where baum finds pull requests, and the coding agents it follows."
-                    : "GitHub, where baum finds pull requests."
+                    ? "Manage connected services and the coding agents baum follows."
+                    : "Manage the services connected to baum."
                 }
               />
               <GitHubConnectionSection onChanged={authChanged} />
