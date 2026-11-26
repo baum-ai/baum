@@ -225,7 +225,7 @@ test("from the top, the panel leaves the pull request's bar in view", async ({ p
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Settings", exact: true }).first().click();
-  await page.getByRole("button", { name: /^Fixes/ }).click();
+  await page.getByRole("button", { name: /^General/ }).click();
   await page.getByRole("button", { name: "Top", exact: true }).click();
   await expect(page.getByRole("button", { name: "Top", pressed: true })).toBeVisible();
   try {

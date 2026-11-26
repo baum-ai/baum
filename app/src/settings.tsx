@@ -1274,8 +1274,8 @@ const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
 ];
 
 /** The session panel's setting: the agent and model a new session opens with
- *  (the fix agent's unless chosen), the access it gets, and the edge the
- *  panel opens from. */
+ *  (the fix agent's unless chosen) and the access it gets. The edge it opens
+ *  from is under General (`PanelPositionSetting`). */
 export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly string[] }) {
   const [saved, setSaved] = useState<PanelSettings | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -1296,7 +1296,6 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
     agent: saved.agent_source === "panel" ? panelHarness[saved.agent] : "",
     model: saved.agent_source === "panel" ? saved.model : "",
     mode: saved.mode,
-    position: saved.position,
   };
   const key = JSON.stringify(choice);
   const [draft, setDraft] = useState(choice);
@@ -1312,7 +1311,6 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
       // its model follows too.
       ...(next.agent ? { model: next.model } : {}),
       mode: next.mode,
-      position: next.position,
     });
   };
   const following = `Now ${agentName(saved.agent)}${saved.model ? ` · ${modelName(saved.model)}` : ""}, the fix agent.`;
@@ -1378,20 +1376,54 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
             onChange={(mode) => change({ mode })}
           />
         </SettingRow>
-        <SettingRow label="Opens from" detail="The edge of the window the panel slides in from.">
-          <SegmentedControl
-            label="Opens from"
-            value={draft.position}
-            items={panelPositions}
-            onChange={(position) => change({ position })}
-          />
-        </SettingRow>
       </div>
       <p className="settings-footnote">
         Changes apply to the next session you start; a session keeps the agent and access it started
         with.
       </p>
     </section>
+  );
+}
+
+/** The edge of the window the session panel opens from, under General: it
+ *  saves only the position, so the panel's agent and access under Fixes
+ *  stay as they are. */
+export function PanelPositionSetting() {
+  const [saved, setSaved] = useState<PanelSettings["position"] | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const load = () => readPanelSettings().then((settings) => setSaved(settings.position));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, and again when it changes
+  useEffect(() => {
+    load().catch((e: unknown) => setLoadError(errorText(e)));
+    return onPanelSettingsChanged(() => void load().catch(() => {}));
+  }, []);
+  const { save, error, failures } = useAutoSave(async () => {
+    await load();
+    panelSettingsChanged();
+  }, "api/settings/panel");
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved, failures]);
+  if (!saved || !draft) return loadError ? <Alert>{loadError}</Alert> : null;
+  return (
+    <>
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-panel settings-list">
+        <SettingRow
+          label="Opens from"
+          detail="The edge of the window the session panel slides in from."
+        >
+          <SegmentedControl
+            label="Opens from"
+            value={draft}
+            items={panelPositions}
+            onChange={(position) => {
+              setDraft(position);
+              save({ position });
+            }}
+          />
+        </SettingRow>
+      </div>
+    </>
   );
 }
 
@@ -3585,7 +3617,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Keyboard and plan usage preferences on this device."
+        detail="Keyboard, session panel and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -3629,6 +3661,8 @@ function GeneralSection() {
           />
         </SettingRow>
       </div>
+      <h3 className="settings-subhead">Session panel</h3>
+      <PanelPositionSetting />
       <h3 className="settings-subhead">Plan usage</h3>
       <PlanUsageSettings />
     </section>
