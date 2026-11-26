@@ -190,17 +190,6 @@
     }
   }
 
-  /** The first card citing a hunk opens its code; later cards citing the
-   *  same hunk keep it closed, so the detail does not repeat a block. */
-  function opener() {
-    const shown = new Set();
-    return (citation, wanted) => {
-      if (!wanted || shown.has(citation.id)) return false;
-      shown.add(citation.id);
-      return true;
-    };
-  }
-
   function glance({ data, size }) {
     if (data.endpoints.length === 0) return baum.empty("No interface changes.");
     const endpoints = sorted(data.endpoints);
@@ -304,7 +293,7 @@
     </ul>`;
   }
 
-  function endpointCard(e, open) {
+  function endpointCard(e) {
     const added = e.change === "added";
     return baum.html`<article class="kit-card kit-stack" data-tone=${e.breaking ? "critical" : null}>
       <div class="kit-row">
@@ -319,7 +308,7 @@
       ${fieldTable("Response", e.response, added)}
       ${errorList(e.errors)}
       ${cites(e.cites)}
-      <details class="kit-details" open=${open}>
+      <details class="kit-details">
         <summary>Code</summary>
         ${baum.diff(e.cites[0], { maxLines: 14 })}
       </details>
@@ -356,7 +345,6 @@
     if (data.endpoints.length === 0) return baum.empty("No interface changes in this pull request.");
     const endpoints = sorted(data.endpoints);
     const breaking = endpoints.filter((e) => e.breaking);
-    const open = opener();
     const node = baum.html`<div class="kit-stack" data-gap="6">
       <div class="kit-row">
         ${lede(endpoints)}
@@ -366,7 +354,7 @@
       ${data.related && data.related.length
         ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
         : null}
-      ${section("Entry points", baum.html`<div class="kit-stack">${endpoints.map((e, i) => endpointCard(e, open(e.cites[0], i < 3 || e.breaking)))}</div>`)}
+      ${section("Entry points", baum.html`<div class="kit-stack">${endpoints.map((e) => endpointCard(e))}</div>`)}
       ${callerList(data)}
     </div>`;
     onlyChanges(node);

@@ -202,17 +202,6 @@
     }
   }
 
-  /** The first card citing a hunk opens its code; later cards citing the
-   *  same hunk keep it closed, so the detail does not repeat a block. */
-  function opener() {
-    const shown = new Set();
-    return (citation, wanted) => {
-      if (!wanted || shown.has(citation.id)) return false;
-      shown.add(citation.id);
-      return true;
-    };
-  }
-
   function glance({ data, size }) {
     if (data.tables.length === 0 && data.migrations.length === 0 && data.data_changes.length === 0) {
       return baum.empty("No schema changes.");
@@ -331,7 +320,7 @@
     </ul>`;
   }
 
-  function tableCard(table, open) {
+  function tableCard(table) {
     const lost = destructive(table);
     return baum.html`<article class="kit-card kit-stack" data-tone=${lost ? "critical" : null}>
       <div class="kit-row">
@@ -345,7 +334,7 @@
       ${columnTable(table)}
       ${indexList(table)}
       ${cites(table.cites)}
-      <details class="kit-details" open=${open}>
+      <details class="kit-details">
         <summary>Statement</summary>
         ${baum.diff(table.cites[0], { maxLines: 14 })}
       </details>
@@ -411,7 +400,6 @@
     const tables = sorted(data.tables);
     const facts = runFacts(data);
     const badges = warnings(data, false);
-    const open = opener();
     const node = baum.html`<div class="kit-stack" data-gap="6">
       <div class="kit-stack" data-gap="3">
         <div class="kit-row" data-justify="between">${lede(data)}<span class="switch-slot"></span></div>
@@ -427,7 +415,7 @@
         ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
         : null}
       ${tables.length
-        ? section("Tables", baum.html`<div class="kit-stack">${tables.map((table, i) => tableCard(table, open(table.cites[0], i < 3)))}</div>`)
+        ? section("Tables", baum.html`<div class="kit-stack">${tables.map((table) => tableCard(table))}</div>`)
         : null}
       ${migrationList(data)}
       ${data.data_changes.length
