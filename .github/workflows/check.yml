@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      # Published release branches; a tag is made only from a green commit.
+      - release/**
   pull_request:
 
 permissions:
