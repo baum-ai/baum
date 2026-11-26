@@ -1,4 +1,4 @@
-package githubauth
+package credentialstore
 
 import (
 	"bytes"
@@ -17,14 +17,15 @@ import (
 // helper process. Secrets travel only through private pipes, never argv or env.
 // Every operation waits for the helper to exit before returning, so cancellation
 // cannot leave a detached save racing a later disconnect.
-type ProcessStore struct{ Executable string }
+type ProcessStore struct{ Executable, Service string }
 type storeRequest struct {
-	Operation  string     `json:"operation"`
-	Credential Credential `json:"credential"`
+	Service    string          `json:"service"`
+	Operation  string          `json:"operation"`
+	Credential json.RawMessage `json:"credential"`
 }
 type storeReply struct {
-	Credential Credential `json:"credential"`
-	Error      string     `json:"error,omitempty"`
+	Credential json.RawMessage `json:"credential"`
+	Error      string          `json:"error,omitempty"`
 }
 type limitedBuffer struct{ bytes.Buffer }
 
@@ -34,9 +35,9 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	}
 	return b.Buffer.Write(p)
 }
-func (s ProcessStore) call(ctx context.Context, op string, c Credential) (Credential, error) {
+func (s ProcessStore) call(ctx context.Context, op string, c json.RawMessage) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
-		return Credential{}, err
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -45,22 +46,22 @@ func (s ProcessStore) call(ctx context.Context, op string, c Credential) (Creden
 		var err error
 		executable, err = os.Executable()
 		if err != nil {
-			return Credential{}, ErrStore
+			return nil, ErrStore
 		}
 		// A package test binary cannot dispatch the hidden CLI helper. Never
 		// re-execute it: that would recursively run its entire suite.
 		if strings.HasSuffix(executable, ".test") || strings.HasSuffix(executable, ".test.exe") {
-			return Credential{}, ErrNotConnected
+			return nil, ErrNotConnected
 		}
 		// The helper must be this very executable, even after an update
 		// replaced the file at its path.
 		if executable, err = selfExecutable(); err != nil {
-			return Credential{}, ErrStore
+			return nil, ErrStore
 		}
 	}
-	input, err := json.Marshal(storeRequest{op, c})
+	input, err := json.Marshal(storeRequest{s.Service, op, c})
 	if err != nil {
-		return Credential{}, ErrStore
+		return nil, ErrStore
 	}
 	cmd := exec.CommandContext(ctx, executable, "internal", "github-credential")
 	proc.Configure(cmd)
@@ -70,30 +71,30 @@ func (s ProcessStore) call(ctx context.Context, op string, c Credential) (Creden
 	var output limitedBuffer
 	cmd.Stdout = &output
 	if cmd.Run() != nil {
-		return Credential{}, ErrStore
+		return nil, ErrStore
 	}
 	var r storeReply
 	if json.Unmarshal(output.Bytes(), &r) != nil {
-		return Credential{}, ErrStore
+		return nil, ErrStore
 	}
 	switch r.Error {
 	case "":
 		return r.Credential, nil
 	case "not_connected":
-		return Credential{}, ErrNotConnected
+		return nil, ErrNotConnected
 	default:
-		return Credential{}, ErrStore
+		return nil, ErrStore
 	}
 }
-func (s ProcessStore) Load(ctx context.Context) (Credential, error) {
-	return s.call(ctx, "load", Credential{})
+func (s ProcessStore) Load(ctx context.Context) (json.RawMessage, error) {
+	return s.call(ctx, "load", nil)
 }
-func (s ProcessStore) Save(ctx context.Context, c Credential) error {
+func (s ProcessStore) Save(ctx context.Context, c json.RawMessage) error {
 	_, err := s.call(ctx, "save", c)
 	return err
 }
 func (s ProcessStore) Delete(ctx context.Context) error {
-	_, err := s.call(ctx, "delete", Credential{})
+	_, err := s.call(ctx, "delete", nil)
 	return err
 }
 
@@ -113,12 +114,15 @@ func ServeCredentialHelper(ctx context.Context, input io.Reader, output io.Write
 		return ErrStore
 	}
 	var reply storeReply
-	store := nativeStore{}
+	if !strings.HasPrefix(req.Service, "baum.") || len(req.Service) > 128 {
+		return ErrStore
+	}
+	store := nativeStore{req.Service}
 	switch req.Operation {
 	case "load":
 		reply.Credential, err = store.Load(ctx)
 	case "save":
-		if req.Credential.AccessToken == "" || req.Credential.Login == "" || req.Credential.ID <= 0 {
+		if !json.Valid(req.Credential) || string(req.Credential) == "null" {
 			return ErrStore
 		}
 		err = store.Save(ctx, req.Credential)
