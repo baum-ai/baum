@@ -767,11 +767,17 @@ previous file of the list in its order and stop at the ends. Elsewhere they
 move through
 the blocks of the one read (its attention, each behavior, risk or finding, a
 commit's or session's card, each file of a commit opened alone, a decision,
+on the Overview its summary, risk, clips, screenshots, diagram, added tiles
+and each ask, in a section's Code, Tests and Docs each file and the folded
+generated files,
 or, in a session's transcript, each prompt and agent reply as the transcript
 page moves through them: the viewer's `data-review-block`; a
 block holding blocks, such as a session's card of decisions, is passed over for
 what it holds), bringing it into
 view, marking it and giving it the focus; a new section starts from its first.
+A marked block taller than the pane, such as a long file's diff, is read
+through first: the keys scroll it on by part of the pane until its end is in
+view, then move on (`readThrough` in the viewer).
 The first block, like a step back to the first place, scrolls the page to its
 top, so the review's header shows again (`scrollToTop` in the viewer).
 `Space` opens or closes the marked block's first fold (a behavior's excerpts, a

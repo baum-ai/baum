@@ -97,7 +97,7 @@ import {
 } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { tabIds, tabPanelProps } from "./tabs";
-import { scrollerOf, scrollToTop } from "./scroller";
+import { readThrough, scrollerOf, scrollToTop } from "./scroller";
 import {
   Alert,
   Badge,
@@ -1515,6 +1515,10 @@ function ReviewWorkspace<F extends ReviewFile>({
       );
       const at = blocks.findIndex((block) => block.hasAttribute("data-review-block-active"));
       if (blocks.length === 0 || (at < 0 && direction < 0)) return;
+      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+      // A block taller than the pane (a long file's diff) is read through
+      // before the keys leave it.
+      if (at >= 0 && readThrough(blocks[at]!, direction > 0, !reduced)) return;
       const target = blocks[Math.max(0, Math.min(blocks.length - 1, at + direction))]!;
       for (const block of blocks) block.removeAttribute("data-review-block-active");
       target.setAttribute("data-review-block-active", "");
@@ -1522,7 +1526,6 @@ function ReviewWorkspace<F extends ReviewFile>({
       target.focus({ preventScroll: true });
       // The first block goes back to the top, so the review's header shows.
       if (target === blocks[0]) return scrollToTop(target);
-      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
       target.scrollIntoView?.({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
     },
   });

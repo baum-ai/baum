@@ -37,6 +37,11 @@ const SCORE_INK: Record<Tone, string> = {
   critical: "text-status-critical",
 };
 
+/** A part of the Overview j and k move to, washed while they are on it, as a
+ *  section's blocks are. */
+const STOP =
+  "min-w-0 scroll-mt-4 rounded-md outline-none data-[review-block-active]:bg-surface-wash";
+
 /** The Overview, always in the same order: the summary, the risk (with the
  *  verdict under it when something must happen before merging), what it
  *  looks like, the main diagram, the tiles the person added here (and the
@@ -78,30 +83,36 @@ export function OverviewTab({
   return (
     <div className="mx-auto w-full max-w-5xl space-y-8">
       {review.summary.text ? (
-        <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{review.summary.text}</Markdown>
+        <div data-review-block="" className={STOP}>
+          <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{review.summary.text}</Markdown>
+        </div>
       ) : null}
       <RiskPart review={review} titleOf={titleOf} go={go} />
       {videos.length > 0 ? (
-        <ReviewImages
-          document={document}
-          heading={videos.length === 1 ? "Video" : "Videos"}
-          block={{
-            kind: "images",
-            items: videos.map((attachment) => ({ attachment })),
-            source: [],
-          }}
-        />
+        <div data-review-block="" className={STOP}>
+          <ReviewImages
+            document={document}
+            heading={videos.length === 1 ? "Video" : "Videos"}
+            block={{
+              kind: "images",
+              items: videos.map((attachment) => ({ attachment })),
+              source: [],
+            }}
+          />
+        </div>
       ) : null}
       {screenshots.length > 0 ? (
-        <ReviewImages
-          document={document}
-          heading="What it looks like"
-          block={{
-            kind: "images",
-            items: screenshots.map((attachment) => ({ attachment })),
-            source: [],
-          }}
-        />
+        <div data-review-block="" className={STOP}>
+          <ReviewImages
+            document={document}
+            heading="What it looks like"
+            block={{
+              kind: "images",
+              items: screenshots.map((attachment) => ({ attachment })),
+              source: [],
+            }}
+          />
+        </div>
       ) : null}
       {diagram ? (
         <ViewTileCard tile={diagram} review={document} ctx={ctx} idPrefix={idPrefix} />

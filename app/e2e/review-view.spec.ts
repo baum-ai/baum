@@ -766,3 +766,58 @@ test("k back to the first block, and to the first place, shows the review's head
   await page.keyboard.press("Shift+K");
   await expect.poll(top).toBe(0);
 });
+
+test("j and k go through the Overview: its summary, the risk, the diagram and each ask", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7);
+  const active = page.locator("[data-review-block-active]");
+  await expect(page.getByRole("region", { name: "Risk" })).toBeVisible();
+  await page.keyboard.press("j");
+  await expect(active).toContainText("A paired phone can now reach the daemon");
+  await page.keyboard.press("j");
+  await expect(active).toHaveAttribute("aria-label", "Risk");
+  await page.keyboard.press("j");
+  await expect(active).toHaveAttribute("data-tile", "dg_shape");
+  await page.keyboard.press("j");
+  await expect(active).toContainText("Review on the phone");
+  await page.keyboard.press("j");
+  await expect(active).toContainText("An encrypted relay run by baum");
+  await page.keyboard.press("k");
+  await page.keyboard.press("k");
+  await expect(active).toHaveAttribute("data-tile", "dg_shape");
+  // The keys stay on the Overview: Shift+J is what leaves it.
+  await expect(page).not.toHaveURL(/pane=/);
+});
+
+test("j and k step through a section's files, and read through one taller than the pane", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  // Without smooth scrolling, each key's scroll is done when it is read.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist&section_view=code`);
+  const file = page.locator('[data-review-block]:has(article[aria-label$="remote.go diff"])');
+  await expect(file).toBeVisible();
+  const top = () => page.evaluate(() => document.querySelector(".local-main")!.scrollTop);
+  await page.keyboard.press("j");
+  await expect(file).toHaveAttribute("data-review-block-active", "");
+  // The file runs past the pane: j reads on down it, and k back up.
+  const before = await top();
+  await page.keyboard.press("j");
+  await expect.poll(top).toBeGreaterThan(before);
+  await expect(file).toHaveAttribute("data-review-block-active", "");
+  const further = await top();
+  await page.keyboard.press("k");
+  await expect.poll(top).toBeLessThan(further);
+  // On to its end, where j, on the section's last file, stops.
+  // (Pressed while polled: the diff can still grow as its code is drawn.)
+  await expect
+    .poll(async () => {
+      await page.keyboard.press("j");
+      return file.evaluate((el) => el.getBoundingClientRect().bottom <= window.innerHeight + 1);
+    })
+    .toBe(true);
+  await expect(file).toHaveAttribute("data-review-block-active", "");
+});

@@ -16,3 +16,33 @@ export function scrollToTop(element: Element | null | undefined) {
     if (/auto|scroll/.test(getComputedStyle(up).overflowY)) up.scrollTo?.({ top: 0 });
   (document.scrollingElement ?? document.documentElement).scrollTo?.({ top: 0 });
 }
+
+/** Reads on through a block taller than the space that scrolls it, as a
+ *  pager does: while the block runs on past that space's bottom (`forward`)
+ *  or top, scrolls a part of the space that way and is true. False when the
+ *  block fits, or its end is already in view, so the keys move on to the
+ *  next block. */
+export function readThrough(block: HTMLElement, forward: boolean, smooth: boolean): boolean {
+  const root = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+  // The nearest space that scrolls up and down: one that only scrolls
+  // sideways (a wide table's) is passed over.
+  let scroller = root;
+  for (let up = block.parentElement; up; up = up.parentElement)
+    if (/auto|scroll/.test(getComputedStyle(up).overflowY) && up.scrollHeight > up.clientHeight) {
+      scroller = up;
+      break;
+    }
+  const page = scroller === root;
+  const frame = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+  const top = Math.max(frame.top, 0);
+  const bottom = Math.min(frame.bottom, window.innerHeight);
+  const box = block.getBoundingClientRect();
+  if (box.height <= bottom - top) return false;
+  const beyond = forward ? box.bottom - bottom : top - box.top;
+  if (beyond <= 1) return false;
+  scroller.scrollBy({
+    top: (forward ? 1 : -1) * Math.min(beyond, (bottom - top) * 0.6),
+    behavior: smooth ? "smooth" : "auto",
+  });
+  return true;
+}

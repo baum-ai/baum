@@ -458,17 +458,19 @@ function SectionFiles({
   return (
     <div className="space-y-4">
       {files.map((file) => (
-        <FileDiff
-          key={file.path}
-          document={document}
-          file={file}
-          context={context}
-          intro={intro?.(file)}
-        />
+        // Each file is a stop of j and k, and Space folds it.
+        <div key={file.path} data-review-block="" className={FILE_BLOCK}>
+          <FileDiff document={document} file={file} context={context} intro={intro?.(file)} />
+        </div>
       ))}
     </div>
   );
 }
+
+/** A file of a section's views as a block j and k move to: its diff's
+ *  border darkens, as a tile's does. */
+const FILE_BLOCK =
+  "scroll-mt-4 rounded-sm outline-none data-[review-block-active]:[&_article]:border-strong";
 
 /** The section's generated and vendored files, folded at the end of its
  *  code unless they are all it has. */
@@ -491,7 +493,13 @@ function GeneratedFiles({
   }, [reveal, files]);
   return (
     <div className="space-y-3">
-      <GeneratedToggle open={open} files={files.length} onToggle={() => setOpen((was) => !was)} />
+      {/* A stop of j and k too, which Space opens. */}
+      <div
+        data-review-block=""
+        className="scroll-mt-4 rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
+      >
+        <GeneratedToggle open={open} files={files.length} onToggle={() => setOpen((was) => !was)} />
+      </div>
       {open ? <SectionFiles document={document} files={files} context={context} /> : null}
     </div>
   );
