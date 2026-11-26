@@ -18,7 +18,7 @@ import { IconButton } from "@baum/viewer/components/ui";
 import { type PaneLimits, usePaneWidth } from "@baum/viewer/use-conversation-width";
 import { useStoredSetting } from "@baum/viewer/use-stored-setting";
 import { SECTION_VIEWS, type SectionView, type SectionViews, viewOfPath } from "./model";
-import { SectionViewTabs } from "./section-views";
+import { SectionViewTabs, steppableViews, useSectionViewKeys, viewKeyStep } from "./section-views";
 import { SideRevealContext } from "./side-reveal";
 
 type SideView = Exclude<SectionView, "overview">;
@@ -104,6 +104,15 @@ export function SectionSplit({
   useBracketKey(() => {
     setReveal(null);
     collapse(!collapsed);
+  });
+  // h and l move through the column's views, unfolding it if it was folded.
+  useSectionViewKeys((key) => {
+    if (collapsed) collapse(false);
+    const next = viewKeyStep(key, side, steppableViews(views.counts, false));
+    if (next && next !== side) {
+      setReveal(null);
+      select(next);
+    }
   });
   return (
     <div

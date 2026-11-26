@@ -996,18 +996,25 @@ function shortcutGroups(
           short: "ask",
         },
         {
+          keys: ["["],
+          label: "Collapse or expand the list of sections on the left",
+          short: "list",
+        },
+        {
           keys: ["]"],
           label: "Collapse or expand the code beside a section's Overview",
           short: "code",
         },
         {
+          keys: ["h", "l"],
+          label:
+            "Previous or next of a section's views (Code, Tests, Session, Docs); in the sidebar, its Details, Activity and Comments, until Esc gives the keys back",
+          short: "views",
+        },
+        {
           keys: [SIDE_PANE_KEY_LABEL],
           label: "Toggle the right-hand sidebar; opening it gives it the keys",
           short: "sidebar",
-        },
-        {
-          keys: ["h", "l"],
-          label: "In the sidebar: Details, Activity and Comments; Esc goes back to the review",
         },
         back,
       ],

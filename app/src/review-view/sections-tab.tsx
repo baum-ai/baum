@@ -56,7 +56,13 @@ import {
   type ViewTile,
 } from "./model";
 import { type Reveal, SectionSplit } from "./section-split";
-import { SectionViewBody, SectionViewTabs } from "./section-views";
+import {
+  SectionViewBody,
+  SectionViewTabs,
+  steppableViews,
+  useSectionViewKeys,
+  viewKeyStep,
+} from "./section-views";
 import { useSideReveal } from "./side-reveal";
 import { BLOCK_LABEL, TONE_MEANS } from "./native-tiles";
 import { ViewTileCard } from "./view-tile";
@@ -170,6 +176,11 @@ function SectionBody({
   const tablist = `${idPrefix}section-views`;
   const select = (next: SectionView) =>
     context.select(selectionOf({ tab: "sections", section: section.id, view: next }));
+  // Once wide the side column takes h and l itself, since it can fold.
+  useSectionViewKeys((key) => {
+    const next = viewKeyStep(key, shown, steppableViews(views.counts, true));
+    if (next && next !== shown) select(next);
+  }, !side);
   const overview = (
     <SectionOverview
       document={document}

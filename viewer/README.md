@@ -1019,6 +1019,11 @@ with `]` focuses the pane itself, drawn without a ring, so it has the keys
 (wrapping, as the arrows do on the strip), and from a focused tab move the focus with them, and Esc blurs the focus, giving the keys
 back to the review. Text fields and menus in the pane keep them.
 
+`[` folds or unfolds the rail of sections on the left on wide screens (only
+where a host's `places` let the rail fold), or opens and closes its sheet on
+narrow screens, leaving the focus where it is. Text fields and open dialogs
+keep the key.
+
 Continuation summaries and standalone system-reminder turns are collapsed by
 default to a labelled disclosure with their turn number and time. Expanding
 retains the full prompt and agent activity. Real agent replies and work remain

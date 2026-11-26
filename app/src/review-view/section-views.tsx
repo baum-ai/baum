@@ -71,6 +71,61 @@ export function SectionViewTabs({
   );
 }
 
+/** The section's views h and l step through, in the row's order: those with
+ *  something to show, with the Overview only when it is in the row. */
+export function steppableViews(counts: SectionViews["counts"], overview: boolean): SectionView[] {
+  return SECTION_VIEWS.flatMap(({ value }) =>
+    value === "overview" ? (overview ? [value] : []) : counts[value] > 0 ? [value] : [],
+  );
+}
+
+/** The view h (previous) or l (next) goes to from `value`, round from either
+ *  end as the row's arrows go; null for another key. */
+export function viewKeyStep(
+  key: string,
+  value: SectionView,
+  views: SectionView[],
+): SectionView | null {
+  if ((key !== "h" && key !== "l") || views.length === 0) return null;
+  const index = views.indexOf(value);
+  if (index < 0) return views[key === "l" ? 0 : views.length - 1]!;
+  return views[(index + (key === "l" ? 1 : views.length - 1)) % views.length]!;
+}
+
+/** h and l, anywhere but a text field or a dialog, move through the
+ *  section's views (Code, Tests, Docs…). The right-hand sidebar keeps them
+ *  while it holds the keys: it takes them first and marks them used. */
+export function useSectionViewKeys(go: (key: "h" | "l") => void, enabled = true) {
+  const latest = useRef(go);
+  latest.current = go;
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        (event.key !== "h" && event.key !== "l") ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.isComposing ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest(
+          'input, textarea, select, [contenteditable], [role="textbox"], [role="menu"]',
+        )
+      )
+        return;
+      event.preventDefault();
+      latest.current(event.key);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [enabled]);
+}
+
 /** A section's view other than its Overview. */
 export function SectionViewBody({
   document,

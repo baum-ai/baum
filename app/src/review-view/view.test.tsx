@@ -11,6 +11,7 @@ import { parseReviewV2, type ReviewV2 } from "./document";
 import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
+import { steppableViews, viewKeyStep } from "./section-views";
 import { useViewPlaces } from "./places";
 import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
 import { foldedLines } from "../tiles/builtins/code-excerpt";
@@ -367,6 +368,12 @@ const viewPanel = (container: HTMLElement) =>
     'article [role="tabpanel"][id^="section-views-panel"]:not([hidden])',
   )!;
 
+/** A key pressed on `target`, as a real key reaches the page. */
+const press = (key: string, target: EventTarget = document.body) =>
+  act(async () => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  });
+
 describe("a section's views", () => {
   it("shows every view with its count, disabled when the section has none", async () => {
     const container = await page("pane=section&section=sec_allowlist");
@@ -400,6 +407,39 @@ describe("a section's views", () => {
     expect(search.get("section")).toBe("sec_relay");
     expect(search.has("section_view")).toBe(false);
     expect(viewTab(container, "Overview").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("steps through the views with h and l, over the empty ones, unless the sidebar has the keys", async () => {
+    const container = await page("pane=section&section=sec_allowlist");
+    const selected = () =>
+      views(container).find((each) => each.getAttribute("aria-selected") === "true")?.textContent;
+    await press("l");
+    expect(selected()).toBe("Code 1");
+    await press("l");
+    expect(selected()).toBe("Tests 1");
+    // Session has nothing, so l passes over it.
+    await press("l");
+    expect(selected()).toBe("Docs 1");
+    await press("l");
+    expect(selected()).toBe("Overview");
+    await press("h");
+    expect(selected()).toBe("Docs 1");
+    // The right-hand sidebar keeps h and l for its own tabs.
+    const aside = container.querySelector<HTMLElement>("#review-aside");
+    expect(aside).not.toBeNull();
+    await press("h", aside!);
+    expect(selected()).toBe("Docs 1");
+  });
+
+  it("steps the side column's views without the Overview, round from either end", () => {
+    const counts = { code: 2, tests: 0, session: 1, docs: 3 };
+    const side = steppableViews(counts, false);
+    expect(side).toEqual(["code", "session", "docs"]);
+    expect(viewKeyStep("l", "docs", side)).toBe("code");
+    expect(viewKeyStep("h", "code", side)).toBe("docs");
+    expect(viewKeyStep("l", "code", side)).toBe("session");
+    expect(viewKeyStep("j", "code", side)).toBeNull();
+    expect(steppableViews(counts, true)[0]).toBe("overview");
   });
 
   it("opens on the view the address names, and on the Overview when it has nothing", async () => {

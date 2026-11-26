@@ -3067,7 +3067,11 @@ builds the rail's model (the sections and the file list) from it.
   under the bar and scrolls on its own while the Overview scrolls. Its divider
   resizes it (dragged, or with the arrow keys; the width is remembered, and
   the Overview keeps at least 360px), and its chevron or `]` collapses it
-  to a strip so the Overview takes the section, until expanded again. It
+  to a strip so the Overview takes the section, until expanded again. `h`
+  and `l` step through the section's views that have something (with the
+  Overview too while it is a tab), wrapping as the row's arrows do; in the
+  wide layout they unfold the column first if it was collapsed. While the
+  right-hand sidebar has the keys it keeps `h` and `l` for its own tabs. It
   starts collapsed until the reader first opens it, then stays as they left
   it (`section-split.tsx`). Its code is drawn a frame after the section, as
   work React can drop, so a big diff never holds the Overview back. An excerpt of code in the Overview (a
@@ -3470,8 +3474,9 @@ Enter is drawn as ↵ in button shortcut hints.
 
 On PR and group review pages, Ctrl+] (`sidePaneKey`) toggles the right-hand
 Details/Activity sidebar, or its sheet on narrow windows; `]` by itself folds
-and opens the code beside a wide section's Overview. Both are listed in the
-review shortcut hints. Opening the sidebar with Ctrl+] gives it the keys: `h` and `l` then step through Details,
+and opens the code beside a wide section's Overview, and `[` folds and opens
+the rail of sections on the left (its sheet on narrow windows). All are
+listed in the review shortcut hints. Opening the sidebar with Ctrl+] gives it the keys: `h` and `l` then step through Details,
 Activity and Comments, until Esc (or a click in the review) gives them back.
 
 The page shortcut bar labels Shift+J/K as sections and lists only page actions;

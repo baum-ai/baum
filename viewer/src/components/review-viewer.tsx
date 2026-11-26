@@ -1191,6 +1191,39 @@ function ReviewWorkspace<F extends ReviewFile>({
     railFocus.current = null;
     (target === "expand" ? expandRail : collapseRail).current?.focus();
   }, [railFolded]);
+  // [ folds or unfolds the rail once wide, as ] does the side pane, leaving
+  // the keys where they are; where the panes stack it opens or closes the
+  // rail's sheet.
+  const railFoldKey = useRef<() => boolean>(() => false);
+  railFoldKey.current = () => {
+    if (!isWide(workspace.current)) setSheet((current) => (current === "rail" ? null : "rail"));
+    else if (places) setRailChoice({ answer: hostFolds, folded: !railFolded });
+    // Without places the rail never folds, so the key is left alone.
+    else return false;
+    return true;
+  };
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (
+        event.key !== "[" ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.isComposing ||
+        window.document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('input, textarea, select, [contenteditable], [role="textbox"]')
+      )
+        return;
+      if (railFoldKey.current()) event.preventDefault();
+    };
+    window.document.addEventListener("keydown", toggle);
+    return () => window.document.removeEventListener("keydown", toggle);
+  }, []);
   /** The Summary's "view all" links: each opens the pane the rail row of the
    *  same name would; Team unfolds the side pane and puts the cursor in its
    *  text box. */
@@ -1997,7 +2030,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                     <IconButton
                       ref={expandRail}
                       label="Expand sections"
-                      title="Expand sections"
+                      title="Expand sections ([)"
+                      aria-keyshortcuts="["
                       aria-expanded={false}
                       aria-controls="review-rail"
                       className="hidden h-9 w-9 text-secondary wide:flex"
@@ -2019,7 +2053,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                         <IconButton
                           ref={collapseRail}
                           label="Collapse sections"
-                          title="Collapse sections"
+                          title="Collapse sections ([)"
+                          aria-keyshortcuts="["
                           aria-expanded
                           aria-controls="review-rail"
                           className="h-8 w-8 text-secondary"
