@@ -285,6 +285,12 @@ warning, since such a shell may skip `~/.bashrc` or `~/.zshrc`. An AppImage's
 runtime puts its mount (`$APPDIR/usr/bin`, which holds the bundled baum) first
 on the app's PATH; the app removes it from the PATH of every baum it runs, so
 the daemon never inherits it and setup never reports it as a different baum.
+On Linux the app also drops, at start, every environment entry inside another
+AppImage's mount (a `.mount_` directory other than its own `APPDIR`), and
+leaves a working directory inside one for the home directory. An AppImage
+started by another inherits that one's PATH, `LD_LIBRARY_PATH` and GTK and
+XDG variables: the Tauri app's updater started the Electron app that way, so
+the old app's mount stayed alive with its bundled baum first on the PATH.
 
 The status also names each detected agent CLI's path and version and whether
 baum supports that version. When one is too old, the agent's row says so,
