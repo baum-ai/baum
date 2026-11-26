@@ -241,7 +241,7 @@ type Options struct {
 	// such as a terminal that resumed it; a turn waits until nothing does.
 	// Nil finds none.
 	SessionRunning func(agent, id string, since time.Time) bool
-	Log              *slog.Logger
+	Log            *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 }
