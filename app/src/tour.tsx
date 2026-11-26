@@ -6,7 +6,7 @@ import { appURL, inSample, navigate, ownBase } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
 import { SAMPLE_PULL_REQUEST } from "./sample";
-import { COMMAND } from "./shortcuts";
+import { COMMAND, PANEL_KEY_LABEL } from "./shortcuts";
 import { uiState, useUIState } from "./ui-state";
 import { visibleInterval } from "./visible-interval";
 import "./tour.css";
@@ -140,10 +140,22 @@ const STOPS: Stop[] = [
     body: (
       <>
         Every agent session on this computer, running, waiting or ended. <B>Focus session</B> jumps
-        back into a running one. Take this tour again from Go to (<kbd>{COMMAND}K</kbd>).
+        back into a running one.
       </>
     ),
     target: ".local-main",
+    at: href("sessions"),
+  },
+  {
+    title: "Make baum your own",
+    body: (
+      <>
+        Most things in baum can be changed and customised from its built-in session: open{" "}
+        <B>Session</B> (<kbd>{PANEL_KEY_LABEL}</kbd>) on any page and ask. Take this tour again from
+        Go to (<kbd>{COMMAND}K</kbd>).
+      </>
+    ),
+    target: ".local-rail-panel",
     at: href("sessions"),
   },
 ];
@@ -182,8 +194,8 @@ function place(target: DOMRect | null, width: number, height: number, bottom?: n
 }
 
 /** The app's first-run tour: a welcome, then a small card that steps
- *  through the Inbox, a pull request's review, the Timeline and Sessions,
- *  pointing at each. It goes to each page itself. Finishing or skipping it is remembered
+ *  through the Inbox, a pull request's review, the Timeline, Sessions and
+ *  the sidebar's Session button, pointing at each. It goes to each page itself. Finishing or skipping it is remembered
  *  on this computer. */
 export function Tour({ close }: { close: () => void }) {
   const [index, setIndex] = useState(0);

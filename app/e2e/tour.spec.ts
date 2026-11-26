@@ -78,6 +78,7 @@ async function walk(
     "A pull request's review",
     "Timeline",
     "Sessions",
+    "Make baum your own",
   ]);
 }
 
