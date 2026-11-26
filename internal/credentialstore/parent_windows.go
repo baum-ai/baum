@@ -1,4 +1,4 @@
-package githubauth
+package credentialstore
 
 import "golang.org/x/sys/windows"
 
