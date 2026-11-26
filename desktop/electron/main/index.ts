@@ -74,7 +74,7 @@ import { createPanel, type PanelWindow, registerPanel } from "./panel-electron.t
 import { configDir, IDENTIFIER, localDataDir, sessionDataDir } from "./paths.ts";
 import { registerAppScheme, serveAppScheme } from "./protocol.ts";
 import { Quitter, STOP_TIMEOUT } from "./quit.ts";
-import type { AppProcess } from "./run-baum.ts";
+import { type AppProcess, dropForeignMounts, inForeignMount } from "./run-baum.ts";
 import { FILE as DESKTOP_JSON } from "./settings.ts";
 import { registerThemeCommands, ThemeStore, themeBootstrap, windowBackground } from "./theme.ts";
 import { registerTileFileCommands } from "./tile-files.ts";
@@ -118,6 +118,11 @@ const thisApp: AppProcess = {
   env: process.env,
   execPath: process.execPath,
 };
+// Before anything runs a child: an AppImage started by another (the Tauri
+// app's updater starting this one) inherits its mount on the PATH and in its
+// working directory.
+const foreignVariables = dropForeignMounts(thisApp);
+if (inForeignMount(thisApp, process.cwd())) process.chdir(homedir());
 /** Where the stable copy of baum and the menu entry's icon go. */
 const LOCAL_DATA_DIR = localDataDir(platform);
 let main: BrowserWindow | null = null;
@@ -270,6 +275,9 @@ async function confirm(title: string, text: string, yes: string): Promise<boolea
 }
 
 function start(): void {
+  if (foreignVariables.length > 0) {
+    log(`dropped another AppImage's mount from ${foreignVariables.join(", ")}`);
+  }
   serveAppScheme(protocol, join(app.getAppPath(), "dist"), () => setup.isOpen());
   guardPermissions(session.defaultSession, isAppOrigin);
   guardFrameRequests(session.defaultSession);
