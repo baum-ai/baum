@@ -1,3 +1,4 @@
+import { PullRequestIssueLinks } from "./integrations";
 import { SavedStateNotice } from "./ui-state";
 import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
 import { TileCheckPage } from "./tiles/custom/check-runner";
@@ -2032,6 +2033,7 @@ function Workspace({ url }: { url: UrlState }) {
                 ) : (
                   <LocalLink href={backTo(url.search).href}>Inbox</LocalLink>
                 )}
+                <PullRequestIssueLinks pr={selectedEntry.pull_request} />
                 <h2>Needs a local clone</h2>
                 <p>
                   Pull requests are available from GitHub. Choose a local folder before generating a

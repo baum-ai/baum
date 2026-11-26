@@ -82,7 +82,7 @@ import {
   type PullRequestDecisionsRead,
 } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
-import { useLinkedIssues } from "./integrations";
+import { useIssueLinks } from "./integrations";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
 import { canMerge, MergeDialog } from "./merge";
@@ -351,7 +351,7 @@ export function LocalReview({
   fixRuns?: Job[];
 }) {
   const pr = entry.pull_request;
-  const linkedIssues = useLinkedIssues(pr.repository, pr.number, pr.updated_at);
+  const linkedIssues = useIssueLinks(pr);
   const url = useUrlState();
   // The page reads a baum.review/2 version with its tile document, and a
   // baum.review/1 one as stored.
@@ -1140,7 +1140,7 @@ export function LocalReview({
                   // The stacks and groups it belongs to, under the title with its
                   // other facts rather than as a notice over the review.
                   subtitle:
-                    groups.length > 0 || kept || linkedIssues.length > 0 ? (
+                    groups.length > 0 || kept || linkedIssues ? (
                       <>
                         {kept ? (
                           <span
@@ -1150,17 +1150,7 @@ export function LocalReview({
                             Still applies to the newer commits
                           </span>
                         ) : null}
-                        {linkedIssues.map((issue) => (
-                          <a
-                            key={issue.url}
-                            href={issue.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="local-group-link"
-                          >
-                            <strong>{issue.key}</strong> {issue.title} · {issue.state}
-                          </a>
-                        ))}
+                        {linkedIssues}
                         {groups.map((group) => (
                           <ViewerLink
                             key={group.id}

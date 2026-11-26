@@ -766,3 +766,10 @@ test("k back to the first block, and to the first place, shows the review's head
   await page.keyboard.press("Shift+K");
   await expect.poll(top).toBe(0);
 });
+
+test("shows the linked issue beneath the pull request title", async ({ page }) => {
+  await signedIn(page, PR7);
+  const issue = page.getByRole("link", { name: /ENG-42 Improve review navigation/ });
+  await expect(issue).toHaveAttribute("href", "https://linear.app/acme/issue/ENG-42");
+  await expect(issue).toContainText("In progress");
+});

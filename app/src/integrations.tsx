@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ExternalLinkIcon } from "@baum/viewer/components/icons";
 import { Alert, Badge, Button } from "@baum/viewer/components/ui";
-import { request } from "./api";
+import { request, type PR } from "./api";
 import { openExternal } from "./outside-links";
 import { PanelHeader } from "./shell";
 
@@ -25,6 +25,8 @@ const labels = {
 export function IntegrationConnections() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [error, setError] = useState("");
+  const [readFailed, setReadFailed] = useState(false);
+  const [browserLink, setBrowserLink] = useState<{ id: string; url: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [revision, setRevision] = useState(0);
   useEffect(() => {
@@ -42,7 +44,10 @@ export function IntegrationConnections() {
         setConnections(rows);
         if (rows.some((row) => row.state === "pending")) timer = setTimeout(read, 1500);
       } catch {
-        if (!abort.signal.aborted) setError("Could not read integration connections.");
+        if (!abort.signal.aborted) {
+          setReadFailed(true);
+          setError("Could not read integration connections.");
+        }
       }
     }
     void read();
@@ -53,10 +58,15 @@ export function IntegrationConnections() {
   }, [revision]);
   async function change(id: string, action: "connect" | "disconnect") {
     setBusy(id);
+    setReadFailed(false);
+    setBrowserLink(null);
     setError("");
     try {
       const result = await request<{ url: string }>(`api/integrations/${id}/${action}`, {});
-      if (action === "connect") openExternal(result.url);
+      if (action === "connect") {
+        setBrowserLink({ id, url: result.url });
+        openExternal(result.url);
+      }
     } catch {
       setError("Could not change the connection. Try again.");
     } finally {
@@ -69,15 +79,17 @@ export function IntegrationConnections() {
       {error && (
         <Alert>
           {error}{" "}
-          <Button
-            size="compact"
-            onClick={() => {
-              setError("");
-              setRevision((n) => n + 1);
-            }}
-          >
-            Retry
-          </Button>
+          {readFailed && (
+            <Button
+              size="compact"
+              onClick={() => {
+                setError("");
+                setRevision((n) => n + 1);
+              }}
+            >
+              Retry
+            </Button>
+          )}
         </Alert>
       )}
       {connections.map((c) => (
@@ -98,6 +110,11 @@ export function IntegrationConnections() {
             }
             actions={
               <>
+                {c.state === "pending" && browserLink?.id === c.id && (
+                  <a href={browserLink.url} target="_blank" rel="noreferrer">
+                    Open sign-in page
+                  </a>
+                )}
                 {c.state !== "unconfigured" && c.state !== "pending" && (
                   <Button
                     disabled={Boolean(busy)}
@@ -126,7 +143,7 @@ export function IntegrationConnections() {
   );
 }
 
-export function useLinkedIssues(repository: string, number: number, updated?: string) {
+function useLinkedIssues({ repository, number, updated_at }: PR) {
   const [issues, setIssues] = useState<Issue[]>([]);
   useEffect(() => {
     const abort = new AbortController();
@@ -153,6 +170,26 @@ export function useLinkedIssues(repository: string, number: number, updated?: st
       /* Linked issues are optional when a provider is offline. */
     });
     return () => abort.abort();
-  }, [repository, number, updated]);
+  }, [repository, number, updated_at]);
   return issues;
+}
+
+export function useIssueLinks(pr: PR) {
+  const issues = useLinkedIssues(pr);
+  return issues.length
+    ? issues.map((issue) => (
+        <a
+          key={issue.url}
+          href={issue.url}
+          target="_blank"
+          rel="noreferrer"
+          className="local-group-link"
+        >
+          <strong>{issue.key}</strong> {issue.title} · {issue.state}
+        </a>
+      ))
+    : null;
+}
+export function PullRequestIssueLinks({ pr }: { pr: PR }) {
+  return useIssueLinks(pr);
 }

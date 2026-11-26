@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -549,7 +550,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			if strings.HasSuffix(r.URL.Path, "/11") && !updated() {
 				mergeableState = "behind"
 			}
-			body = map[string]any{"state": "open", "title": "Fixture pull request", "mergeable": !strings.HasSuffix(r.URL.Path, "/8"), "mergeable_state": mergeableState, "head": map[string]any{"sha": repo.Head, "ref": "feature", "repo": map[string]any{"full_name": headRepo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "acme/demo"}}, "user": map[string]any{"login": "author"}}
+			body = map[string]any{"state": "open", "title": "Fixture pull request", "body": "Tracks " + fixtureIssueURL, "mergeable": !strings.HasSuffix(r.URL.Path, "/8"), "mergeable_state": mergeableState, "head": map[string]any{"sha": repo.Head, "ref": "feature", "repo": map[string]any{"full_name": headRepo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "acme/demo"}}, "user": map[string]any{"login": "author"}}
 		} else {
 			var query struct {
 				Query     string
@@ -780,7 +781,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		drafts := &tiledrafts.Store{Changed: func(pr string) {
 			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		local := uiserver.LocalAPI{Integrations: integrations.Handler(fixtureIntegration{}), Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		local := uiserver.LocalAPI{Integrations: integrations.Handler(&fixtureIntegration{}), Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -1118,14 +1119,30 @@ func browserCustomTiles(t *testing.T, document []byte) []reviewv2.Tile {
 	return out
 }
 
-type fixtureIntegration struct{}
+type fixtureIntegration struct{ disconnected atomic.Bool }
 
 func (fixtureIntegration) ID() string   { return "linear" }
 func (fixtureIntegration) Name() string { return "Linear" }
-func (fixtureIntegration) Status(context.Context) integrations.Connection {
+func (f *fixtureIntegration) Status(context.Context) integrations.Connection {
+	if f.disconnected.Load() {
+		return integrations.Connection{State: "disconnected"}
+	}
 	return integrations.Connection{State: "connected", Account: "Sam · Acme"}
 }
-func (fixtureIntegration) Connect(context.Context) (string, error) {
+func (f *fixtureIntegration) Connect(context.Context) (string, error) {
+	f.disconnected.Store(false)
 	return "https://linear.app/oauth/authorize", nil
 }
-func (fixtureIntegration) Disconnect(context.Context) error { return nil }
+func (f *fixtureIntegration) Disconnect(context.Context) error {
+	f.disconnected.Store(true)
+	return nil
+}
+
+const fixtureIssueURL = "https://linear.app/acme/issue/ENG-42"
+
+func (f *fixtureIntegration) Issues(_ context.Context, description string) []integrations.Issue {
+	if f.disconnected.Load() || !strings.Contains(description, fixtureIssueURL) {
+		return nil
+	}
+	return []integrations.Issue{{Key: "ENG-42", Title: "Improve review navigation", State: "In progress", URL: fixtureIssueURL}}
+}
