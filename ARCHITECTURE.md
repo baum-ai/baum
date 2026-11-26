@@ -7050,7 +7050,14 @@ replace it.
     `listen_on`. On macOS, iTerm2 (`iTerm2`, `iTermServer-*`) and Terminal run
     an AppleScript (`osascript`) that selects the session or tab whose `tty`
     is the terminal device and activates the application; a refused Automation
-    permission (-1743) says where to allow it.
+    permission (-1743) says where to allow it. Herdr's terminals run under
+    herdr-core's holder (`herdr-core`), apart from its window: the terminal
+    whose `pid` (`herdr-core get <t> --json`, for each of `ls --json`'s local
+    terminals) is the process below the holder is shown with `herdr-app do
+    agent.focus --terminal <t>`, both commands from the `PATH`, else the
+    running process's executable; the window raised is then herdr-app's
+    (`pgrep -n -x herdr-app`), also when the terminal is not found. Herdr
+    not running says to open it.
   - The window, unless the tab step activated it: on macOS the application
     bundle holding the executable of the nearest process in one (`open -a`),
     or iTerm2 by its bundle identifier for its `iTermServer`, which runs from
@@ -7075,7 +7082,7 @@ replace it.
     `focus` is, judges the same from the record without running anything: on
     Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
     terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
-    a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
+    a kitty with its socket, `herdr-core` in the chain, and on macOS iTerm2 or Terminal with a terminal device;
     `window` otherwise. Codex hooks whose chain contains only `codex`, `systemd`
     or `launchd` and no terminal can belong to a shared app server with separate
     TUI clients. They offer session focus. Focus matches the thread ID in terminal
