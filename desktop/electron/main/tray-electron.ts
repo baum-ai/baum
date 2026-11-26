@@ -57,8 +57,9 @@ export function startTray(start: TrayStart): TrayController {
 
   let tray: Tray | undefined;
   let menu: Menu | undefined;
-  // Linux hosts show the menu on any click; macOS would also show it on a
-  // left click, which the panel owns, so there it pops up on a right click.
+  // On Linux the menu is the StatusNotifierItem's own, which the host shows
+  // on a right click; macOS would also show a context menu on a left click,
+  // which the panel owns, so there it pops up on a right click.
   const menuOnClick = process.platform === "linux";
 
   const apply = (update: TrayUpdate): void => {
@@ -77,7 +78,12 @@ export function startTray(start: TrayStart): TrayController {
   const controller = new TrayController({ ...start.host, apply });
   try {
     tray = new Tray(image("idle"));
-    if (!menuOnClick) {
+    if (menuOnClick) {
+      // StatusNotifierItem hosts activate the icon on a left click (a double
+      // click on some; GNOME's AppIndicator extension shows the menu instead),
+      // which Electron reports as a click: it opens the app.
+      tray.on("click", () => start.host.showWindow());
+    } else {
       tray.setIgnoreDoubleClickEvents(true);
       tray.on("click", (_event, bounds) => {
         controller.requestPlanRefresh();
