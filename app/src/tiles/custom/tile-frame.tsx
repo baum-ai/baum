@@ -3,7 +3,12 @@ import { cn } from "@baum/viewer/components/classnames";
 import { useReviewFiles } from "@baum/viewer/components/review-contexts";
 import { Skeleton } from "@baum/viewer/components/states";
 import { Button } from "@baum/viewer/components/ui";
-import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
+import {
+  cachedHighlightedHunks,
+  highlightHunks,
+  type HighlightedLine,
+} from "@baum/viewer/highlight";
+import { codeDiffHunk, indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import type { IndexedHunk } from "@baum/viewer/review-document";
 import { useTileHost } from "../host";
 import { Note, Quiet } from "../parts";
@@ -174,9 +179,10 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   const theme = useAppTheme();
   const size = sizeOf(tile, face);
   const patches = useCitedPatches(tile, ctx, face);
+  const highlighted = useCitedTokens(tile, patches.source, face);
   const resolved = useMemo(
-    () => resolveRefs(tile.data, patches.source, face, ctx.labels),
-    [tile.data, patches.source, face, ctx.labels],
+    () => resolveRefs(tile.data, patches.source, face, ctx.labels, highlighted.tokens),
+    [tile.data, patches.source, face, ctx.labels, highlighted.tokens],
   );
   // The glance's size: what the preflight draws it at.
   const preflight = usePreflight(tile, ctx, sizeOf(tile, "glance"), digest);
@@ -281,7 +287,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
           title={label}
           face={face}
           ready={ready}
-          waitFor={patches.pending}
+          waitFor={() => patches.pending() ?? highlighted.pending()}
           init={() =>
             initMessage({
               face,
@@ -506,9 +512,17 @@ function useCitedPatches(tile: Tile, ctx: TileContext, face: Face) {
           () => null,
         ),
       ),
-    ).then((entries) => {
+    ).then(async (entries) => {
+      const diffs = new Map(entries.filter((entry) => entry !== null));
+      // Highlighted before they are shown, so the first draw is coloured.
+      await highlightDiffs(
+        wanted.flatMap((hunk) => {
+          const diff = diffs.get(hunk.id);
+          return diff ? [{ ...hunk, diff }] : [];
+        }),
+      );
       if (pending.current === loading) pending.current = null;
-      if (live) setLoaded({ data, diffs: new Map(entries.filter((entry) => entry !== null)) });
+      if (live) setLoaded({ data, diffs });
     });
     pending.current = loading;
     return () => {
@@ -529,6 +543,58 @@ function useCitedPatches(tile: Tile, ctx: TileContext, face: Face) {
     };
   }, [ctx.source, loaded]);
   return { source, pending: () => pending.current };
+}
+
+/** Tokens per line of each hunk's diff, with the highlighter the review's
+ *  diffs use (its cache shared with theirs); an unknown language, an
+ *  oversized hunk or a failure leaves a hunk out. */
+async function highlightDiffs(hunks: readonly IndexedHunk[], signal?: AbortSignal) {
+  await Promise.all(
+    hunks.map((hunk) =>
+      highlightHunks(hunk.path, [codeDiffHunk(hunk.diff!)], undefined, { signal }).catch(
+        () => null,
+      ),
+    ),
+  );
+}
+
+/** The colour tokens of a detail's cited hunks that the document holds the
+ *  diff of: those already highlighted at once, the rest once highlighted. */
+function useCitedTokens(tile: Tile, source: TileContext["source"], face: Face) {
+  const [round, setRound] = useState(0);
+  const pending = useRef<Promise<unknown> | null>(null);
+  const cited = useMemo(() => {
+    if (face !== "detail") return [];
+    const ids = new Set(citedHunks(tile.data).map((anchor) => (anchor as { id: string }).id));
+    return source.index.hunks
+      .filter((hunk) => ids.has(hunk.id) && hunk.diff)
+      .slice(0, MAX_EXCERPTS);
+  }, [face, source, tile.data]);
+  const tokens = useMemo(() => {
+    const out = new Map<string, readonly HighlightedLine[]>();
+    for (const hunk of cited) {
+      const lines = cachedHighlightedHunks(hunk.path, [codeDiffHunk(hunk.diff!)])?.[0];
+      if (lines) out.set(hunk.id, lines);
+    }
+    return out;
+    // `round` reads the cache again once highlighting is done.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [cited, round]);
+  // Started as the frame mounts, well before its hello.
+  useEffect(() => {
+    const missing = cited.filter((hunk) => !tokens.has(hunk.id));
+    if (missing.length === 0) return;
+    const controller = new AbortController();
+    const highlighting = highlightDiffs(missing, controller.signal).then(() => {
+      if (pending.current === highlighting) pending.current = null;
+      if (!controller.signal.aborted) setRound((count) => count + 1);
+    });
+    pending.current = highlighting;
+    return () => controller.abort();
+    // `tokens` follows `cited`; a new round must not start another run.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [cited]);
+  return { tokens, pending: () => pending.current };
 }
 
 type FrameViewProps = {

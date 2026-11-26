@@ -1605,7 +1605,8 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   language, the data and the resolved citations (`refs.ts`, below). A detail
   that cites code whose excerpt the document omits first reads it from the
   page's patch source (waiting at most 1.5 seconds), as the viewer's cited
-  code does. Changed data or citations are sent as `update`. `ready` is
+  code does, and highlights the cited code within the same wait. Changed
+  data or citations are sent as `update`. `ready` is
   taken once for each `init` or `update`; any other `ready` is a resize.
 - **Sizes.** A glance's box is reserved before it loads (7 or 9 rem by size,
   growing with its card's row) and the frame fills it; its height requests
@@ -1659,7 +1660,10 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   (members by name, items in order, the shapes of `$defs/citation`, at most
   256) and resolves each against the document on screen: hunks (path,
   range, counts, and for a detail the cited lines with three around them, or
-  the hunk, at most 200 lines, 64 hunks and 384 KiB in all), files, risks,
+  the hunk, at most 200 lines, 64 hunks and 384 KiB in all, each line with
+  `tokens` from the highlighter the review's diffs use, `[text, kind]` or
+  `[text]` when plain, at most 20,000 in all and none for a language it does
+  not know), files, risks,
   evidence, changes, tiles, checks and review threads; commits, sessions and
   the kinds that carry what they name get a label only. What the document
   lacks is `unavailable` (`not_in_review`, or `too_many` past the cap). A

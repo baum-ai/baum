@@ -2,7 +2,16 @@ import { describe, expect, it } from "vitest";
 import citationKeys from "../../../../tiles/testdata/citation-keys.json" with { type: "json" };
 import citationShapes from "../../../../tiles/testdata/citations.json" with { type: "json" };
 import { fixtureSource, fixtureTile } from "../fixture-test-helper";
-import { citedHunks, findCitations, isCitation, keyOf, MAX_CITATIONS, resolveRefs } from "./refs";
+import {
+  citedHunks,
+  findCitations,
+  isCitation,
+  keyOf,
+  MAX_CITATIONS,
+  MAX_EXCERPT_LINES,
+  MAX_EXCERPT_TOKENS,
+  resolveRefs,
+} from "./refs";
 
 describe("citation keys", () => {
   it("are the kit's and Go's, for every listed citation", () => {
@@ -100,6 +109,76 @@ describe("resolveRefs", () => {
     expect(
       (detail['["hunk","h_000000000003",null]']!.excerpt as { lines: unknown[] }).lines,
     ).toHaveLength(40);
+  });
+
+  it("colours a detail's excerpt lines as the kit reads them", () => {
+    const withDiff = structuredClone(doc);
+    const hunk = withDiff.index.hunks.find((each) => each.id === "h_000000000003")!;
+    hunk.diff = {
+      header: "@@ -1,3 +1,3 @@",
+      lines: [
+        { kind: "context", old_line: 1, new_line: 1, text: "return ok;" },
+        { kind: "remove", old_line: 2, text: "x" },
+        { kind: "add", new_line: 2, text: "y" },
+      ],
+    };
+    const keyword = "var(--syntax-token-keyword)";
+    const tokens = new Map([
+      [
+        hunk.id,
+        [
+          [
+            { content: "return", color: keyword },
+            { content: " ", color: "var(--syntax-foreground)" },
+            { content: "ok", color: "var(--syntax-foreground)" },
+            { content: ";", color: "var(--syntax-token-punctuation)" },
+          ],
+          // Tokens that do not spell their line leave it plain.
+          [{ content: "nope", color: keyword }],
+          [{ content: "y" }],
+        ],
+      ],
+    ]);
+    const excerpt = resolveRefs(tile.data, withDiff, "detail", labels, tokens).refs[
+      '["hunk","h_000000000003",null]'
+    ]!.excerpt as { lines: { tokens?: unknown }[] };
+    expect(excerpt.lines.map((line) => line.tokens)).toEqual([
+      [["return", "keyword"], [" ok"], [";", "punctuation"]],
+      undefined,
+      [["y"]],
+    ]);
+    // A glance gets no excerpt, so no tokens either.
+    expect(
+      resolveRefs(tile.data, withDiff, "glance", labels, tokens).refs[
+        '["hunk","h_000000000003",null]'
+      ],
+    ).not.toHaveProperty("excerpt");
+  });
+
+  it("sends an excerpt plain past the token budget", () => {
+    const withDiff = structuredClone(doc);
+    const hunk = withDiff.index.hunks.find((each) => each.id === "h_000000000003")!;
+    const count = MAX_EXCERPT_LINES;
+    hunk.diff = {
+      header: `@@ -1,${count} +1,${count} @@`,
+      lines: Array.from({ length: count }, (_, at) => ({
+        kind: "context" as const,
+        old_line: at + 1,
+        new_line: at + 1,
+        text: "ab".repeat(MAX_EXCERPT_TOKENS / count),
+      })),
+    };
+    // Alternating kinds, so no two neighbours join: one token per character.
+    const line = Array.from({ length: (MAX_EXCERPT_TOKENS / count) * 2 }, (_, at) => ({
+      content: "ab"[at % 2]!,
+      color: at % 2 ? "var(--syntax-token-string)" : "var(--syntax-token-keyword)",
+    }));
+    const tokens = new Map([[hunk.id, Array.from({ length: count }, () => line)]]);
+    const excerpt = resolveRefs(tile.data, withDiff, "detail", labels, tokens).refs[
+      '["hunk","h_000000000003",null]'
+    ]!.excerpt as { lines: { text: string; tokens?: unknown }[] };
+    expect(excerpt.lines).toHaveLength(count);
+    expect(excerpt.lines.every((each) => each.tokens === undefined)).toBe(true);
   });
 
   it("marks what is not in the review unavailable, never navigable", () => {

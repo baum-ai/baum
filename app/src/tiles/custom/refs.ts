@@ -1,3 +1,4 @@
+import type { HighlightedLine } from "@baum/viewer/highlight";
 import type { Anchor, IndexedHunk } from "@baum/viewer/review-document";
 import { isRecord, type TileSource } from "../types";
 
@@ -15,6 +16,9 @@ export const MAX_CITATIONS = 256;
 export const MAX_EXCERPTS = 64;
 export const MAX_EXCERPT_LINES = 200;
 export const MAX_EXCERPT_CHARS = 384 * 1024;
+/** The colour tokens of every excerpt together; past them an excerpt is sent
+ *  plain. Each costs the frame up to three of the 200,000 values it takes. */
+export const MAX_EXCERPT_TOKENS = 20_000;
 const CONTEXT_LINES = 3;
 const MAX_LABEL = 300;
 
@@ -196,24 +200,68 @@ const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 const clip = (text: string, most: number) =>
   text.length > most ? `${text.slice(0, most - 1)}…` : text;
 
+/** A line's colour tokens as the kit's `baum.diff` reads them: its text in
+ *  pieces, each with the syntax kind that colours it (`--syntax-token-<kind>`),
+ *  or alone when it is plain. */
+type KitToken = [string] | [string, string];
+
+type ExcerptLine = {
+  kind: "add" | "remove" | "context";
+  old?: number;
+  new?: number;
+  text: string;
+  tokens?: KitToken[];
+};
+
 type Excerpt = {
   header: string;
-  lines: { kind: "add" | "remove" | "context"; old?: number; new?: number; text: string }[];
+  lines: ExcerptLine[];
   omitted_before: number;
   omitted_after: number;
 };
 
+/** The highlighted lines of cited hunks, by hunk ID, one per line of the
+ *  hunk's diff. */
+export type HunkTokens = ReadonlyMap<string, readonly HighlightedLine[]>;
+
+const SYNTAX_COLOR = /^var\(--syntax-token-([a-z-]+)\)$/;
+
+/** A highlighted line as kit tokens, neighbours of one kind joined; null when
+ *  they do not spell the line, so it goes plain. */
+function kitTokens(line: HighlightedLine | undefined, text: string): KitToken[] | null {
+  if (!line) return null;
+  const out: KitToken[] = [];
+  for (const token of line) {
+    if (!token.content) continue;
+    const kind = SYNTAX_COLOR.exec(token.color ?? "")?.[1];
+    const last = out.at(-1);
+    if (last && last[1] === kind) last[0] += token.content;
+    else out.push(kind ? [token.content, kind] : [token.content]);
+  }
+  return out.map((token) => token[0]).join("") === text ? out : null;
+}
+
 /** The cited lines of a hunk with a few around them, or the whole hunk, from
- *  the excerpt the document stores; null when it stores none. */
-function excerptOf(hunk: IndexedHunk, lines: [number, number] | null): Excerpt | null {
+ *  the excerpt the document stores, each line with its colour tokens when
+ *  `highlighted` has them; null when it stores none. */
+function excerptOf(
+  hunk: IndexedHunk,
+  lines: [number, number] | null,
+  highlighted: readonly HighlightedLine[] | undefined,
+): Excerpt | null {
   const diff = hunk.diff;
   if (!diff || !Array.isArray(diff.lines)) return null;
-  const all = diff.lines.map((line) => ({
-    kind: line.kind,
-    ...("old_line" in line ? { old: line.old_line } : {}),
-    ...("new_line" in line ? { new: line.new_line } : {}),
-    text: line.text,
-  }));
+  const coloured = highlighted?.length === diff.lines.length ? highlighted : undefined;
+  const all = diff.lines.map((line, at): ExcerptLine => {
+    const tokens = coloured ? kitTokens(coloured[at], line.text) : null;
+    return {
+      kind: line.kind,
+      ...("old_line" in line ? { old: line.old_line } : {}),
+      ...("new_line" in line ? { new: line.new_line } : {}),
+      text: line.text,
+      ...(tokens ? { tokens } : {}),
+    };
+  });
   let from = 0;
   let to = all.length;
   if (lines) {
@@ -237,14 +285,23 @@ function excerptOf(hunk: IndexedHunk, lines: [number, number] | null): Excerpt |
 const excerptSize = (excerpt: Excerpt) =>
   excerpt.lines.reduce((total, line) => total + line.text.length, excerpt.header.length);
 
+const tokenCount = (excerpt: Excerpt) =>
+  excerpt.lines.reduce((total, line) => total + (line.tokens?.length ?? 0), 0);
+
+const withoutTokens = (excerpt: Excerpt): Excerpt => ({
+  ...excerpt,
+  lines: excerpt.lines.map(({ tokens: _, ...line }) => line),
+});
+
 /** Resolves every citation in a tile's data against the version on screen (its
  *  review and the tiles its page shows). A glance gets labels only; a detail
- *  gets code excerpts too. */
+ *  gets code excerpts too, coloured by `tokens` where it has their hunk's. */
 export function resolveRefs(
   data: unknown,
   source: TileSource,
   face: "glance" | "detail",
   labels: ReadonlyMap<string, string>,
+  tokens?: HunkTokens,
 ): ResolvedRefs {
   const refs: Record<string, Record<string, unknown>> = {};
   const targets = new Map<string, CitationTarget>();
@@ -255,6 +312,7 @@ export function resolveRefs(
       files.set(path, [...(files.get(path) ?? []), hunk]);
   let excerpts = 0;
   let excerptChars = 0;
+  let excerptTokens = 0;
   const citations = findCitations(data);
   for (const [position, citation] of citations.entries()) {
     const key = keyOf(citation);
@@ -301,13 +359,17 @@ export function resolveRefs(
           deletions: hunk.deletions,
         };
         if (face === "detail") {
-          const excerpt = excerptOf(hunk, lines);
+          const excerpt = excerptOf(hunk, lines, tokens?.get(hunk.id));
           if (excerpt && excerpts < MAX_EXCERPTS) {
             const size = excerptSize(excerpt);
             if (excerptChars + size <= MAX_EXCERPT_CHARS) {
               excerpts++;
               excerptChars += size;
-              fields.excerpt = excerpt;
+              const count = tokenCount(excerpt);
+              if (excerptTokens + count <= MAX_EXCERPT_TOKENS) {
+                excerptTokens += count;
+                fields.excerpt = excerpt;
+              } else fields.excerpt = withoutTokens(excerpt);
             }
           }
         }
