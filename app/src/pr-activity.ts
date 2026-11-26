@@ -37,12 +37,16 @@ type PullRecord = {
   at: number;
   last: Observed;
   unread: Activity;
-  /** Its page has been open: only then is what happens on it counted. */
-  opened?: true;
+  /** Its page has been open. Only such pull requests are kept: a record
+   *  without it was saved before that rule, and is let go. */
+  opened: true;
+  /** Opened before the panel's conversations or GitHub's details were read:
+   *  the next complete read is taken as it is rather than counted. */
+  partial?: true;
 };
 type Stored = { prs: Record<string, PullRecord> };
 
-/** How many pull requests the record keeps, the latest changed first. */
+/** How many opened pull requests the record keeps, the latest changed first. */
 export const KEEP = 500;
 
 const DECISIONS = new Set(["approved", "changes_requested", "commented"]);
@@ -155,11 +159,11 @@ function add(a: Activity, b: Activity): Activity {
   return sum;
 }
 
-/** The record after a read: each open pull request's changes added to what
- *  is unread, those open on screen (`viewing`) read, and a pull request seen
- *  the first time taken as it is, once the panel's conversations are read.
- *  Only a pull request whose page has been open counts anything, so the list
- *  does not light up for every one it holds. Null when nothing changed. */
+/** The record after a read: each opened pull request's changes added to what
+ *  is unread, and those open on screen (`viewing`) read. Only a pull request
+ *  whose page has been open is followed, so the list does not light up for
+ *  every one it holds: opening it takes it as it is, once the panel's
+ *  conversations and GitHub's details are read. Null when nothing changed. */
 export function advance(
   stored: Stored,
   entries: Entry[],
@@ -169,6 +173,11 @@ export function advance(
 ): Stored | null {
   const prs = { ...stored.prs };
   let changed = false;
+  for (const [key, record] of Object.entries(prs))
+    if (!record.opened) {
+      delete prs[key];
+      changed = true;
+    }
   // A pull request is listed once per clone: read the one with most reviews.
   const open = new Map<string, Entry>();
   for (const entry of entries) {
@@ -179,21 +188,20 @@ export function advance(
   }
   for (const [key, entry] of open) {
     const record = prs[key];
-    // A first sight waits for the panel's conversations and GitHub's details.
-    if (!record && (!conversations || entry.unresolved === null)) continue;
-    const last = observe(entry, conversations, record?.last);
     const viewed = viewing.includes(key);
-    const opened = viewed || !!record?.opened;
-    const unread =
-      viewed || !record || !opened ? {} : add(record.unread, changes(record.last, last));
-    if (
-      record &&
-      opened === !!record.opened &&
-      JSON.stringify(record.last) === JSON.stringify(last) &&
-      JSON.stringify(record.unread) === JSON.stringify(unread)
-    )
-      continue;
-    prs[key] = opened ? { at: now, last, unread, opened } : { at: now, last, unread };
+    if (!record && !viewed) continue;
+    const last = observe(entry, conversations, record?.last);
+    const fresh = !record || record.partial;
+    const partial = fresh && (!conversations || entry.unresolved === null);
+    const next: PullRecord = {
+      at: now,
+      last,
+      unread: viewed || fresh ? {} : add(record.unread, changes(record.last, last)),
+      opened: true,
+      ...(partial ? { partial } : {}),
+    };
+    if (record && same(record, next)) continue;
+    prs[key] = next;
     changed = true;
   }
   if (!changed) return null;
@@ -202,6 +210,9 @@ export function advance(
     for (const key of keys.sort((a, b) => prs[b]!.at - prs[a]!.at).slice(KEEP)) delete prs[key];
   return { prs };
 }
+
+const same = (a: PullRecord, b: PullRecord) =>
+  JSON.stringify({ ...a, at: 0 }) === JSON.stringify({ ...b, at: 0 });
 
 function onVisibility(change: () => void) {
   document.addEventListener("visibilitychange", change);
@@ -245,7 +256,7 @@ export function usePullActivity(
     });
   }, [ready, persistence.ready, visible, stored, entries, conversations, page]);
   return (pr: Pick<Entry["pull_request"], "repository" | "number">): Activity | undefined => {
-    const unread = stored.prs[upNextKey(pr)]?.unread;
-    return activityCount(unread) > 0 ? unread : undefined;
+    const record = stored.prs[upNextKey(pr)];
+    return record?.opened && activityCount(record.unread) > 0 ? record.unread : undefined;
   };
 }

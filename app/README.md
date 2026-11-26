@@ -936,12 +936,14 @@ more unresolved threads, a reviewer's approval, change request or comment on
 GitHub, finished turns of a session panel conversation about it, and any other
 update GitHub reports (`updated_at`) that none of those explains. The app counts
 each change between two reads of the index while its window is shown, so pushes
-made while it is hidden count once. A pull request first read counts nothing,
-and only one whose page has been open counts at all, so the list does not light
-up for every pull request it holds; opening its page in either list, or its
-group's page, clears it and reads what happens while it stays open. A group's row adds up its members'. The record, the latest 500
-pull requests changed or opened, is the `activity` ui-state. With two or more
-Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
+made while it is hidden count once. Only a pull request whose page has been open
+counts, so the list does not light up for every pull request it holds: opening
+its page in either list, or its group's page, clears it and reads what happens
+while it stays open; opened before the panel's conversations and GitHub's
+details are read, it is taken as it is once they are. A group's row adds up its
+members'. The record, the latest 500 opened pull requests changed or opened, is
+the `activity` ui-state; records saved before this rule are let go. With two or
+more Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
 each pull request's merge options, merges each with GitHub's default method for
 the person at the head commit shown, one after another, and names any GitHub
 refused with the reason; leaving the page stops the merges not yet sent. Below

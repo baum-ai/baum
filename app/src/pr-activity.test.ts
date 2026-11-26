@@ -32,9 +32,9 @@ const KEY = "acme/demo#7";
 const start = advance({ prs: {} }, [entry()], [], [KEY], 1)!;
 const unread = (stored: ReturnType<typeof advance>) => stored!.prs[KEY]!.unread;
 
-it("takes a pull request seen the first time as read, once the conversations are read", () => {
-  expect(advance({ prs: {} }, [entry()], null, [], 1)).toBeNull();
+it("takes a pull request opened the first time as read", () => {
   expect(unread(start)).toEqual({});
+  expect(start.prs[KEY]!.partial).toBeUndefined();
   expect(advance(start, [entry()], [], [], 2)).toBeNull();
 });
 
@@ -83,13 +83,38 @@ it("counts an update on GitHub only when nothing else explains it", () => {
   ).toEqual({ reviews: 1 });
 });
 
-it("waits for GitHub's details before taking a pull request as it is", () => {
-  expect(advance({ prs: {} }, [entry({}, { unresolved: null })], [], [], 1)).toBeNull();
+it("takes an early opened pull request as it is once the conversations and GitHub's details are read", () => {
+  const early = advance(
+    { prs: {} },
+    [entry({}, { unresolved: null, review: "" })],
+    null,
+    [KEY],
+    1,
+  )!;
+  expect(early.prs[KEY]).toMatchObject({ opened: true, partial: true, unread: {} });
+  // Left before they arrived: what they then show is not activity.
+  const read = advance(
+    early,
+    [entry({}, { unresolved: 3, review: "approved" })],
+    [conversation("idle", "2026-11-25T10:01:00Z")],
+    [],
+    2,
+  )!;
+  expect(read.prs[KEY]!.partial).toBeUndefined();
+  expect(unread(read)).toEqual({});
+  const pushed = advance(
+    read,
+    [entry({ head_sha: "bbb2222" }, { unresolved: 3, review: "approved" })],
+    [conversation("idle", "2026-11-25T10:01:00Z")],
+    [],
+    3,
+  )!;
+  expect(unread(pushed)).toEqual({ pushes: 1 });
 });
 
 it("reads a pull request listed by several clones once", () => {
   const clones = [entry({}, { version_count: 3 }), entry({}, { version_count: 0 })];
-  const stored = advance({ prs: {} }, clones, [], [], 1)!;
+  const stored = advance({ prs: {} }, clones, [], [KEY], 1)!;
   expect(advance(stored, clones, [], [], 2)).toBeNull();
   expect(advance(stored, [...clones].reverse(), [], [], 2)).toBeNull();
 });
@@ -119,21 +144,28 @@ it("keeps the review and threads while a new head's details are unknown", () => 
   expect(unread(fetched ?? pushed)).toEqual({ pushes: 1 });
 });
 
-it("counts nothing for a pull request whose page was never open", () => {
-  const seen = advance({ prs: {} }, [entry()], [], [], 1)!;
-  const pushed = advance(seen, [entry({ head_sha: "bbb2222" }, { version_count: 2 })], [], [], 2)!;
-  expect(unread(pushed)).toEqual({});
+it("follows only pull requests whose page has been open", () => {
+  expect(advance({ prs: {} }, [entry()], [], [], 1)).toBeNull();
+  expect(advance({ prs: {} }, [entry({ head_sha: "bbb2222" })], [], [], 2)).toBeNull();
   // Opening it starts the count from what it shows then.
   const opened = advance(
-    pushed,
+    { prs: {} },
     [entry({ head_sha: "bbb2222" }, { version_count: 2 })],
     [],
     [KEY],
     3,
   )!;
-  expect(opened.prs[KEY]!.opened).toBe(true);
+  expect(unread(opened)).toEqual({});
   const after = advance(opened, [entry({ head_sha: "ccc3333" }, { version_count: 2 })], [], [], 4)!;
   expect(unread(after)).toEqual({ pushes: 1 });
+});
+
+it("lets go of records saved before only opened pull requests were followed", () => {
+  const { opened: _, ...legacy } = start.prs[KEY]!;
+  const old = { prs: { [KEY]: { ...legacy, unread: { pushes: 4 } } } } as unknown as Parameters<
+    typeof advance
+  >[0];
+  expect(advance(old, [entry()], [], [], 2)).toEqual({ prs: {} });
 });
 
 it("clears the pull requests whose page is open", () => {
@@ -154,7 +186,7 @@ it("leaves closed pull requests alone and keeps the latest changed", () => {
       ]),
     ),
   };
-  const next = advance(many, [entry()], [], [], KEEP + 1)!;
+  const next = advance(many, [entry()], [], [KEY], KEEP + 1)!;
   expect(Object.keys(next.prs)).toHaveLength(KEEP);
   expect(next.prs[KEY]).toBeDefined();
   expect(next.prs["acme/demo#100"]).toBeUndefined();
