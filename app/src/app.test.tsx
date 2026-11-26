@@ -1830,7 +1830,7 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
   await key("5");
-  expect(location.search).toBe("?page=settings&section=connections");
+  expect(location.search).toBe("?page=settings&section=panel");
   await key("K", true);
   await key("ArrowUp", true);
   expect(location.search).toBe("?page=settings&section=reviews");

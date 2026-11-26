@@ -56,6 +56,7 @@ var projectedReads = map[string][]string{
 	"settings_appearance":  {"/api/settings/appearance"},
 	"settings_reviews":     {"/api/settings", "/api/settings/labs"},
 	"settings_fixes":       {"/api/settings"},
+	"settings_panel":       {"/api/settings/panel"},
 	"settings_connections": {"/api/github-auth"},
 	"settings_computer":    {"/api/settings", "/api/diagnostics"},
 	"prompts":              {"/api/settings/prompts"},
