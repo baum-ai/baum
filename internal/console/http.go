@@ -286,6 +286,8 @@ func classify(err error) (int, string) {
 		status, code = http.StatusConflict, "busy"
 	case errors.Is(err, ErrClosed):
 		status, code = http.StatusConflict, "closed"
+	case errors.Is(err, ErrRunningElsewhere):
+		status, code = http.StatusConflict, "session_running"
 	case errors.Is(err, ErrShuttingDown):
 		status, code = http.StatusServiceUnavailable, "shutting_down"
 	case errors.Is(err, agentcontext.ErrUnknownProposal):

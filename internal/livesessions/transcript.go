@@ -692,6 +692,9 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 	if agent != AgentClaudeCode && agent != AgentCodex {
 		return "", unavailable("Only Claude Code and Codex sessions can be continued.")
 	}
+	if t.Running(agent, id) {
+		return "", unavailable(RunningElsewhere)
+	}
 	loc, err := Locate(t.home(), "", agent, id, path)
 	if err != nil {
 		return "", err
@@ -710,4 +713,20 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 		return "", unavailable("The session's transcript does not say where it worked.")
 	}
 	return dir, nil
+}
+
+// RunningElsewhere is why a session a process runs, such as one in the
+// person's terminal, is not continued in the panel.
+const RunningElsewhere = "The session is running in a terminal. Continue it there, or exit it there first."
+
+// Running is whether a process runs the agent's session id now, whether or
+// not the tracker lists it: Claude Code registers each running session's
+// process with its id (FindClaude). Other agents register none, so theirs
+// are never found.
+func (t *Transcripts) Running(agent, id string) bool {
+	if agent != AgentClaudeCode {
+		return false
+	}
+	_, err := FindClaude(t.home(), id)
+	return err == nil
 }

@@ -963,6 +963,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Publish:          func(event console.Event) { _ = server.Publish("console", event) },
 			Transcript:       conversationTranscript(transcripts),
 			SessionDirectory: sessionDirectory(transcripts),
+			SessionRunning:   sessionRunning(transcripts),
 		})
 		if err != nil {
 			log.Warn("the session panel is off: its conversations did not open", "error", err)
@@ -1140,6 +1141,16 @@ func conversationTranscript(transcripts *livesessions.Transcripts) func(http.Res
 		answer, err := transcripts.Read(r.Context(), agent, id, "", "")
 		transcripts.WriteAnswer(w, r, answer, err)
 	}
+}
+
+// sessionRunning tells the panel whether a process, such as the person's
+// terminal, runs a session it is about to write to; nil without live
+// transcripts.
+func sessionRunning(transcripts *livesessions.Transcripts) func(string, string) bool {
+	if transcripts == nil {
+		return nil
+	}
+	return transcripts.Running
 }
 
 // sessionDirectory finds where a session the panel resumes worked; nil

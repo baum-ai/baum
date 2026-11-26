@@ -393,6 +393,16 @@ func TestSessionDirectoryIsWhereTheTranscriptSaysTheSessionWorked(t *testing.T) 
 	if dir, err := f.live.SessionDirectory(AgentClaudeCode, "ended-1"); err != nil || dir != "/work/other" {
 		t.Errorf("ended-1: %q %v", dir, err)
 	}
+	// One a process runs, such as the person's terminal, though the tracker
+	// does not list it, is continued where it runs.
+	entry := filepath.Join(f.home, ".claude", "sessions", fmt.Sprintf("%d.json", os.Getpid()))
+	write(t, entry, fmt.Sprintf(`{"pid":%d,"sessionId":"ended-1","status":"idle"}`, os.Getpid()))
+	if _, err := f.live.SessionDirectory(AgentClaudeCode, "ended-1"); !errors.As(err, &missing) || missing.Reason != RunningElsewhere {
+		t.Errorf("a session a process runs: %v", err)
+	}
+	if err := os.Remove(entry); err != nil {
+		t.Fatal(err)
+	}
 	// One the tracker lists as running is continued where it runs.
 	if _, err := f.live.SessionDirectory(AgentClaudeCode, "s1"); !errors.As(err, &missing) {
 		t.Errorf("a running session: %v", err)

@@ -85,6 +85,10 @@ var (
 	ErrNotFound = errors.New("conversation not found")
 	// ErrBusy is a message to a conversation whose agent is still answering.
 	ErrBusy = errors.New("the agent is still answering the last message")
+	// ErrRunningElsewhere is a message to a conversation whose agent session
+	// another process runs now, such as the person's terminal that resumed
+	// it: two would write the same session.
+	ErrRunningElsewhere = errors.New("This session is running in a terminal. Continue it there, or exit it there first.")
 	// ErrClosed is a message to, or a stop of, a closed conversation.
 	ErrClosed = errors.New("the conversation is closed")
 	// ErrShuttingDown is a conversation opened or a message sent once the
@@ -232,6 +236,10 @@ type Options struct {
 	// read from its transcript, for a conversation that resumes it; its
 	// error says why it cannot be. Nil resumes none.
 	SessionDirectory func(ctx context.Context, agent, id string) (string, error)
+	// SessionRunning is whether a process runs the agent's session id now,
+	// such as a terminal that resumed it; a turn waits until it does not.
+	// Nil finds none.
+	SessionRunning func(agent, id string) bool
 	Log              *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
@@ -521,6 +529,10 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 		return Conversation{}, ErrClosed
 	case StateRunning:
 		return Conversation{}, ErrBusy
+	}
+	// No turn of its own runs, so a process running its session is another.
+	if c.Session != "" && s.opts.SessionRunning != nil && s.opts.SessionRunning(c.Agent, c.Session) {
+		return Conversation{}, ErrRunningElsewhere
 	}
 	if info, err := os.Stat(c.Directory); err != nil || !info.IsDir() {
 		return Conversation{}, invalid("the conversation's directory %s is gone; start a new conversation", c.Directory)

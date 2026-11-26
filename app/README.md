@@ -2884,8 +2884,13 @@ that resumes that session in the directory it worked in
 (`POST api/console/conversations` with `agent` and `resume`), or the one
 already continuing it, and opens the panel on it, with the panel's model and
 access. Why it cannot (it is still running, its transcript or its directory
-is gone) shows as a toast. Closing that conversation gives the session back:
-it is no longer marked as the panel's.
+is gone) shows as a toast. A Claude Code session counts as running while its
+process is registered under `~/.claude/sessions`, so one open in a terminal
+the daemon does not list is not continued either. Closing that conversation
+gives the session back: it is no longer marked as the panel's. A message to a
+panel conversation whose Claude Code session a terminal runs again (`claude
+--resume`) is not sent, and the panel says the session is running in a terminal,
+until that terminal exits it.
 
 ## Review page
 

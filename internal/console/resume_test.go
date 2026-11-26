@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -174,4 +175,32 @@ func TestAResumedConversationKeepsItsSessionFromAnOlderClosedOne(t *testing.T) {
 	if got, ok := f.service.Owns("claude-code", testSession, dir); ok {
 		t.Errorf("claimed again by %s", got)
 	}
+}
+
+func TestATurnWaitsWhileATerminalRunsTheSession(t *testing.T) {
+	dir := resolveExisting(t.TempDir())
+	var running atomic.Bool
+	f := newFixture(t, func(o *Options) {
+		o.SessionDirectory = func(context.Context, string, string) (string, error) { return dir, nil }
+		o.SessionRunning = func(agent, id string) bool { return running.Load() && id == testSession }
+	})
+	ctx := context.Background()
+	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Resume: testSession})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The person resumed it in their terminal too.
+	running.Store(true)
+	if _, err := f.service.Send(ctx, c.ID, "hello", nil); !errors.Is(err, ErrRunningElsewhere) {
+		t.Fatalf("sent while a terminal runs the session: %v", err)
+	}
+	if got, _ := f.service.Get(ctx, c.ID); got.State != StateIdle {
+		t.Errorf("state %s", got.State)
+	}
+	// Once they exit it, the panel goes on.
+	running.Store(false)
+	if _, err := f.service.Send(ctx, c.ID, "hello", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.finished(c.ID)
 }
