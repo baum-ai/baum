@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
 	"github.com/baum-ai/baum/internal/credentialstore"
 )
 
