@@ -1138,11 +1138,11 @@ func (f *fixtureIntegration) Disconnect(context.Context) error {
 	return nil
 }
 
-const fixtureIssueURL = "https://linear.app/acme/issue/ENG-42"
+const fixtureIssueURL = "https://linear.app/acme/issue/DEMO-42"
 
 func (f *fixtureIntegration) Issues(_ context.Context, description string) []integrations.Issue {
 	if f.disconnected.Load() || !strings.Contains(description, fixtureIssueURL) {
 		return nil
 	}
-	return []integrations.Issue{{Key: "ENG-42", Title: "Improve review navigation", State: "In progress", URL: fixtureIssueURL}}
+	return []integrations.Issue{{Key: "DEMO-42", Title: "Improve review navigation", State: "In progress", URL: fixtureIssueURL}}
 }
