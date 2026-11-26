@@ -42,7 +42,9 @@ func testBundle() *bundle.Bundle {
 }
 
 // fake is a backend whose replies are chosen by the call's label (its
-// Stage), recording when each call ran and how many ran at once.
+// Stage), recording the order calls started and ended in and how many ran at
+// once. starts and ends hold positions in one sequence, not times: Windows'
+// clock can give a call's end and the next call's start the same time.
 type fake struct {
 	mu         sync.Mutex
 	replies    map[string]func(pass int) string
@@ -51,14 +53,31 @@ type fake struct {
 	sessions   bool
 	inFlight   atomic.Int32
 	maxFlight  atomic.Int32
-	starts     map[string]time.Time
-	ends       map[string]time.Time
+	events     int
+	starts     map[string]int
+	ends       map[string]int
 	requests   map[string]agent.Request
+	// holdUntil keeps a stage's reply until another stage has started (or
+	// a second has passed), so a test can check two calls overlap without
+	// depending on how soon the scheduler runs the second.
+	holdUntil map[string]string
+	started   map[string]chan struct{}
 }
 
 func newFake() *fake {
 	return &fake{replies: map[string]func(int) string{}, concurrent: true, sessions: true,
-		starts: map[string]time.Time{}, ends: map[string]time.Time{}, requests: map[string]agent.Request{}}
+		starts: map[string]int{}, ends: map[string]int{}, requests: map[string]agent.Request{},
+		holdUntil: map[string]string{}, started: map[string]chan struct{}{}}
+}
+
+// startedChan is closed once stage has started; f.mu must be held.
+func (f *fake) startedChan(stage string) chan struct{} {
+	c, ok := f.started[stage]
+	if !ok {
+		c = make(chan struct{})
+		f.started[stage] = c
+	}
+	return c
 }
 
 func (f *fake) Name() string          { return agent.BackendClaude }
@@ -75,20 +94,35 @@ func (f *fake) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 		}
 	}
 	f.mu.Lock()
+	f.events++
 	if _, ok := f.starts[r.Stage]; !ok {
-		f.starts[r.Stage] = time.Now()
+		f.starts[r.Stage] = f.events
+		close(f.startedChan(r.Stage))
 	}
 	f.requests[r.Stage] = r
 	reply := f.replies[r.Stage]
+	var hold chan struct{}
+	if other, ok := f.holdUntil[r.Stage]; ok {
+		hold = f.startedChan(other)
+	}
 	f.mu.Unlock()
 	select {
 	case <-time.After(f.delay):
 	case <-ctx.Done():
 		return agent.Result{}, ctx.Err()
 	}
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return agent.Result{}, ctx.Err()
+		}
+	}
 	defer func() {
 		f.mu.Lock()
-		f.ends[r.Stage] = time.Now()
+		f.events++
+		f.ends[r.Stage] = f.events
 		f.mu.Unlock()
 	}()
 	if reply == nil {
@@ -178,6 +212,9 @@ func testRun(t *testing.T, f *fake) Run {
 func TestGenerateWritesEveryLevel(t *testing.T) {
 	f := fullFake()
 	f.delay = 5 * time.Millisecond
+	// The overview's tile needs only the map, so it runs beside the
+	// sections: a section that waits for it to start must not wait long.
+	f.holdUntil["section-sec-retry"] = "tile-tl-path"
 	run := testRun(t, f)
 	var steps []string
 	run.Step = func(s string) { steps = append(steps, s) }
@@ -262,14 +299,14 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 	}
 	// The order: each tile after its owner, the overview after every tile,
 	// and the overview resumes the map's session.
-	if !f.starts["tile-tl-backoff"].After(f.ends["section-sec-retry"]) {
+	if f.starts["tile-tl-backoff"] < f.ends["section-sec-retry"] {
 		t.Error("the section's tile started before its section was written")
 	}
-	if !f.starts["tile-tl-path"].Before(f.ends["section-sec-retry"]) {
+	if f.starts["tile-tl-path"] == 0 || f.starts["tile-tl-path"] > f.ends["section-sec-retry"] {
 		t.Error("the overview's tile waited for a section")
 	}
 	for _, stage := range []string{"tile-tl-path", "tile-tl-backoff", "section-sec-retry", "section-sec-api", "context"} {
-		if !f.starts["overview"].After(f.ends[stage]) {
+		if f.ends[stage] == 0 || f.starts["overview"] < f.ends[stage] {
 			t.Errorf("the overview started before %s ended", stage)
 		}
 	}
