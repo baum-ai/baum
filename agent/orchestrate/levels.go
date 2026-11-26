@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,7 +23,8 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	sections := slices.Clone(o.plan.Sections)
 	planned := slices.Clone(o.plan.Tiles)
 	o.mu.Unlock()
-	reused := o.reuse(sections)
+	reused, refill := o.reuse(sections)
+	histories := o.histories(sections)
 	var toWrite []reviewv2.Section
 	for _, s := range sections {
 		switch {
@@ -44,6 +46,9 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 		}
 	}
 	for _, list := range mandatory {
+		tileCalls += len(list)
+	}
+	for _, list := range refill {
 		tileCalls += len(list)
 	}
 	o.budget.expect(1, len(toWrite)+1)
@@ -71,16 +76,17 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 		if s.Kind == "mechanical" && !reused[s.ID] {
 			startTiles(s.ID, ownedBy(s.ID))
 		}
-		// A reused section's text is in: its mandatory tiles start now.
+		// A reused section's text is in: its mandatory tiles, and the tiles
+		// it keeps that are filled again, start now.
 		if reused[s.ID] {
-			startTiles(s.ID, mandatory[s.ID])
+			startTiles(s.ID, append(refill[s.ID], mandatory[s.ID]...))
 		}
 	}
 	// A written section's mandatory tiles start once its text is in, as its
 	// own do, but never pass through it: a section cannot drop them.
 	for _, s := range toWrite {
 		middle.Go(func() {
-			list := o.sectionLevel(ctx, s, ownedBy(s.ID))
+			list := o.sectionLevel(ctx, s, histories[s.ID], ownedBy(s.ID))
 			startTiles(s.ID, append(list, mandatory[s.ID]...))
 		})
 	}
@@ -210,22 +216,27 @@ func (o *orchestration) dropTile(id string) {
 }
 
 // reuse keeps the previous version's text and tiles of each section whose
-// hunks are unchanged and whose text was complete (reviewv2.
-// ReusableSections). The map's tiles of a reused section give way to the
-// previous ones.
-func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
-	reused := map[string]bool{}
+// hunks are unchanged and whose text was complete, under its ID or renamed
+// (reviewv2.ReusableSections). The map's tiles of a reused section give way to the
+// previous ones. A previous tile whose type is no longer offered with the
+// definition it was filled with (sameDefinition) stands pending, with its
+// ID, type and brief, so the text's tile block still places it: it is
+// returned by owner (refill) to be filled again.
+func (o *orchestration) reuse(sections []reviewv2.Section) (reused map[string]bool, refill map[string][]reviewv2.Tile) {
+	reused, refill = map[string]bool{}, map[string][]reviewv2.Tile{}
 	if len(o.run.Previous) == 0 || o.run.NoReuse {
-		return reused
+		return reused, refill
 	}
-	var withHunks []reviewv2.Section
+	logical := map[string]bool{}
 	for _, s := range sections {
 		if len(s.Hunks) > 0 && s.Kind == reviewv2.KindLogical {
-			withHunks = append(withHunks, s)
+			logical[s.ID] = true
 		}
 	}
-	for id, r := range reviewv2.ReusableSections(o.run.Previous, withHunks) {
-		if len(r.Section.Body) == 0 {
+	// Every section is given, so a section renamed over the same hunks
+	// is reused too.
+	for id, r := range reviewv2.ReusableSections(o.run.Previous, sections, o.facts.refs) {
+		if !logical[id] || len(r.Section.Body) == 0 {
 			continue
 		}
 		reused[id] = true
@@ -237,6 +248,12 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 		o.tiles = slices.DeleteFunc(o.tiles, func(t reviewv2.Tile) bool { return t.Owner == id })
 		o.mu.Unlock()
 		for _, t := range r.Tiles {
+			if !o.sameDefinition(t) {
+				t.Title, t.Caption, t.Data, t.Definition, t.Problems, t.State = "", "", nil, nil, nil, reviewv2.TilePending
+				o.setTile(t)
+				refill[id] = append(refill[id], t)
+				continue
+			}
 			o.setTile(t)
 			o.record(LevelTiles, t.ID, StatusReused, "")
 		}
@@ -244,7 +261,42 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 	if len(reused) > 0 {
 		o.publish()
 	}
-	return reused
+	return reused, refill
+}
+
+// history is what a section's agent is given of the previous version: its
+// text to revise when it wrote the section over other hunks (rev), else the
+// code it takes over from other sections (joined), and the risk IDs fixed
+// earlier, which no risk of the reply may take.
+type history struct {
+	rev    *reviewv2.Revised
+	joined *reviewv2.Joined
+	fixed  []string
+}
+
+// histories are each section's history by ID (reviewv2.RevisableSections,
+// a renamed section's included, JoinedSections, FixedRiskIDs). A run that
+// reuses nothing is given none.
+func (o *orchestration) histories(sections []reviewv2.Section) map[string]history {
+	out := map[string]history{}
+	if len(o.run.Previous) == 0 || o.run.NoReuse {
+		return out
+	}
+	fixed := reviewv2.FixedRiskIDs(o.run.Previous)
+	for _, s := range sections {
+		out[s.ID] = history{fixed: fixed}
+	}
+	for id, r := range reviewv2.RevisableSections(o.run.Previous, sections, o.facts.refs) {
+		h := out[id]
+		h.rev = &r
+		out[id] = h
+	}
+	for id, j := range reviewv2.JoinedSections(o.run.Previous, sections, o.facts.refs) {
+		h := out[id]
+		h.joined = &j
+		out[id] = h
+	}
+	return out
 }
 
 // mechanical writes the mechanical section's one prose block from its
@@ -292,17 +344,31 @@ func joinWords(parts []string) string {
 }
 
 // sectionLevel writes one section and returns its tiles, sharpened, for the
-// tile level. A section that fails keeps the map's briefs for its tiles.
-func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, planned []reviewv2.Tile) []reviewv2.Tile {
+// tile level. A section that fails keeps the map's briefs for its tiles. A
+// revised section (rev) is written from its previous text, or keeps it.
+func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, h history, planned []reviewv2.Tile) []reviewv2.Tile {
+	rev := h.rev
 	o.mu.Lock()
 	p := o.plan
 	o.mu.Unlock()
 	input := basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p) + "\n" + sectionBrief(s, planned, p.Hunks)
+	switch {
+	case rev != nil:
+		input += "\n" + revisionBlock(s.ID, *rev, h.fixed)
+	case h.joined != nil:
+		input += "\n" + joinedBlock(*h.joined, h.fixed)
+	}
 	var result sectionResult
 	c := call{level: LevelSections, id: s.ID, label: label("section", s.ID), input: input, schema: SectionSchema(o.registry.names()),
 		instructions: o.prompt.Section + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("section", s.ID)) + "`.\n"}
+	// A revision is sent back at most once to re-check previous claims it
+	// repeats over changed code; the same text after is taken as checked.
+	recheck := true
 	c.check = func(reply []byte, lenient bool) string {
-		r, findings := checkSection(reply, s, planned, o.tileIDs(), o.facts, o.registry, lenient)
+		r, findings := checkSection(reply, s, rev, h.fixed, planned, o.tileIDs(), o.facts, o.registry, lenient, recheck)
+		if r.Rechecked {
+			recheck = false
+		}
 		if findings == "" {
 			result = r
 		}
@@ -330,22 +396,106 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 			if len(hunkCites(brief.Cites)) > 0 {
 				t.Cites = brief.Cites
 			}
+			if t.Type == TypeCode {
+				o.setFocus(t.ID, brief.Focus)
+			}
 		}
 		o.setTile(t)
 		out = append(out, t)
+	}
+	if rev != nil {
+		out = o.keepTiles(out, rev.Tiles, result.Kept)
 	}
 	// The section's drops free their places before its proposal claims one.
 	o.claimProposal(&result)
 	o.setSection(s.ID, func(sec *reviewv2.Section) {
 		sec.Body, sec.Risks, sec.Details = result.Body, result.Risks, ""
 	})
-	o.record(LevelSections, s.ID, StatusRan, "")
+	why := ""
+	switch {
+	case result.Kept:
+		why = ReasonKept
+	case rev != nil:
+		why = ReasonRevised
+	}
+	o.record(LevelSections, s.ID, StatusRan, why)
 	if extra := result.Propose; extra != nil {
 		o.budget.expect(2, 1)
 		out = append(out, *extra)
 	}
 	o.publish()
 	return out
+}
+
+// keepTiles keeps, of a revised section's tiles to fill (tiles, with the
+// briefs its agent answered), each that its previous section drew
+// (previous, its ready tiles) under the same ID and type, citing hunks the
+// pull request still has and the same hunks the brief cites now, with the
+// same brief: the previous tile stands without a call. A native tile is
+// drawn beside its section's text, so it is kept only when that text was
+// kept (textKept). A code tile follows its own rule. It returns the tiles
+// still to fill.
+func (o *orchestration) keepTiles(tiles, previous []reviewv2.Tile, textKept bool) []reviewv2.Tile {
+	var out []reviewv2.Tile
+	for _, t := range tiles {
+		i := slices.IndexFunc(previous, func(p reviewv2.Tile) bool { return p.ID == t.ID })
+		kind, offered := o.registry.Get(t.Type)
+		native := offered && !kind.Dedicated && !kind.Host
+		if t.Type == TypeCode || i < 0 || native && !textKept || !o.unchangedTile(previous[i], t) {
+			out = append(out, t)
+			continue
+		}
+		kept := previous[i]
+		kept.Owner = t.Owner
+		o.setTile(kept)
+		o.record(LevelTiles, t.ID, StatusReused, "")
+		o.budget.expect(2, -1)
+	}
+	return out
+}
+
+// unchangedTile reports whether a previous tile still shows what a planned
+// one is to: the same type and brief, ready, every hunk it cited (at least
+// one) still in the pull request, and the same hunks as the brief cites.
+func (o *orchestration) unchangedTile(previous, t reviewv2.Tile) bool {
+	cited := hunkCites(previous.Cites)
+	return previous.Type == t.Type && previous.Shows == t.Shows && previous.State == reviewv2.TileReady && !previous.Added &&
+		sameSet(cited, hunkCites(t.Cites)) &&
+		len(cited) > 0 && !slices.ContainsFunc(cited, func(h string) bool { return !o.facts.refs.HasHunk(h) }) && o.sameDefinition(previous)
+}
+
+// sameSet reports whether two lists hold the same IDs, in any order.
+func sameSet(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
+}
+
+// sameDefinition reports whether a drawn tile's type is still offered with
+// the definition it was filled with. A native type is drawn by the page's
+// own code, which has no version to compare, so it always is; a dedicated
+// type compares its definition's digest (its encoded definition when either
+// has no digest).
+func (o *orchestration) sameDefinition(t reviewv2.Tile) bool {
+	kind, ok := o.registry.Get(t.Type)
+	if !ok {
+		return false
+	}
+	if !kind.Dedicated || kind.Entry == nil {
+		return true
+	}
+	var drawn struct {
+		Digest string `json:"digest"`
+	}
+	if json.Unmarshal(t.Definition, &drawn) != nil {
+		return false
+	}
+	if current := kind.Entry.Definition.Digest; drawn.Digest != "" && current != "" {
+		return drawn.Digest == current
+	}
+	var a, b bytes.Buffer
+	return json.Compact(&a, t.Definition) == nil && json.Compact(&b, kind.Entry.Encoded) == nil && bytes.Equal(a.Bytes(), b.Bytes())
 }
 
 // tileIDs are the IDs of every tile the map planned or a section proposed.
@@ -392,6 +542,7 @@ func (o *orchestration) claimProposal(result *sectionResult) {
 	}
 	o.tiles = append(o.tiles, *extra)
 	o.mu.Unlock()
+	o.setFocus(extra.ID, result.ProposeFocus)
 	if extra.ID == id {
 		return
 	}
@@ -450,28 +601,51 @@ func (o *orchestration) tileLevel(ctx context.Context, t reviewv2.Tile, owner st
 	o.publish()
 }
 
-// codeTile is a code tile: its first hunk cite, with the lines the section
-// chose, and its brief as its title. The host fills the text.
-func (o *orchestration) codeTile(t reviewv2.Tile) {
-	var hunk string
-	var lines []int
-	for _, raw := range t.Cites {
+// codeData is a code tile's data before the host fills it: its first hunk
+// cite, with the lines the section chose; false when it cites no hunk.
+func codeData(cites []reviewv2.Anchor) (reviewv2.CodeData, bool) {
+	for _, raw := range cites {
 		var a anchor
-		if json.Unmarshal(raw, &a) == nil && a.Type == "hunk" {
-			hunk, lines = a.ID, a.Lines
-			break
+		if json.Unmarshal(raw, &a) == nil && a.Type == "hunk" && a.ID != "" {
+			data := reviewv2.CodeData{Hunk: a.ID}
+			if len(a.Lines) == 2 {
+				data.Lines = a.Lines
+			}
+			return data, true
 		}
 	}
-	if hunk == "" {
+	return reviewv2.CodeData{}, false
+}
+
+// setFocus keeps the lines a section highlights in a code tile until
+// codeTile writes its data; the host keeps those within the excerpt. A
+// pending tile keeps no data, so a draft leaves it pending.
+func (o *orchestration) setFocus(tile string, focus []int) {
+	if len(focus) == 0 {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.focus == nil {
+		o.focus = map[string][]int{}
+	}
+	o.focus[tile] = focus
+}
+
+// codeTile is a code tile: its first hunk cite, with the lines the section
+// chose and the ones it highlights, and its brief as its title. The host
+// fills the text.
+func (o *orchestration) codeTile(t reviewv2.Tile) {
+	data, ok := codeData(t.Cites)
+	if !ok {
 		t.State = reviewv2.TileFailed
 		o.setTile(t)
 		o.record(LevelTiles, t.ID, StatusFailed, "a code tile needs a hunk")
 		return
 	}
-	data := reviewv2.CodeData{Hunk: hunk}
-	if len(lines) == 2 {
-		data.Lines = lines
-	}
+	o.mu.Lock()
+	data.Focus = o.focus[t.ID]
+	o.mu.Unlock()
 	t.Data, _ = json.Marshal(data)
 	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), reviewv2.MaxTileTitle)
 	t.State = reviewv2.TileReady
@@ -576,7 +750,9 @@ func (o *orchestration) dedicatedTile(ctx context.Context, t reviewv2.Tile, kind
 }
 
 // overviewLevel writes the overview by resuming the map's session, or in a
-// fresh call with the map in its input. A failed overview falls back.
+// fresh call with the map in its input. Either revises a previous
+// baum.review/2 version's overview, unless NoReuse. A failed overview falls
+// back.
 func (o *orchestration) overviewLevel(ctx context.Context) {
 	o.step("Writing the overview")
 	o.mu.Lock()
@@ -586,6 +762,11 @@ func (o *orchestration) overviewLevel(ctx context.Context) {
 	session := o.mapSession
 	o.mu.Unlock()
 	results := overviewInput(sections, tiles, o.run.Bundle)
+	if !o.run.NoReuse {
+		if prev := previousOverview(o.run.Previous); prev != "" {
+			results += "\n" + prev
+		}
+	}
 	o.budget.expect(3, 1)
 	var accepted overviewResult
 	check := func(reply []byte, lenient bool) string {

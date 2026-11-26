@@ -827,7 +827,7 @@ it.each([
     await click(node.querySelector("button.upnext-row"));
     await press("s");
     await click(
-      Array.from(node.querySelectorAll('[role="menuitem"]')).find((choice) =>
+      Array.from(document.querySelectorAll('.upnext-menu [role="menuitem"]')).find((choice) =>
         choice.textContent?.includes("Tomorrow morning"),
       ),
     );

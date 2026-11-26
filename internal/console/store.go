@@ -51,6 +51,8 @@ var addedColumns = [][2]string{
 	{"created_branch", "INTEGER NOT NULL DEFAULT 0"},
 	{"directory_note", "TEXT NOT NULL DEFAULT ''"},
 	{"resumed", "INTEGER NOT NULL DEFAULT 0"},
+	{"queued", "TEXT NOT NULL DEFAULT '[]'"},
+	{"archived", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // addColumns adds the columns a table created by an earlier baum lacks.
@@ -72,7 +74,7 @@ func addColumns(db *sql.DB) error {
 
 func (s *store) close() error { return s.db.Close() }
 
-const columns = `id, agent, model, mode, directory, repository, pull_request, branch, created_worktree, session_id, pages, title, created, updated, state, error, cost_usd, cost_partial, created_branch, directory_note, resumed`
+const columns = `id, agent, model, mode, directory, repository, pull_request, branch, created_worktree, session_id, pages, title, created, updated, state, error, cost_usd, cost_partial, created_branch, directory_note, resumed, queued, archived`
 
 // save writes the whole conversation, inserting it or replacing its row.
 func (s *store) save(c Conversation) error {
@@ -80,17 +82,29 @@ func (s *store) save(c Conversation) error {
 	if err != nil {
 		return err
 	}
+	list := c.Queued
+	if list == nil {
+		list = []Queued{}
+	}
+	queued, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
 	var cost sql.NullFloat64
 	if c.CostUSD != nil {
 		cost = sql.NullFloat64{Float64: *c.CostUSD, Valid: true}
 	}
-	_, err = s.db.Exec(`INSERT INTO console_conversations(`+columns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	var archived int64
+	if c.ArchivedAt != nil {
+		archived = c.ArchivedAt.UnixMilli()
+	}
+	_, err = s.db.Exec(`INSERT INTO console_conversations(`+columns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET agent=excluded.agent, model=excluded.model, mode=excluded.mode, directory=excluded.directory, repository=excluded.repository,
 pull_request=excluded.pull_request, branch=excluded.branch, created_worktree=excluded.created_worktree, session_id=excluded.session_id, pages=excluded.pages,
 title=excluded.title, created=excluded.created, updated=excluded.updated, state=excluded.state, error=excluded.error, cost_usd=excluded.cost_usd, cost_partial=excluded.cost_partial,
-created_branch=excluded.created_branch, directory_note=excluded.directory_note, resumed=excluded.resumed`,
+created_branch=excluded.created_branch, directory_note=excluded.directory_note, resumed=excluded.resumed, queued=excluded.queued, archived=excluded.archived`,
 		c.ID, c.Agent, c.Model, c.Mode, c.Directory, c.Repository, c.PullRequest, c.Branch, c.CreatedWorktree, c.Session, string(pages), c.Title,
-		c.CreatedAt.UnixMilli(), c.UpdatedAt.UnixMilli(), c.State, c.Error, cost, c.CostPartial, c.CreatedBranch, c.DirectoryNote, c.Resumed)
+		c.CreatedAt.UnixMilli(), c.UpdatedAt.UnixMilli(), c.State, c.Error, cost, c.CostPartial, c.CreatedBranch, c.DirectoryNote, c.Resumed, string(queued), archived)
 	return err
 }
 
@@ -98,11 +112,11 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scan(row scanner) (Conversation, error) {
 	var c Conversation
-	var pages string
-	var created, updated int64
+	var pages, queued string
+	var created, updated, archived int64
 	var cost sql.NullFloat64
 	if err := row.Scan(&c.ID, &c.Agent, &c.Model, &c.Mode, &c.Directory, &c.Repository, &c.PullRequest, &c.Branch, &c.CreatedWorktree, &c.Session,
-		&pages, &c.Title, &created, &updated, &c.State, &c.Error, &cost, &c.CostPartial, &c.CreatedBranch, &c.DirectoryNote, &c.Resumed); err != nil {
+		&pages, &c.Title, &created, &updated, &c.State, &c.Error, &cost, &c.CostPartial, &c.CreatedBranch, &c.DirectoryNote, &c.Resumed, &queued, &archived); err != nil {
 		return Conversation{}, err
 	}
 	// A page list that does not parse is shown as none rather than hiding
@@ -110,9 +124,16 @@ func scan(row scanner) (Conversation, error) {
 	if json.Unmarshal([]byte(pages), &c.Pages) != nil || c.Pages == nil {
 		c.Pages = []agentcontext.PageContext{}
 	}
+	if json.Unmarshal([]byte(queued), &c.Queued) != nil || c.Queued == nil {
+		c.Queued = []Queued{}
+	}
 	c.CreatedAt, c.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	if cost.Valid {
 		c.CostUSD = &cost.Float64
+	}
+	if archived != 0 {
+		at := time.UnixMilli(archived).UTC()
+		c.ArchivedAt = &at
 	}
 	return c, nil
 }
@@ -126,9 +147,10 @@ func (s *store) get(id string) (Conversation, error) {
 	return c, err
 }
 
-// list returns every conversation, the most recently updated first.
+// list returns every conversation not archived, the most recently updated
+// first.
 func (s *store) list() ([]Conversation, error) {
-	rows, err := s.db.Query(`SELECT ` + columns + ` FROM console_conversations ORDER BY updated DESC, id`)
+	rows, err := s.db.Query(`SELECT ` + columns + ` FROM console_conversations WHERE archived=0 ORDER BY updated DESC, id`)
 	if err != nil {
 		return nil, err
 	}

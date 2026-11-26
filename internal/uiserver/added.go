@@ -157,27 +157,43 @@ func (a LocalAPI) latestShown(ctx context.Context, c repos.Clone, number int) (s
 }
 
 // section is where a tile added to the shown version goes: the section
-// asked for when the review has it (or context), else the one whose hunks
-// the data cites most, else context. Data that cites nothing yet (a tile
-// being filled) with no section asked keeps none: the page places it by
-// what its fill cites. A tile asked for stands for the section it is on.
+// asked for when the review has it (or the overview, or context), else the
+// one whose hunks the data cites most, else the overview. Data that cites
+// nothing yet (a tile being filled) with no section asked keeps none: the
+// page places it by what its fill cites. A tile asked for stands for the
+// section it is on.
 func (s shownVersion) section(asked string, data json.RawMessage) string {
-	if owner, ok := s.owners[asked]; ok {
-		asked = owner
-		if owner == reviewv2.OwnerOverview {
-			asked = ""
-		}
-	}
 	var hunks []string
 	for _, c := range library.Citations(data) {
 		if c.Type == "hunk" {
 			hunks = append(hunks, c.ID)
 		}
 	}
+	return s.place(asked, hunks)
+}
+
+// place is where a tile asked for on asked (a section, the overview,
+// context, a tile, or nothing) and citing hunks goes on the shown version,
+// as section says; with neither, none.
+func (s shownVersion) place(asked string, hunks []string) string {
+	if owner, ok := s.owners[asked]; ok {
+		asked = owner
+	}
 	if asked == "" && len(hunks) == 0 {
 		return ""
 	}
-	return reviewv2.OwnerFor(s.Review, asked, hunks)
+	return s.placeable(reviewv2.OwnerFor(s.Review, asked, hunks))
+}
+
+// placeable is a place on the shown version: the Overview takes added tiles
+// on a baum.review/2 version only. A baum.review/1 version keeps the
+// viewer's own pages, so there a tile for the Overview keeps no section and
+// is placed when served (by its hunks, else on Where this fits).
+func (s shownVersion) placeable(place string) string {
+	if place == reviewv2.OwnerOverview && s.owners == nil {
+		return ""
+	}
+	return place
 }
 
 // AddTile is an add_tile request: the library or native type, the section

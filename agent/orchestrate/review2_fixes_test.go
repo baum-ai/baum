@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/reviewv2"
 )
 
@@ -74,5 +76,30 @@ func TestToolsSectionNoRunTrees(t *testing.T) {
 		if s := toolsSection(mcp); strings.Contains(s, "head/") || strings.Contains(s, "merge-base") {
 			t.Errorf("mcp=%v: %s", mcp, s)
 		}
+	}
+}
+
+func TestClaimProposalKeepsCodeFocus(t *testing.T) {
+	o := &orchestration{tiles: []reviewv2.Tile{{ID: "tl_code"}}}
+	r := sectionResult{Propose: &reviewv2.Tile{ID: "tl_code", Type: TypeCode}, ProposeFocus: []int{4}}
+	o.claimProposal(&r)
+	if r.Propose.ID != "tl_code_2" || !slices.Equal(o.focus["tl_code_2"], []int{4}) || o.focus["tl_code"] != nil {
+		t.Fatalf("proposal %s, focus %v, data %s", r.Propose.ID, o.focus, o.tiles[1].Data)
+	}
+}
+
+func TestOverviewKeepsClipsInVideos(t *testing.T) {
+	b := testBundle()
+	b.Attachments = []bundle.Attachment{{ID: "att_img", ContentType: "image/png"}, {ID: "att_clip", ContentType: "video/mp4"}}
+	reply := strings.Replace(overviewReplyJSON, `"screenshots":["nope"],"videos":[]`, `"screenshots":["att_img","att_clip"],"videos":["att_clip","att_img","nope"]`, 1)
+	out, problem := checkOverview([]byte(reply), newFacts(b, nil), []reviewv2.Section{{ID: "sec_api"}}, nil, false)
+	if problem != "" {
+		t.Fatal(problem)
+	}
+	if got := out.Overview.Screenshots; len(got) != 1 || got[0] != "att_img" {
+		t.Errorf("screenshots = %v, want the image only", got)
+	}
+	if got := out.Overview.Videos; len(got) != 1 || got[0] != "att_clip" {
+		t.Errorf("videos = %v, want the clip only", got)
 	}
 }

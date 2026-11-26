@@ -208,10 +208,16 @@ type ContentItem struct {
 }
 
 type Message struct {
-	ID      string          `json:"id,omitempty"`
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
-	Phase   *string         `json:"phase,omitempty"`
+	ID               string                   `json:"id,omitempty"`
+	Role             string                   `json:"role"`
+	Content          json.RawMessage          `json:"content"`
+	Phase            *string                  `json:"phase,omitempty"`
+	InternalMetadata *InternalMessageMetadata `json:"internal_chat_message_metadata_passthrough,omitempty"`
+}
+
+type InternalMessageMetadata struct {
+	TurnID           string   `json:"turn_id"`
+	ContentItemKinds []string `json:"content_item_kinds"`
 }
 
 func (m *Message) Items() ([]ContentItem, error) {

@@ -8,13 +8,16 @@ as `checkpoint_sessions`, separately from `links`. Membership survives missing
 transcripts, but does not add linked session cards, transcript access, review
 context or feature attribution.
 
-Links require independent evidence: a successful recorded commit creation
-(`commit_ref`) or timed edit overlap (`files_overlap`). Creation does not prove
-that the session authored all committed edits. The starting-parent shortcut is
-disabled locally because concurrent sessions commonly share it. Exact edit-score
-ties remain unresolved. Contributors outside a checkpoint remain eligible, and
-checkpoint membership never breaks a tie. The hosted resolver retains its own
-policy; this package does not change it.
+A link requires a recorded creation of the commit (`commit_ref`): a Git hook
+observation, a reflog entry or a transcript, described below. Every session
+with one links. Creation does not prove that the session authored all
+committed edits. Editing the commit's files is not evidence: it linked
+colleagues' commits to sessions here that edited the same files, so a session
+that only edited stays unlinked. Sharing the starting parent is not evidence
+either, because concurrent sessions commonly share it. Sessions outside a
+checkpoint can link just as its own do. The hosted resolver keeps its own
+policy, edit overlap included; this package does not change it. The feature
+log drops the edit-overlap links earlier versions stored when it opens.
 
 The daemon durably records session-owned Git hooks in the application database
 (`commitattribution`, bucket `attribution/commits`). The shared resolver reads
@@ -24,6 +27,14 @@ over transcript guesses about commit creation. Their provenance includes agent,
 session, hook event and observation time. A missing transcript keeps the link
 and metadata-only review context; it does not invent conversation or usage.
 Push observations are retained separately and never establish creation.
+
+baum's own fixes commit for their agent, so no hook sees the agent make the
+commit. A fix records the same observation itself once it pushed, naming its
+agent's session (event `fix:<id>`). The agent ran in a checkout of its own,
+gone once the fix ended, inside the clone's directory of fixes
+(`fixdir.ForClone`). Discovery reads that directory as well (`WithFixes`,
+`sessions.Options.CheckoutParents`), so the fix session is found with its
+transcript, and its touched paths resolve against its checkout.
 
 Git reflogs supply creation evidence too, for commits, amends, cherry-picks,
 reverts, applied patches and rebase picks (`pull --rebase` included). A reflog
@@ -127,10 +138,11 @@ creation evidence when the tool succeeded and its output has no explicit
 commit-failure diagnostic. The command parser excludes quoted commands,
 heredoc text, background/negated commands and intervening checkout commands.
 
-Local matching still uses path overlap rather than content equivalence. A
-matched path set does not establish that every contributor was discovered.
-Checkpoint IDs provide the narrower pool for later evidence inspection or
-adjudication without asserting those candidates as contributors.
+A commit no session recorded creating has no links, even when sessions here
+edited its files: one made outside an agent, on another machine, or by a fix
+whose agent reported no session. Checkpoint IDs provide the narrower
+pool for later evidence inspection or adjudication without asserting those
+candidates as contributors.
 
 `BuildSessionEvidence` maps only the sessions that changed since the process
 last read them. It keeps a digest per session: what linking reads from the

@@ -494,6 +494,10 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** Folds the side pane to its strip while true, whatever the reader chose,
    *  for a host that shares the width with a pane of its own. */
   foldSidePane?: boolean;
+  /** The key that folds and opens the side pane: `]` unless the host keeps
+   *  that key for something of its own (the desktop app's section code),
+   *  which then takes Control+]. */
+  sidePaneKey?: "]" | "Control+]";
   /** Asks the host to write again the details of a section of the current
    *  version whose details failed; the section then offers a Retry. */
   onRetryDetails?: (sectionId: string) => void | Promise<unknown>;
@@ -701,6 +705,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   onVersionsShown,
   steps: stepsRef,
   foldSidePane = false,
+  sidePaneKey = "]",
   onRetryDetails,
   contextPending = false,
   openSource,
@@ -844,12 +849,15 @@ function ReviewWorkspace<F extends ReviewFile>({
   const collapseRail = useRef<HTMLButtonElement>(null);
   const paneChoice = useRef({ chosenCollapsed: asideCollapsed, foldSidePane, sheet });
   paneChoice.current = { chosenCollapsed: asideCollapsed, foldSidePane, sheet };
+  const sidePaneLabel = sidePaneKey === "Control+]" ? "Ctrl+]" : "]";
   useEffect(() => {
+    const control = sidePaneKey === "Control+]";
     const toggle = (event: KeyboardEvent) => {
       if (
-        event.key !== "]" ||
+        // With Control held some layouts report no "]": its place says it.
+        (event.key !== "]" && !(control && event.code === "BracketRight")) ||
         event.defaultPrevented ||
-        event.ctrlKey ||
+        event.ctrlKey !== control ||
         event.metaKey ||
         event.altKey ||
         event.shiftKey ||
@@ -874,7 +882,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     };
     window.document.addEventListener("keydown", toggle);
     return () => window.document.removeEventListener("keydown", toggle);
-  }, [chooseAside, workspace]);
+  }, [chooseAside, workspace, sidePaneKey]);
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
@@ -1214,6 +1222,39 @@ function ReviewWorkspace<F extends ReviewFile>({
     railFocus.current = null;
     (target === "expand" ? expandRail : collapseRail).current?.focus();
   }, [railFolded]);
+  // [ folds or unfolds the rail once wide, as ] does the side pane, leaving
+  // the keys where they are; where the panes stack it opens or closes the
+  // rail's sheet.
+  const railFoldKey = useRef<() => boolean>(() => false);
+  railFoldKey.current = () => {
+    if (!isWide(workspace.current)) setSheet((current) => (current === "rail" ? null : "rail"));
+    else if (places) setRailChoice({ answer: hostFolds, folded: !railFolded });
+    // Without places the rail never folds, so the key is left alone.
+    else return false;
+    return true;
+  };
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (
+        event.key !== "[" ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.isComposing ||
+        window.document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('input, textarea, select, [contenteditable], [role="textbox"]')
+      )
+        return;
+      if (railFoldKey.current()) event.preventDefault();
+    };
+    window.document.addEventListener("keydown", toggle);
+    return () => window.document.removeEventListener("keydown", toggle);
+  }, []);
   /** The Summary's "view all" links: each opens the pane the rail row of the
    *  same name would; Team unfolds the side pane and puts the cursor in its
    *  text box. */
@@ -1818,8 +1859,8 @@ function ReviewWorkspace<F extends ReviewFile>({
       <span className="box-content hidden h-9 flex-none items-center border-b border-subtle pr-1 wide:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
-          title="Collapse side pane (])"
-          aria-keyshortcuts="]"
+          title={`Collapse side pane (${sidePaneLabel})`}
+          aria-keyshortcuts={sidePaneKey}
           onClick={() => chooseAside(true)}
         >
           <ChevronRightIcon />
@@ -2020,7 +2061,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                     <IconButton
                       ref={expandRail}
                       label="Expand sections"
-                      title="Expand sections"
+                      title="Expand sections ([)"
+                      aria-keyshortcuts="["
                       aria-expanded={false}
                       aria-controls="review-rail"
                       className="hidden h-9 w-9 text-secondary wide:flex"
@@ -2042,7 +2084,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                         <IconButton
                           ref={collapseRail}
                           label="Collapse sections"
-                          title="Collapse sections"
+                          title="Collapse sections ([)"
+                          aria-keyshortcuts="["
                           aria-expanded
                           aria-controls="review-rail"
                           className="h-8 w-8 text-secondary"
@@ -2547,8 +2590,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                   >
                     <IconButton
                       label={conversation ? "Expand conversation" : "Expand side pane"}
-                      title="Expand side pane (])"
-                      aria-keyshortcuts="]"
+                      title={`Expand side pane (${sidePaneLabel})`}
+                      aria-keyshortcuts={sidePaneKey}
                       className="h-9 w-9 text-secondary"
                       onClick={() => chooseAside(false)}
                     >

@@ -6,11 +6,23 @@ import { type Column, Table } from "@baum/viewer/components/table";
 import { type Lang, languageForFence, languageForPath } from "@baum/viewer/highlight";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
+import { CodeExcerpt } from "./code-excerpt";
 
 export type ProseData = { text: string; anchors: Anchor[] };
 export type TableData = { columns: string[]; rows: string[][]; source: Anchor[] };
 export type DiagramData = { format: string; content: string; source: Anchor[] };
-export type CodeData = { language: string; content: string; caption?: string; source: Anchor[] };
+/** A code excerpt. A baum.review/2 code tile also names its hunk, the
+ *  lines of its new side the excerpt shows and those it highlights, and is
+ *  drawn as that hunk's diff. */
+export type CodeData = {
+  language: string;
+  content: string;
+  caption?: string;
+  source: Anchor[];
+  hunk?: string;
+  lines?: [number, number];
+  focus?: number[];
+};
 
 /** The generic tiles a composer writes for a point no other tile fits:
  *  prose, a table, a diagram's source and a code excerpt. */
@@ -24,6 +36,9 @@ const strings = (value: unknown) =>
 const PROSE_ELEMENTS = ["p", "strong", "em", "code", "ul", "ol", "li", "br", "a"];
 const PROSE_COMPONENTS: Components = {
   a: ({ children }) => <>{children}</>,
+  // Preflight takes lists' markers away; a prose tile's lists keep theirs.
+  ul: ({ node: _node, ...props }) => <ul {...props} className="list-disc space-y-1 pl-5" />,
+  ol: ({ node: _node, ...props }) => <ol {...props} className="list-decimal space-y-1 pl-5" />,
   code: ({ children }) => (
     <code className="rounded-xs bg-code-fill px-1 py-px font-mono text-base text-primary">
       {children}
@@ -46,11 +61,18 @@ export function ProseText({ text }: { text: string }) {
   );
 }
 
+/** A prose tile is an exhibit, not more of its section's text: it stands on
+ *  a faint wash behind a rule, in a card or bare in a section's body. */
 function ProseDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as ProseData;
   return (
     <div className="space-y-3">
-      <ProseText text={data.text} />
+      <div
+        data-prose-callout=""
+        className="max-w-[90ch] rounded-r-md border-l-2 border-strong bg-surface-wash px-4 py-3"
+      >
+        <ProseText text={data.text} />
+      </div>
       <AnchorChips document={ctx.review} anchors={data.anchors} />
     </div>
   );
@@ -119,13 +141,28 @@ function CodeDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as CodeData;
   // The caption is the tile's headline, which the detail's heading shows.
   const caption = data.caption && bare(data.caption) !== bare(tile.headline) ? data.caption : "";
+  const hunk = data.hunk ? ctx.review.index.hunks.find((each) => each.id === data.hunk) : undefined;
+  // The excerpt's header names and opens its hunk; the chips say the rest.
+  const anchors = hunk
+    ? (data.source ?? []).filter((anchor) => !(anchor.type === "hunk" && anchor.id === hunk.id))
+    : data.source;
   return (
     <div className="space-y-2">
-      <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
-        <HighlightedCode code={data.content} lang={codeLanguage(data, ctx.review)} />
-      </pre>
+      {hunk ? (
+        <CodeExcerpt
+          review={ctx.review}
+          hunk={hunk}
+          text={data.content}
+          lines={data.lines}
+          focus={data.focus ?? []}
+        />
+      ) : (
+        <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
+          <HighlightedCode code={data.content} lang={codeLanguage(data, ctx.review)} />
+        </pre>
+      )}
       {caption ? <p className="text-base text-tertiary">{caption}</p> : null}
-      <AnchorChips document={ctx.review} anchors={data.source} />
+      <AnchorChips document={ctx.review} anchors={anchors} />
     </div>
   );
 }

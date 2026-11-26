@@ -18,7 +18,7 @@
       "review_md": null,
       "review_md_changed": false,
       "truncated": [],
-      "schema_revision": "2026-11-17.1",
+      "schema_revision": "2026-11-24.2",
       "prompt_version": "v2-fixture"
     },
     "sources": {
@@ -171,6 +171,7 @@
         },
         {
           "type": "note",
+          "kind": "unchanged",
           "text": "Deliveries already queued keep the wait they had."
         }
       ],
@@ -248,6 +249,7 @@
           "items": [
             {
               "text": "**Retryable errors wait.** A retryable error schedules the delivery again under the policy.",
+              "tone": "new",
               "cites": [
                 {
                   "type": "hunk",
@@ -261,6 +263,7 @@
             },
             {
               "text": "**Other errors return.** Any other error is returned to the caller at once.",
+              "tone": "muted",
               "cites": [
                 {
                   "type": "hunk",

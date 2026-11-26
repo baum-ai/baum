@@ -14,13 +14,19 @@ import {
   resetSessionPanel,
   sessionPanel,
   SessionPanelButton,
-  SessionPanelHost,
+  SessionPanelHost as PanelHost,
   shown,
+  useConversations,
   useSessionPanel,
 } from "./session-panel";
 import { PreferencesProvider } from "./preferences";
-import { SessionPanelSection } from "./settings";
+import { PanelPositionSetting, SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
+
+/** The host as the app mounts it, with the conversations it reads. */
+function SessionPanelHost(props: Omit<Parameters<typeof PanelHost>[0], "conversations">) {
+  return <PanelHost {...props} conversations={useConversations()} />;
+}
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({ ReviewViewer: () => null }));
 // The transcript is the viewer's; here it shows each prompt and its replies.
@@ -187,7 +193,24 @@ beforeEach(() => {
                 message: "Its file is not on this computer any more.",
               },
         );
-      if (path === "api/console/conversations/c1/messages") {
+      if (path === "api/console/conversations/c1/messages" && conversation?.state === "running") {
+        const queued = [...(conversation.queued ?? [])];
+        queued.push({ id: `q${queued.length + 1}`, text: call.body.text, queued_at: "" });
+        conversation = { ...conversation, queued };
+        return Response.json(conversation, { status: 202 });
+      }
+      if (path.startsWith("api/console/conversations/c1/queued/") && call.method === "DELETE") {
+        const gone = path.split("/").pop();
+        conversation = {
+          ...conversation!,
+          queued: (conversation!.queued ?? []).filter((q) => q.id !== gone),
+        };
+        return Response.json(conversation);
+      }
+      if (
+        path === "api/console/conversations/c1/messages" ||
+        path === "api/console/conversations/c1/queued/send"
+      ) {
         conversation = made({
           state: "running",
           title: "Why?",
@@ -196,7 +219,11 @@ beforeEach(() => {
         return Response.json(conversation, { status: 202 });
       }
       if (path === "api/console/conversations/c1/cancel") {
-        conversation = made({ state: "idle", error: "Stopped before the agent finished." });
+        conversation = made({
+          state: "idle",
+          error: "Stopped before the agent finished.",
+          queued: conversation?.queued ?? [],
+        });
         return Response.json(conversation);
       }
       if (path === "api/console/conversations/c1/close") {
@@ -471,21 +498,53 @@ it("starts a session from the page, showing the prompt at once, and stops it", a
   ]);
   expect(posts()[0]!.body).toEqual({ mode: "workspace", page: pr });
   expect(posts()[1]!.body).toEqual({ text: "Why is the delay capped?", page: pr });
-  // While it runs: the tool, Working, and Stop instead of Send.
+  // While it runs: the tool, Working, and Queue and Stop instead of Send.
   await until(() => expect(panel()!.textContent).toContain("Read docs/guide.md"));
   expect(panel()!.textContent).toContain("Working");
   expect(panel()!.textContent).toContain("Why is the delay capped?");
-  // Enter while it runs keeps what is typed and says why.
+  expect(button("Send")).toBeUndefined();
+  // Enter while it runs queues the message for when the turn ends.
   await type(composer(), "And the jitter?");
   await key(composer(), "Enter");
-  expect(composer().value).toBe("And the jitter?");
-  expect(panel()!.textContent).toContain("wait for the turn to finish, or Stop it");
-  expect(posts()).toHaveLength(2);
+  await until(() => expect(posts()).toHaveLength(3));
+  expect(posts()[2]!.body).toEqual({ text: "And the jitter?", page: pr });
+  expect(composer().value).toBe("");
+  const queuedList = () => panel()!.querySelector('[aria-label="Queued messages"]');
+  await until(() => expect(queuedList()!.textContent).toContain("And the jitter?"));
+  expect(queuedList()!.textContent).toContain("Queued for when the agent finishes1");
+  await type(composer(), "And the cap?");
+  await act(async () => button("Queue")!.click());
+  await until(() => expect(queuedList()!.querySelectorAll("li")).toHaveLength(2));
+  // One is removed.
+  await act(async () => button("Remove queued message: And the cap?")!.click());
+  await until(() => expect(queuedList()!.querySelectorAll("li")).toHaveLength(1));
+  expect(
+    calls.some((c) => c.method === "DELETE" && c.path === "api/console/conversations/c1/queued/q2"),
+  ).toBe(true);
+  // Stopped, the turn leaves the queue to be sent now.
   const stop = button("Stop")!;
   await act(async () => stop.click());
   await until(() => expect(button("Send")).toBeDefined());
   expect(calls.some((c) => c.path === "api/console/conversations/c1/cancel")).toBe(true);
   expect(panel()!.textContent).toContain("Stopped before the agent finished.");
+  expect(queuedList()!.textContent).toContain("Queued, not sent yet1");
+  // Refused, Send now leaves no prompt behind, only why.
+  answer = (call) =>
+    call.path === "api/console/conversations/c1/queued/send"
+      ? Response.json({ code: "busy", message: "busy" }, { status: 409 })
+      : undefined;
+  await act(async () => button("Send now")!.click());
+  await until(() =>
+    expect(panel()!.textContent).toContain("The agent is still answering the last message."),
+  );
+  expect(panel()!.querySelector(".session-panel-prompt")?.textContent ?? "").not.toContain(
+    "And the jitter?",
+  );
+  expect(queuedList()).not.toBeNull();
+  answer = () => undefined;
+  await act(async () => button("Send now")!.click());
+  await until(() => expect(queuedList()).toBeNull());
+  expect(calls.some((c) => c.path === "api/console/conversations/c1/queued/send")).toBe(true);
 });
 
 it("sends the first message with the page open once the session has started", async () => {
@@ -615,6 +674,60 @@ it("asks before closing a session while its agent works", async () => {
   expect(calls.some((c) => c.path.endsWith("/close"))).toBe(false);
   await act(async () => button("Close session")!.click());
   await until(() => expect(calls.some((c) => c.path.endsWith("/close"))).toBe(true));
+});
+
+it("archives a session from a right click in the picker, asking before it loses work", async () => {
+  conversation = made({ title: "Done with it" });
+  sessionPanel.select("c1");
+  const discarding = (call: Call) =>
+    (call.body as { discard?: boolean } | undefined)?.discard === true;
+  answer = (call) => {
+    if (call.path !== "api/console/conversations/c1/archive") return undefined;
+    if (!discarding(call))
+      return Response.json(
+        {
+          code: "unclean_directory",
+          message: "Archiving removes this session's worktree.",
+          unclean: {
+            changed: 7,
+            paths: ["a.txt", "b.txt"],
+            branch: "baum/pr-7",
+            unpushed: 1,
+            worktree: true,
+          },
+        },
+        { status: 409 },
+      );
+    conversation = null;
+    return Response.json(made({ state: "closed", archived_at: new Date().toISOString() }));
+  };
+  await host(pr);
+  await act(async () => sessionPanel.show());
+  await until(() => expect(panel()!.textContent).toContain("Done with it"));
+  await act(async () => button("Sessions")!.click());
+  const choice = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((b) =>
+      b.textContent?.startsWith(label),
+    );
+  // The keyboard's menu key on the session opens what can be done with it.
+  await act(async () => {
+    choice("Done with it")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+  });
+  expect(choice("Close session")).toBeDefined();
+  // The list of sessions stays open under its actions.
+  expect(choice("New session")).toBeDefined();
+  await act(async () => choice("Archive session")!.click());
+  await until(() => expect(document.querySelector("dialog[open]")).not.toBeNull());
+  expect(document.querySelector("dialog[open]")!.textContent).toContain(
+    "which holds 7 uncommitted changes and 1 commit on baum/pr-7 that no remote has. a.txt, b.txt and 5 more.",
+  );
+  await act(async () => button("Discard and archive")!.click());
+  await until(() =>
+    expect(calls.some((c) => c.path.endsWith("/archive") && discarding(c))).toBe(true),
+  );
+  await until(() => expect(panel()!.textContent).not.toContain("Done with it"));
 });
 
 const operation = (over: Partial<Proposal> = {}): Proposal => ({
@@ -775,7 +888,7 @@ it("shows a prompt's change as its lines, saying when it replaces the default", 
   const prompt = (before: unknown, after: unknown): Proposal => ({
     id: "p3",
     kind: "diff",
-    page: "settings",
+    page: "app",
     target: "prompt/review",
     before,
     after,
@@ -804,6 +917,70 @@ it("shows a prompt's change as its lines, saying when it replaces the default", 
   expect(shown({ name: "API_URL", remove: true })).toBe("name: API_URL\nremove: true");
   expect(shown({ name: "Inbox", query: "a\nb" })).toBe("name: Inbox\nquery:\na\nb");
   expect(shown({ list: [1, 2] })).toBe('{\n  "list": [\n    1,\n    2\n  ]\n}');
+});
+
+it("saves a repository's prompt proposed while reading a review from any page", async () => {
+  const diff: Proposal = {
+    id: "p4",
+    kind: "diff",
+    page: "app",
+    target: "acme/demo:prompt/review",
+    before: { text: null, inherited_text: "Review the change.\nList the risks." },
+    after: { text: "Review the change.\nList the risks.\nCheck the migrations." },
+    revision: "v1",
+    context: { page: "pull_request", repository: "acme/demo", pull_request: 7 },
+  };
+  answer = (call) => (call.path.endsWith("/save") ? Response.json({}) : undefined);
+  const { changed } = await card(diff, { page: "inbox" });
+  expect(node.querySelector(".session-panel-proposal-where")!.textContent).toBe(
+    "acme/demo's prompt · review",
+  );
+  expect(node.textContent).toContain(
+    "Gives acme/demo its own prompt in place of the text it inherits.",
+  );
+  // Shown against the text that runs now, not as a whole new text.
+  const added = [...node.querySelectorAll('.prompt-diff span[data-kind="add"]')].map((l) =>
+    l.textContent?.trim(),
+  );
+  expect(added).toEqual(["+ Check the migrations."]);
+  expect(node.textContent).not.toContain("open it to save");
+  await act(async () => button("Save")!.click());
+  await until(() => expect(changed).toHaveBeenCalled());
+  expect(calls.some((c) => c.path.endsWith("/proposals/p4/save"))).toBe(true);
+  // A reset goes back to the inherited text.
+  await card(
+    {
+      ...diff,
+      target: "prompt/review",
+      before: { text: "Mine", inherited_text: "Built in" },
+      after: { text: null },
+    },
+    { page: "inbox" },
+  );
+  expect(node.querySelector(".session-panel-proposal-where")!.textContent).toBe(
+    "Global prompt · review",
+  );
+  expect(node.textContent).toContain("Resets the prompt to baum's default.");
+  expect(node.querySelector('.prompt-diff span[data-kind="add"]')!.textContent).toContain(
+    "Built in",
+  );
+  // A long prompt's unchanged lines fold around the change, until asked for.
+  const long = Array.from({ length: 40 }, (_, i) => `Line ${i + 1}`);
+  await card(
+    {
+      ...diff,
+      before: { text: null, inherited_text: long.join("\n") },
+      after: { text: [...long.slice(0, 20), "New line", ...long.slice(20)].join("\n") },
+    },
+    { page: "inbox" },
+  );
+  const spans = () => [...node.querySelectorAll(".prompt-diff span")].map((s) => s.textContent);
+  expect(spans().filter((s) => s?.startsWith("  Line"))).toHaveLength(6);
+  const folds = [...node.querySelectorAll<HTMLButtonElement>(".prompt-diff-fold")];
+  expect(folds.map((b) => b.textContent)).toEqual(["17 unchanged lines", "17 unchanged lines"]);
+  await act(async () => folds[0]!.click());
+  expect(node.querySelector(".prompt-diff-fold")).toBeNull();
+  expect(spans()).toHaveLength(41);
 });
 
 it("points a proposal made on another page to it before anything is pressed", async () => {
@@ -838,12 +1015,27 @@ it("saves the session panel's setting as it changes", async () => {
     agent: "codex",
     model: "gpt-6-luna",
     mode: "auto",
-    position: "bottom",
   });
-  await act(async () => button("Top")!.click());
-  await until(() => expect(puts().at(-1)!.body).toMatchObject({ position: "top" }));
+  // The edge it opens from is under General, not here.
+  expect(button("Top")).toBeFalsy();
   await act(async () => button("Workspace")!.click());
   await until(() => expect(puts().at(-1)!.body).toMatchObject({ mode: "workspace" }));
+});
+
+it("saves only the edge the session panel opens from, under General", async () => {
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <PanelPositionSetting />
+      </ToastProvider>,
+    ),
+  );
+  await until(() => expect(button("Top")).toBeTruthy());
+  expect(button("Bottom")!.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => button("Top")!.click());
+  const puts = () => calls.filter((c) => c.path === "api/settings/panel" && c.method === "PUT");
+  await until(() => expect(puts()).toHaveLength(1));
+  expect(puts().at(-1)!.body).toEqual({ position: "top" });
 });
 
 it("picks the pull request's own open conversation for an Ask, else a new one", () => {

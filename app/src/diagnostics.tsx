@@ -17,7 +17,6 @@ import {
 } from "./api";
 import { displayPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
-import { ReportProblemDialog } from "./report-problem";
 
 const statusText: Record<DiagnosticCheck["status"], string> = {
   ok: "OK",
@@ -173,13 +172,14 @@ export function diagnosticsMarkdown(report: DiagnosticReport, home?: string) {
  * fetches the price list; "Check again" re-inspects this computer. */
 export function DiagnosticsSection({
   onReport,
+  onProblem,
 }: {
   onReport?: (report: DiagnosticReport | null) => void;
-} = {}) {
+  onProblem: (parts: IssueParts | null, opener: HTMLButtonElement) => void;
+}) {
   const [report, setReport] = useState<DiagnosticReport | null | undefined>();
   const [home, setHome] = useState<string>();
   const [issueParts, setIssueParts] = useState<IssueParts | null>(null);
-  const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
   const [running, setRunning] = useState(true);
   const [copied, setCopied] = useState("");
@@ -234,9 +234,6 @@ export function DiagnosticsSection({
       <h2 id="diagnostics-heading" className="sr-only">
         Diagnostics
       </h2>
-      {reporting ? (
-        <ReportProblemDialog parts={issueParts} close={() => setReporting(false)} />
-      ) : null}
       {error ? (
         <Alert>
           {error}{" "}
@@ -287,7 +284,11 @@ export function DiagnosticsSection({
           >
             <span aria-live="polite">{copied || "Copy"}</span>
           </Button>
-          <Button variant="secondary" size="compact" onClick={() => setReporting(true)}>
+          <Button
+            variant="secondary"
+            size="compact"
+            onClick={(event) => onProblem(issueParts, event.currentTarget)}
+          >
             Report a problem
           </Button>
           <Button variant="secondary" size="compact" disabled={running} onClick={() => void run()}>

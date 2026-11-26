@@ -47,6 +47,12 @@
       "description": "A <baum-md> drawing a small Markdown subset as the review does: paragraphs and line breaks, **strong**, *emphasis*, ~~strikethrough~~, `code`, fenced code, lists, ### and #### headings, quotes and rules. Raw HTML stays text; a link is its words with the URL as a tooltip. inline draws one line of words with the block marks dropped."
     },
     {
+      "name": "baum.compare",
+      "kind": "function",
+      "signature": "baum.compare(was: string, now: string): { was: HTMLElement, now: HTMLElement, same: boolean }",
+      "description": "A before and an after compared word by word, as the review's columns compare them: was and now are spans of the text, the runs of words the other lacks in <del class=\"kit-del\"> and <ins class=\"kit-ins\">. Texts that share under half their words are left unmarked (rewritten, not edited). same is true only when the two are written the same, case and spacing included."
+    },
+    {
       "name": "baum.empty",
       "kind": "function",
       "signature": "baum.empty(text?: string): HTMLElement",
@@ -468,6 +474,18 @@
       "attributes": []
     },
     {
+      "name": "kit-ins",
+      "kind": "class",
+      "description": "Words an after adds, tinted (baum.compare makes them).",
+      "attributes": []
+    },
+    {
+      "name": "kit-del",
+      "kind": "class",
+      "description": "Words a before loses, tinted and struck (baum.compare makes them).",
+      "attributes": []
+    },
+    {
       "name": "kit-sep",
       "kind": "class",
       "description": "A middle dot between inline facts.",
@@ -477,6 +495,24 @@
       "name": "kit-badge",
       "kind": "class",
       "description": "A status pill. Status tones only for status, never for a category.",
+      "attributes": [
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "The status; neutral without one."
+        }
+      ]
+    },
+    {
+      "name": "kit-pill",
+      "kind": "class",
+      "description": "A solid pill marking what a change is, as the review's diagrams do: New (info), Changed (caution), Removed or Breaking (critical).",
       "attributes": [
         {
           "name": "data-tone",
@@ -589,6 +625,12 @@
       "name": "kit-details",
       "kind": "class",
       "description": "A details/summary disclosure styled as the review's.",
+      "attributes": []
+    },
+    {
+      "name": "kit-switch",
+      "kind": "class",
+      "description": "A switch: a <label> around an <input type=\"checkbox\" role=\"switch\"> and its words, drawn as the app's toggles. Listen for change with addEventListener.",
       "attributes": []
     },
     {

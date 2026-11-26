@@ -125,14 +125,14 @@ func sectionReplyJSON(tiles string) string {
 	if m := regexp.MustCompile(`"id":"(tl_[a-z_]+)"`).FindStringSubmatch(tiles); m != nil {
 		placed = m[1]
 	}
-	return `{"body":[
-  {"type":"prose","title":null,"text":"Failed jobs now retry with a growing wait. After the last attempt they move to a table of dead jobs.","items":null,"tile":null},
-  {"type":"points","title":"What changes","text":null,"items":[
-   {"text":"A failed handler schedules a **retry**.","more":null,"cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]},
-   {"text":"Each attempt waits **twice** as long as the last.","more":"The wait is capped, so it stops growing.","cites":[{"type":"hunk","id":"` + hunkB + `","lines":null}]}],"tile":null},
-  {"type":"tile","title":null,"text":null,"items":null,"tile":"` + placed + `"},
-  {"type":"note","title":null,"text":"Jobs already waiting keep their old schedule.","items":null,"tile":null},
-  {"type":"tile","title":null,"text":null,"items":null,"tile":"tl_nowhere"}],
+	return `{"keep":false,"body":[
+  {"type":"prose","title":null,"kind":null,"text":"Failed jobs now retry with a growing wait. After the last attempt they move to a table of dead jobs.","items":null,"tile":null},
+  {"type":"points","title":"What changes","kind":null,"text":null,"items":[
+   {"text":"A failed handler schedules a **retry**.","more":null,"tone":"new","cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]},
+   {"text":"Each attempt waits **twice** as long as the last.","more":"The wait is capped, so it stops growing.","tone":null,"cites":[{"type":"hunk","id":"` + hunkB + `","lines":null}]}],"tile":null},
+  {"type":"tile","title":null,"kind":null,"text":null,"items":null,"tile":"` + placed + `"},
+  {"type":"note","title":null,"kind":"unchanged","text":"Jobs already waiting keep their old schedule.","items":null,"tile":null},
+  {"type":"tile","title":null,"kind":null,"text":null,"items":null,"tile":"tl_nowhere"}],
  "risks":[{"id":"rsk_unbounded","tier":"medium","category":"correctness","text":"If the cap is zero the wait never grows, so jobs retry at once.","cites":[{"type":"hunk","id":"` + hunkA + `","lines":[12,14]}]}],
  "tiles":` + tiles + `,"propose":null}`
 }
@@ -147,13 +147,13 @@ const contextReplyJSON = `{"area":{"text":"The job queue runs background work.",
 
 const overviewReplyJSON = `{"summary":"Failed jobs now retry and land in a dead-letter table. A new endpoint requeues them.",
  "verdict":{"decision":"look_first","text":"Check who may requeue before merging.","points":[{"text":"The endpoint trusts a header any caller sets.","section":"sec_api"}]},
- "risk_why":"Every job goes through the new retry path.","screenshots":["nope"],"diagram":"tl_path","intent":[]}`
+ "risk_why":"Every job goes through the new retry path.","screenshots":["nope"],"videos":[],"diagram":"tl_path","intent":[]}`
 
 func fullFake() *fake {
 	f := newFake()
 	f.reply("map", mapReplyJSON)
 	f.reply("section-sec-retry", sectionReplyJSON(`[{"id":"tl_backoff","shows":"How long each attempt waits.","cites":[{"type":"hunk","id":"`+hunkA+`","lines":null}],"drop":false,"reason":null}]`))
-	f.reply("section-sec-api", sectionReplyJSON(`[{"id":"tl_check","shows":"The role check","cites":[{"type":"hunk","id":"`+hunkC+`","lines":[6,9]}],"drop":false,"reason":null}]`))
+	f.reply("section-sec-api", sectionReplyJSON(`[{"id":"tl_check","shows":"The role check","cites":[{"type":"hunk","id":"`+hunkC+`","lines":[6,9]}],"focus":[12,7],"drop":false,"reason":null}]`))
 	f.reply("context", contextReplyJSON)
 	f.reply("tile-tl-path", flowReply)
 	f.reply("tile-tl-backoff", tableReply)
@@ -212,6 +212,10 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 	if p := retry[1].Items[1]; p.Text != "Each attempt waits **twice** as long as the last." || p.More == "" || len(p.Cites) != 1 {
 		t.Errorf("point: %+v", p)
 	}
+	// A point's tone and a note's kind are kept.
+	if retry[1].Items[0].Tone != "new" || retry[1].Items[1].Tone != "" || retry[3].Kind != "unchanged" {
+		t.Errorf("tone and kind: %+v %+v", retry[1].Items, retry[3])
+	}
 	byID := map[string]reviewv2.Tile{}
 	for _, tile := range doc.Tiles {
 		byID[tile.ID] = tile
@@ -220,7 +224,7 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 		}
 	}
 	var code reviewv2.CodeData
-	if err := json.Unmarshal(byID["tl_check"].Data, &code); err != nil || code.Hunk != hunkC || !slices.Equal(code.Lines, []int{6, 9}) || byID["tl_check"].Title != "The role check" {
+	if err := json.Unmarshal(byID["tl_check"].Data, &code); err != nil || code.Hunk != hunkC || !slices.Equal(code.Lines, []int{6, 9}) || !slices.Equal(code.Focus, []int{7}) || byID["tl_check"].Title != "The role check" {
 		t.Errorf("code tile: %s %q", byID["tl_check"].Data, byID["tl_check"].Title)
 	}
 	if byID["tl_backoff"].Shows != "How long each attempt waits." {

@@ -7,7 +7,7 @@ import review2 from "../../schema/review-2.json" with { type: "json" };
 import { REVIEW_1303 } from "../src/review-view/fixture-1303";
 import { NATIVE } from "../src/review-view/native-tiles";
 import { Gallery, verdict } from "./gallery";
-import { SAMPLES } from "./samples";
+import { CODE_SAMPLES, SAMPLES } from "./samples";
 
 // ---------- the schemas' bounds ----------
 
@@ -159,7 +159,7 @@ function boundsProblems(sample: (typeof SAMPLES)[number]): string[] {
       if (lane.from !== undefined && (at === 0 || lane.from > (lanes[0]?.steps.length ?? 0)))
         out.push(`lane ${at} branches off a step that isn't there`);
   }
-  if (type === "table") {
+  if (type === "table" || (type === "columns" && "rows" in (data as object))) {
     const { columns, rows } = data as { columns: unknown[]; rows: unknown[][] };
     for (const [at, row] of rows.entries())
       if (row.length !== columns.length) out.push(`row ${at} isn't as long as the columns`);
@@ -283,7 +283,12 @@ describe("the gallery", () => {
     expect(unknown?.textContent).toContain("This version can't show this kind of tile.");
     const samples = page_.querySelector('[aria-label="Samples"]')!;
     expect(samples.querySelectorAll('[data-testid="gallery-reason"]').length).toBe(
-      SAMPLES.filter((sample) => sample.expect === "invalid").length,
+      [...SAMPLES, ...CODE_SAMPLES].filter((sample) => sample.expect === "invalid").length,
+    );
+    // A code tile as its hunk's diff, its lines that matter marked.
+    expect(page_.querySelectorAll('[data-tile="code_shutdown"] tr[data-focus]')).toHaveLength(2);
+    expect(page_.querySelector('[data-tile="code_unfilled"]')?.textContent).toContain(
+      "This tile's content couldn't be read.",
     );
     // The fixture's failed tile says so rather than judging its data.
     expect(page_.querySelector('[data-tile="dg_stop"]')?.textContent).toContain(
@@ -344,7 +349,7 @@ describe("the gallery", () => {
 
   it("draws a server's baum.review/2 document's native tiles as the page does", async () => {
     // #1303 with one flow on the overview and one on a section, a failed one
-    // and a code tile, which isn't native.
+    // and a code tile.
     const keep = new Set(["dg_shape", "dg_requests", "dg_stop"]);
     const document = {
       ...REVIEW_1303,
@@ -361,7 +366,7 @@ describe("the gallery", () => {
     });
     const page_ = await page("?source=store&theme=light");
     const entries = [...page_.querySelectorAll<HTMLElement>('[data-testid="gallery-entry"]')];
-    expect(entries.map((entry) => entry.dataset.type)).toEqual(["flow", "flow", "flow"]);
+    expect(entries.map((entry) => entry.dataset.type)).toEqual(["flow", "flow", "code", "flow"]);
     // The overview's in a card, a section's bare under its label.
     const overview = page_.querySelector<HTMLElement>('[data-tile="dg_shape"]')!;
     expect(overview.querySelector("h3")?.className).toContain("font-semibold");
@@ -441,7 +446,9 @@ describe("the gallery", () => {
   it("shows every type for one nothing has", async () => {
     stubServer({ version: "1", entries: [], documents: [], problems: [] });
     const page_ = await page("?type=foo&source=sample");
-    expect(page_.querySelectorAll('[data-testid="gallery-entry"]')).toHaveLength(SAMPLES.length);
+    expect(page_.querySelectorAll('[data-testid="gallery-entry"]')).toHaveLength(
+      SAMPLES.length + CODE_SAMPLES.length,
+    );
     expect(page_.querySelector<HTMLSelectElement>("select")?.value).toBe("");
   });
 

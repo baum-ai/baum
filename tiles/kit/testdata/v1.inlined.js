@@ -515,6 +515,62 @@ box.append(more);
 }
 return node;
 }
+function keptWords(a,b){
+const words = (pieces) => pieces.flatMap((piece, at) => (/^\s+$/.test(piece) ? [] : [at]));
+const[wa,wb]=[words(a),words(b)];
+const lengths=Array.from({length:wa.length+1},()=>new Array(wb.length+1).fill(0));
+for(let i=wa.length-1;i>=0;i--)
+for(let j=wb.length-1;j>=0;j--)
+lengths[i][j]=
+a[wa[i]]===b[wb[j]]
+?lengths[i+1][j+1]+1
+:Math.max(lengths[i+1][j],lengths[i][j+1]);
+const keptA=new Set();
+const keptB=new Set();
+for(let i=0,j=0;i<wa.length&&j<wb.length;){
+if(a[wa[i]]===b[wb[j]]){
+keptA.add(wa[i++]);
+keptB.add(wb[j++]);
+}else if(lengths[i+1][j]>=lengths[i][j+1])i++;
+else j++;
+}
+const common=keptA.size>0&&keptA.size*2>=Math.min(wa.length,wb.length);
+return{common,keptA,keptB};
+}
+function markedText(pieces,kept,marking,tag,className){
+const node=el("span");
+const marked=(at)=>
+marking && at >= 0 && at < pieces.length && !kept.has(at) && !/^\s+$/.test(pieces[at]);
+let run=null;
+for(const[at,text]of pieces.entries()){
+if(marked(at)||(marked(at-1)&&marked(at+1))){
+if(!run){
+run=el(tag,className);
+node.append(run);
+}
+run.append(text);
+}else{
+run=null;
+node.append(text);
+}
+}
+return node;
+}
+function compare(was,now){
+const before=str(was);
+const after=str(now);
+const split = (text) => text.match(/\s+|\S+/g) ?? [];
+const[a,b]=[split(before),split(after)];
+const{common,keptA,keptB}=
+a.length*b.length<=40000?keptWords(a,b):{common:false,keptA:new Set(),keptB:new Set()};
+const same=before===after;
+const marking=common&&!same&&before!==""&&after!=="";
+return{
+was:markedText(a,keptA,marking,"del","kit-del"),
+now:markedText(b,keptB,marking,"ins","kit-ins"),
+same,
+};
+}
 function empty(text){
 state.emptyUsed=true;
 const node=el("p","kit-empty",typeof text==="string"&&text?text:"Nothing to show.");
@@ -1103,6 +1159,7 @@ if(message.kind==="init")onInit(message);
 else if(message.kind==="update")onUpdate(message);
 else if(message.kind==="theme")onTheme(message);
 else if(message.kind==="measure"&&state.check&&readySent)post("resize",{height:contentHeight()});
+else if(message.kind==="ping")post("pong",{});
 });
 const TIMEOUT=Symbol("timeout");
 function frames(count){
@@ -1291,6 +1348,7 @@ html:Object.freeze(html),
 cite,
 diff,
 md,
+compare,
 empty,
 fail,
 refs:Object.freeze({

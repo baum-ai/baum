@@ -512,7 +512,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// token; the server is built after the executor, which reviewMCP
 		// learns once it is (Serve, below).
 		reviewMCP := &agentcontext.ReviewMCP{}
-		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary, ReviewMCP: reviewMCP.Attach}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary, ReviewMCP: reviewMCP.Attach,
+			Attributions: &commitattribution.Store{}}
 		// The tiles a person added that a version has no data for are
 		// filled beside the queue.
 		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Added: added, Log: log}

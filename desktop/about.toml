@@ -1,6 +1,9 @@
 # cargo-about configuration for the notices of the crates compiled into the
-# desktop app (scripts/third-party-notices.sh). Only crates that end up in the
-# release binaries count: not dev-dependencies, and not build scripts.
+# Tauri shell (src/). Releases ship the Electron app, whose notices
+# (scripts/third-party-notices.sh) have no Rust part, so nothing runs
+# cargo-about now; this file and about.hbs go with the Tauri crate. Only
+# crates that end up in the release binaries count: not dev-dependencies, and
+# not build scripts.
 accepted = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",

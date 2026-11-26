@@ -6,14 +6,15 @@ import (
 )
 
 // OwnerFor is the owner of a tile added to the document: asked when it is
-// context or one of the document's current sections, else the current section
-// whose hunks the covered hunks meet most, the first on a tie, else context.
-// A stale section, whose code is gone, is never chosen.
+// the overview, context or one of the document's current sections, else the
+// current section whose hunks the covered hunks meet most, the first on a
+// tie, else the overview. A stale section, whose code is gone, is never
+// chosen.
 func OwnerFor(d Document, asked string, covered []string) string {
-	if asked == OwnerContext {
+	if asked == OwnerOverview || asked == OwnerContext {
 		return asked
 	}
-	best, most := OwnerContext, 0
+	best, most := OwnerOverview, 0
 	for _, s := range d.Sections {
 		if isStale(s) {
 			continue

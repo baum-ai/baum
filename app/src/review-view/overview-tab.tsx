@@ -13,16 +13,20 @@ import {
   type Tone,
 } from "@baum/viewer/review-document";
 import { withSelection } from "@baum/viewer/review-selection";
+import { draftsOn } from "../tiles/drafts";
 import type { TileContext } from "../tiles/types";
 import {
   intentRows,
+  OVERVIEW_OWNER,
   riskSummary,
+  tilesOn,
   viewTile,
   type IntentRow,
   type ListedSection,
   type ReviewV2,
   type ViewPlace,
 } from "./model";
+import { SectionTiles } from "./sections-tab";
 import { ViewTileCard } from "./view-tile";
 
 const SCORE_INK: Record<Tone, string> = {
@@ -35,14 +39,17 @@ const SCORE_INK: Record<Tone, string> = {
 
 /** The Overview, always in the same order: the summary, the risk (with the
  *  verdict under it when something must happen before merging), what it
- *  looks like, the main diagram and what was asked. It reads the
- *  baum.review/2 `review`; `document` is what the viewer's parts read. */
+ *  looks like, the main diagram, the tiles the person added here (and the
+ *  pending cards of those being made in the session panel) and what was
+ *  asked. It reads the baum.review/2 `review`; `document` is what the
+ *  viewer's parts read. */
 export function OverviewTab({
   document,
   review,
   list,
   ctx,
   idPrefix,
+  historical,
   go,
 }: {
   document: ReviewDocument;
@@ -50,11 +57,22 @@ export function OverviewTab({
   list: ListedSection[];
   ctx: TileContext;
   idPrefix: string;
+  historical: boolean;
   go: (place: ViewPlace) => void;
 }) {
   const diagram = viewTile(review, review.overview.diagram);
+  const added = tilesOn(review, OVERVIEW_OWNER);
+  // Pending cards stand on the latest version only, as on the sections.
+  const drafts = historical
+    ? []
+    : draftsOn(
+        review.drafts ?? [],
+        OVERVIEW_OWNER,
+        list.map((entry) => entry.id),
+      );
   const attachments = new Set((review.index.attachments ?? []).map((image) => image.id));
   const screenshots = review.overview.screenshots.filter((id) => attachments.has(id));
+  const videos = review.overview.videos.filter((id) => attachments.has(id));
   const intent = intentRows(review);
   const titleOf = (id: string) => list.find((section) => section.id === id)?.title;
   return (
@@ -63,6 +81,17 @@ export function OverviewTab({
         <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{review.summary.text}</Markdown>
       ) : null}
       <RiskPart review={review} titleOf={titleOf} go={go} />
+      {videos.length > 0 ? (
+        <ReviewImages
+          document={document}
+          heading={videos.length === 1 ? "Video" : "Videos"}
+          block={{
+            kind: "images",
+            items: videos.map((attachment) => ({ attachment })),
+            source: [],
+          }}
+        />
+      ) : null}
       {screenshots.length > 0 ? (
         <ReviewImages
           document={document}
@@ -77,6 +106,13 @@ export function OverviewTab({
       {diagram ? (
         <ViewTileCard tile={diagram} review={document} ctx={ctx} idPrefix={idPrefix} />
       ) : null}
+      <SectionTiles
+        tiles={added}
+        drafts={drafts}
+        document={document}
+        ctx={ctx}
+        idPrefix={idPrefix}
+      />
       {intent.length > 0 ? <AskedPart document={document} rows={intent} /> : null}
     </div>
   );

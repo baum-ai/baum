@@ -65,7 +65,8 @@ not a failure.
    is skipped (`too_large`).
 2. When the stored fingerprint (size and modification time of its files) is
    unchanged and the session is covered, nothing happens, except that a
-   stored path that failed is replaced by the one found.
+   stored path that failed is replaced by the one found. Unreadable Codex
+   skips include a reader version so a parser fix can retry unchanged files.
 3. baum's own generation runs are skipped (`generation_run`).
 4. The transcript is rendered and redacted. When it has the head extraction's
    content hash (an empty head included), the head still covers it and no call
@@ -357,8 +358,9 @@ minutes.
 
 The commits are linked to the sessions on this machine with the local
 linkage of the review page (`locallink.LinkCommits`: checkpoint candidate discovery followed by
-independent creation or edit evidence; generation runs left out), and their links replace the ones
-they had:
+a recorded creation of each commit; generation runs left out), and their links replace the ones
+they had. Opening the store drops the edit-overlap (`files_overlap`) links earlier versions stored,
+marking the features they placed sessions in:
 
 - each run, the commits just recorded, made in the last 7 days (hosted looks
   back a day; a laptop may be off for days);

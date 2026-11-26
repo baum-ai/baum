@@ -90,8 +90,8 @@ function contextFor(overrides: Partial<TileContext> = {}): TileContext {
   };
 }
 
-function mount(face: Face, tile = freshTile()) {
-  const ctx = contextFor();
+function mount(face: Face, tile = freshTile(), overrides: Partial<TileContext> = {}) {
+  const ctx = contextFor(overrides);
   const host: TileHost = {
     draft: false,
     ask: vi.fn(),
@@ -266,6 +266,46 @@ describe("a custom tile's frame", () => {
     expect(box().style.height).toBe("520px");
   });
 
+  it("shows faint lines in its box until the frame draws", () => {
+    const { container, start } = mount("detail");
+    expect(container.querySelector("[data-frame-placeholder]")).not.toBeNull();
+    start();
+    expect(container.querySelector("[data-frame-placeholder]")).toBeNull();
+  });
+
+  it("reserves a detail's last height in this browser before it draws again", () => {
+    const tile = freshTile();
+    const first = mount("detail", tile);
+    first.start();
+    first.post({ protocol: PROTOCOL, kind: "resize", height: 515 });
+    nextFrame();
+    const kept = JSON.parse(localStorage.getItem("baum.tileFrame.heights") ?? "{}");
+    expect(Object.entries(kept)).toContainEqual([expect.stringContaining(tile.id), 515]);
+    act(() => root?.unmount());
+    const again = mount("detail", tile);
+    expect(again.container.querySelector<HTMLElement>("[data-frame-state]")!.style.height).toBe(
+      "515px",
+    );
+  });
+
+  it("keeps a tile's height apart on each pull request", () => {
+    const tile = freshTile();
+    const on = (pr: number) => ({
+      review: { review: { repository: "acme/demo", pull_request: pr } } as ReviewDocument,
+    });
+    const first = mount("detail", tile, on(7));
+    first.start();
+    first.post({ protocol: PROTOCOL, kind: "resize", height: 640 });
+    nextFrame();
+    const kept = JSON.parse(localStorage.getItem("baum.tileFrame.heights") ?? "{}");
+    expect(Object.keys(kept)).toContainEqual(expect.stringMatching(/^acme\/demo#7:/));
+    act(() => root?.unmount());
+    const other = mount("detail", tile, on(8));
+    expect(other.container.querySelector<HTMLElement>("[data-frame-state]")!.style.height).toBe(
+      "240px",
+    );
+  });
+
   it("keeps a glance's box whatever the frame asks", () => {
     const { container, post, start } = mount("glance");
     start();
@@ -435,7 +475,7 @@ describe("a custom tile's frame", () => {
       message: "<b>Your session expired: sign in again</b>",
     });
     // The host's own reason; the tile's words only behind Details, quoted.
-    expect(container.querySelector("[role=alert] > div > p")?.textContent).toBe(
+    expect(container.querySelector("[role=alert] > p")?.textContent).toBe(
       "This tile couldn't load.",
     );
     expect(container.textContent).toContain("It failed while drawing.");
@@ -547,52 +587,60 @@ describe("custom tiles on the page", () => {
     expect(tileFace(noDigest).kind).toBe("unavailable");
   });
 
-  it("mount frames in a browser, and in a desktop shell only when it says it is safe", () => {
-    const fake = (fields: Record<string, unknown>) =>
-      ({ navigator: { userAgent: "", platform: "" }, ...fields }) as unknown as Window;
-    const shell = { __TAURI_INTERNALS__: {} };
-    // A browser, declaration or not (a page cannot be made a shell).
-    expect(framesAllowedHere(fake({}))).toBe(true);
-    expect(framesAllowedHere(fake({ __BAUM_DESKTOP__: { tileFrames: false } }))).toBe(true);
-    // A shell that declares it.
-    expect(framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: { tileFrames: true } }))).toBe(
-      true,
-    );
-    // A shell that declares nothing, or anything else.
-    for (const declared of [
-      undefined,
-      null,
-      true,
-      "tileFrames",
-      {},
-      { tileFrames: false },
-      { tileFrames: "true" },
-      { tileFrames: 1 },
-      Object.create({ tileFrames: true }),
-    ])
-      expect(
-        framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: declared })),
-        String(declared),
-      ).toBe(false);
-  });
+  it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+    "mount frames in a browser, and in a desktop shell (%s) only when it says it is safe",
+    (bridge) => {
+      const fake = (fields: Record<string, unknown>) =>
+        ({ navigator: { userAgent: "", platform: "" }, ...fields }) as unknown as Window;
+      const shell = { [bridge]: {} };
+      // A browser, declaration or not (a page cannot be made a shell).
+      expect(framesAllowedHere(fake({}))).toBe(true);
+      expect(framesAllowedHere(fake({ __BAUM_DESKTOP__: { tileFrames: false } }))).toBe(true);
+      // A shell that declares it.
+      expect(framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: { tileFrames: true } }))).toBe(
+        true,
+      );
+      // A shell that declares nothing, or anything else.
+      for (const declared of [
+        undefined,
+        null,
+        true,
+        "tileFrames",
+        {},
+        { tileFrames: false },
+        { tileFrames: "true" },
+        { tileFrames: 1 },
+        Object.create({ tileFrames: true }),
+      ])
+        expect(
+          framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: declared })),
+          String(declared),
+        ).toBe(false);
+    },
+  );
 
-  it("say so in a shell that has not declared it", () => {
-    const win = window as Window & { __TAURI_INTERNALS__?: unknown };
-    win.__TAURI_INTERNALS__ = {};
-    try {
-      const { container } = (() => {
-        const container = document.createElement("div");
-        document.body.append(container);
-        root = createRoot(container);
-        act(() => root!.render(<TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />));
-        return { container };
-      })();
-      expect(container.textContent).toBe(NOT_IN_THIS_SHELL);
-      expect(container.querySelector("iframe")).toBeNull();
-    } finally {
-      delete win.__TAURI_INTERNALS__;
-    }
-  });
+  it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+    "say so in a shell (%s) that has not declared it",
+    (bridge) => {
+      const win = window as unknown as Record<string, unknown>;
+      win[bridge] = {};
+      try {
+        const { container } = (() => {
+          const container = document.createElement("div");
+          document.body.append(container);
+          root = createRoot(container);
+          act(() =>
+            root!.render(<TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />),
+          );
+          return { container };
+        })();
+        expect(container.textContent).toBe(NOT_IN_THIS_SHELL);
+        expect(container.querySelector("iframe")).toBeNull();
+      } finally {
+        delete win[bridge];
+      }
+    },
+  );
 });
 
 describe("the first-show preflight", () => {

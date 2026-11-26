@@ -127,6 +127,9 @@ const fileFixSystemPrompt = "Fix the checkout in your working directory as the t
 // With sandboxed, Bash joins the tools and runs every command in Claude
 // Code's sandbox (fixSandbox); without it, after the sandbox could not start,
 // the agent has the file tools alone and runs nothing.
+//
+// Unless the request keeps its session (agent.Request.KeepsSession),
+// --no-session-persistence discards it.
 func (c *Backend) fixArgs(request agent.Request, sandboxed bool) []string {
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if c.Model != "" {
@@ -137,9 +140,12 @@ func (c *Backend) fixArgs(request agent.Request, sandboxed bool) []string {
 	if sandboxed {
 		system, tools, settings = fixSystemPrompt, "Read,Glob,Grep,Edit,Write,Bash", fixSandbox(request, c.environment(request.Directory, nil))
 	}
-	return append(append(maxTurns(append(args, "--system-prompt", system), request),
-		"--restricted", "--tools", tools, "--permission-mode", "acceptEdits", "--no-session-persistence",
-		"--settings", settings, "--setting-sources", ""), mcpArgs(request)...)
+	args = append(maxTurns(append(args, "--system-prompt", system), request),
+		"--restricted", "--tools", tools, "--permission-mode", "acceptEdits")
+	if !request.KeepsSession() {
+		args = append(args, "--no-session-persistence")
+	}
+	return append(append(args, "--settings", settings, "--setting-sources", ""), mcpArgs(request)...)
 }
 
 // fixSandbox is the --settings of a sandboxed fix. The sandbox is on and

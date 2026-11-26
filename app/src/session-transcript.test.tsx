@@ -1,5 +1,5 @@
 import { mockStateFetch } from "./ui-state-test-helper";
-import { act } from "react";
+import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { TranscriptSession } from "@baum/viewer/transcript";
@@ -9,6 +9,7 @@ import {
   parseLiveTranscript,
   POLL_RUNNING,
   SessionTranscriptPage,
+  useMessageKeys,
 } from "./session-transcript";
 
 // The transcript is the viewer's; here it shows the prompts it is given and
@@ -290,6 +291,51 @@ it("follows the end of the transcript only while the reader is there", async () 
   expect(toEnd()).toHaveLength(0);
 });
 
+it("keeps a reader at the end as the page grows after a version is shown", async () => {
+  const grown: (() => void)[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        grown.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const page = document.documentElement;
+  let height = 2000;
+  Object.defineProperty(page, "scrollHeight", { configurable: true, get: () => height });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+  const scrolled = (y: number) => {
+    Object.defineProperty(window, "scrollY", { configurable: true, value: y });
+    window.dispatchEvent(new Event("scroll"));
+  };
+  const scrollTo = vi.mocked(window.scrollTo);
+  const toEnd = () => scrollTo.mock.calls.filter(([o]) => (o as ScrollToOptions).top === height);
+  await show(session());
+  scrolled(1200);
+  // A reply measured and folded after the version.
+  height = 2300;
+  act(() => grown.forEach((callback) => callback()));
+  expect(toEnd()).toHaveLength(1);
+  // What the reader opens grows the page where they read.
+  scrolled(1500);
+  window.dispatchEvent(new Event("pointerdown"));
+  height = 2600;
+  act(() => grown.forEach((callback) => callback()));
+  expect(toEnd()).toHaveLength(0);
+  // A new version follows again; scrolled up, growing leaves the reader.
+  height = 2900;
+  answer = { version: "v2", prompts: ["Add a retry budget", "Now test it"] };
+  await wait(POLL_RUNNING);
+  expect(toEnd()).toHaveLength(1);
+  scrolled(300);
+  height = 3200;
+  act(() => grown.forEach((callback) => callback()));
+  expect(toEnd()).toHaveLength(0);
+});
+
 it("says why a transcript is not served, and when the session is gone", async () => {
   answer = {
     body: {
@@ -359,4 +405,59 @@ it("continues an ended session in the panel, resumed by the daemon", async () =>
   expect(opened).toEqual(["conv-1"]);
   await page(session({ state: "ended", ended_at: new Date().toISOString() }));
   expect(button()).toBeDefined();
+});
+
+it("goes on from the message k marked while the page still scrolls to it", async () => {
+  // Five messages 100 px tall, the page scrolled to the last; the smooth
+  // scroll each press starts has not moved yet when the next press comes.
+  vi.stubGlobal("scrollY", 400);
+  vi.stubGlobal("innerHeight", 300);
+  vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: Element,
+  ) {
+    const at = Number((this as HTMLElement).dataset.at ?? -1);
+    const top = at < 0 ? -100 : at * 100 - window.scrollY;
+    return { top, bottom: top + 100, left: 0, right: 0, width: 0, height: 100 } as DOMRect;
+  });
+  try {
+    function Keys() {
+      const body = useRef<HTMLDivElement>(null);
+      const top = useRef<HTMLDivElement>(null);
+      useMessageKeys(body, top);
+      return (
+        <>
+          <div ref={top} />
+          <div ref={body}>
+            {[0, 1, 2, 3, 4].map((at) => (
+              <p key={at} data-message="human" data-at={at}>
+                Message {at}
+              </p>
+            ))}
+          </div>
+        </>
+      );
+    }
+    await act(async () => root.render(<Keys />));
+    const marked = () => node.querySelector(".local-message-current")?.textContent;
+    const k = () =>
+      act(() => {
+        document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "k", bubbles: true }));
+      });
+    k();
+    expect(marked()).toBe("Message 4");
+    k();
+    expect(marked()).toBe("Message 3");
+    // Message 3 is above the view until the scroll arrives: k goes on from it.
+    k();
+    expect(marked()).toBe("Message 2");
+    // The reader scrolls away from it themselves: k reads from the view
+    // again, rather than going on to message 1.
+    vi.stubGlobal("scrollY", 1000);
+    window.dispatchEvent(new Event("scroll"));
+    k();
+    expect(marked()).toBe("Message 4");
+  } finally {
+    rect.mockRestore();
+  }
 });

@@ -178,13 +178,25 @@ func TestConversationRoutes(t *testing.T) {
 	}
 
 	r.call(t, "POST", "/api/console/conversations/"+id+"/messages", map[string]any{"text": "wait for it"}, http.StatusAccepted)
-	if answer := r.call(t, "POST", "/api/console/conversations/"+id+"/messages", map[string]any{"text": "again"}, http.StatusConflict); code(answer) != "busy" {
-		t.Fatalf("busy: %v", answer)
+	queued := r.call(t, "POST", "/api/console/conversations/"+id+"/messages", map[string]any{"text": "again"}, http.StatusAccepted)
+	waiting, _ := queued["queued"].([]any)
+	if queued["state"] != StateRunning || len(waiting) != 1 {
+		t.Fatalf("queued: %v", queued)
+	}
+	if answer := r.call(t, "POST", "/api/console/conversations/"+id+"/queued/send", nil, http.StatusConflict); code(answer) != "busy" {
+		t.Fatalf("sending the queue while running: %v", answer)
 	}
 	r.waitFor("child.pid")
 	stopped := r.call(t, "POST", "/api/console/conversations/"+id+"/cancel", nil, http.StatusOK)
-	if stopped["state"] != StateIdle || stopped["error"] != ReasonStopped {
+	if kept, _ := stopped["queued"].([]any); stopped["state"] != StateIdle || stopped["error"] != ReasonStopped || len(kept) != 1 {
 		t.Fatalf("stopped %v", stopped)
+	}
+	queuedID := held(t, stopped)
+	if removed := r.call(t, "DELETE", "/api/console/conversations/"+id+"/queued/"+queuedID, nil, http.StatusOK); len(removed["queued"].([]any)) != 0 {
+		t.Fatalf("removed %v", removed)
+	}
+	if answer := r.call(t, "DELETE", "/api/console/conversations/"+id+"/queued/"+queuedID, nil, http.StatusNotFound); code(answer) != "queued_not_found" {
+		t.Fatalf("removed twice: %v", answer)
 	}
 	if answer := r.call(t, "PUT", "/api/console/page", map[string]any{"page": "nowhere"}, http.StatusBadRequest); code(answer) != CodeInvalidPage {
 		t.Fatalf("invalid page: %v", answer)
@@ -386,5 +398,44 @@ func TestTurnsRefreshTheSSHAgent(t *testing.T) {
 	}
 	if env := f.read("environment.txt"); !bytes.Contains([]byte(env), []byte("SSH_AUTH_SOCK="+os.Getenv("SSH_AUTH_SOCK"))) {
 		t.Fatal("the agent did not get the SSH agent socket")
+	}
+}
+
+// held is the id of the first message queued on a conversation.
+func held(t *testing.T, conversation map[string]any) string {
+	t.Helper()
+	list, _ := conversation["queued"].([]any)
+	if len(list) == 0 {
+		t.Fatalf("nothing queued: %v", conversation)
+	}
+	id, _ := list[0].(map[string]any)["id"].(string)
+	return id
+}
+
+// The archive route names the work an archive would lose in a 409, archives
+// with discard, and the list leaves the conversation out.
+func TestArchiveRoute(t *testing.T) {
+	r := newRoutes(t)
+	created := r.call(t, "POST", "/api/console/conversations", map[string]any{}, http.StatusCreated)
+	id, _ := created["id"].(string)
+	dir, _ := created["directory"].(string)
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused := r.call(t, "POST", "/api/console/conversations/"+id+"/archive", nil, http.StatusConflict)
+	unclean, _ := refused["unclean"].(map[string]any)
+	if code(refused) != "unclean_directory" || unclean["changed"] != float64(1) || refused["message"] == "" {
+		t.Fatalf("refused %v", refused)
+	}
+	archived := r.call(t, "POST", "/api/console/conversations/"+id+"/archive", map[string]any{"discard": true}, http.StatusOK)
+	if archived["archived_at"] == nil || archived["state"] != StateClosed {
+		t.Fatalf("archived %v", archived)
+	}
+	list := r.call(t, "GET", "/api/console/conversations", nil, http.StatusOK)
+	if got, _ := list["conversations"].([]any); len(got) != 0 {
+		t.Fatalf("listed %v", got)
+	}
+	if answer := r.call(t, "POST", "/api/console/conversations/missing/archive", nil, http.StatusNotFound); code(answer) != "conversation_not_found" {
+		t.Fatalf("missing: %v", answer)
 	}
 }

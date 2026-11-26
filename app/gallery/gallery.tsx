@@ -1,7 +1,7 @@
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { chromeOf } from "../src/review-view/chrome";
-import { parseReviewV2 } from "../src/review-view/document";
+import { parseReviewV2, tileData } from "../src/review-view/document";
 import { review1303 } from "../src/review-view/fixture-1303";
 import {
   CONTEXT_ID,
@@ -14,11 +14,12 @@ import {
 } from "../src/review-view/model";
 import { NATIVE } from "../src/review-view/native-tiles";
 import { ViewTileCard } from "../src/review-view/view-tile";
+import { codeTile } from "../src/tiles/builtins/generic";
 import type { TileContext } from "../src/tiles/types";
 import type { DocumentEntry, Entry, Response } from "./contract";
-import { SAMPLES } from "./samples";
+import { CODE_SAMPLES, SAMPLES } from "./samples";
 
-/** The native diagram gallery: every flow, columns, sequence and table it
+/** The native diagram gallery: every flow, columns, sequence, table and code tile it
  *  knows, drawn by the review page's own `ViewTileCard` at the page's widths,
  *  in light and dark side by side. Dev-only (`vite.gallery.config.ts`). */
 
@@ -56,7 +57,10 @@ const SOURCES: { id: Source; title: string; hint: string }[] = [
   { id: "file", title: "Files", hint: "loose JSON in oss/app/gallery-data" },
 ];
 
-const TYPES = ["flow", "columns", "sequence", "table"];
+const TYPES = ["flow", "columns", "sequence", "table", "code"];
+
+/** The tiles the gallery draws: the native diagrams and code excerpts. */
+const drawn = (type: string) => Boolean(NATIVE[type]) || type === "code";
 
 /** The width of a section's column on the review page (its pane's content
  *  box, the `@container` a tile lays itself out in) at the window widths the
@@ -123,7 +127,7 @@ export function documentTiles(entry: DocumentEntry): Shown[] | string {
   if (!review) return `${entry.origin}: not a baum.review/2 document`;
   const chrome = withReview(chromeOf(review), review);
   return review.tiles
-    .filter((tile) => NATIVE[tile.type])
+    .filter((tile) => drawn(tile.type))
     .map((tile) => ({
       key: `${entry.key}:${tile.id}`,
       source: entry.source,
@@ -138,7 +142,7 @@ export function documentTiles(entry: DocumentEntry): Shown[] | string {
  *  citations moved into their data). */
 const FIXTURE_REVIEW = reviewOf(CHROME);
 const FIXTURE: Shown[] = FIXTURE_REVIEW.tiles
-  .filter((tile) => NATIVE[tile.type])
+  .filter((tile) => drawn(tile.type))
   .map((tile) => ({
     key: `fixture:${tile.id}`,
     source: "fixture",
@@ -158,10 +162,27 @@ const BUILT_IN: Shown[] = [
     placement: sample.placement,
     review: CHROME,
   })),
+  // A code tile's data becomes its excerpt as the page parses it, on the
+  // fixture's hunks.
+  ...CODE_SAMPLES.map((sample) => ({
+    key: `sample:${sample.id}`,
+    source: "sample" as const,
+    origin: `samples.ts · ${sample.id} · ${sample.expect}`,
+    tile: {
+      ...tileOf(sample),
+      data: tileData("code", sample.data, undefined, [], CHROME.index.hunks),
+    },
+    placement: sample.placement,
+    review: CHROME,
+  })),
 ];
 
 /** Whether the page draws it, and why not in one line. */
 export function verdict(type: string, data: unknown): { valid: boolean; reason?: string } {
+  if (type === "code")
+    return codeTile.valid(data)
+      ? { valid: true }
+      : { valid: false, reason: "Fails the page's check of a code tile: the host filled no text" };
   const native = NATIVE[type];
   if (!native)
     return { valid: false, reason: `"${type}" isn't a native type (${TYPES.join(", ")})` };

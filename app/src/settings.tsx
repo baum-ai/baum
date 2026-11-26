@@ -9,6 +9,7 @@ import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentType,
@@ -50,6 +51,7 @@ import {
   type GitHubConnection,
   type Repository,
   type DiagnosticReport,
+  type IssueParts,
   type DecisionSettings,
   type PromptEntry,
   type RepositoryPromptEntry,
@@ -75,7 +77,7 @@ import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { pendingUpdate, UpdatesSection, type AppUpdates } from "./desktop/updates";
-import { invoke } from "./desktop/native";
+import { desktopShell, invoke } from "./desktop/native";
 import { withCode } from "./desktop/code-terms";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, MAC, onBody, pageModifier, useRowFocus, useShortcuts } from "./shortcuts";
@@ -123,6 +125,7 @@ import {
 } from "./desktop/setup-model";
 import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
+import { ReportProblemDialog } from "./report-problem";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
 import { AppearanceSection } from "./settings-appearance";
@@ -1271,8 +1274,8 @@ const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
 ];
 
 /** The session panel's setting: the agent and model a new session opens with
- *  (the fix agent's unless chosen), the access it gets, and the edge the
- *  panel opens from. */
+ *  (the fix agent's unless chosen) and the access it gets. The edge it opens
+ *  from is under General (`PanelPositionSetting`). */
 export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly string[] }) {
   const [saved, setSaved] = useState<PanelSettings | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -1293,7 +1296,6 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
     agent: saved.agent_source === "panel" ? panelHarness[saved.agent] : "",
     model: saved.agent_source === "panel" ? saved.model : "",
     mode: saved.mode,
-    position: saved.position,
   };
   const key = JSON.stringify(choice);
   const [draft, setDraft] = useState(choice);
@@ -1309,7 +1311,6 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
       // its model follows too.
       ...(next.agent ? { model: next.model } : {}),
       mode: next.mode,
-      position: next.position,
     });
   };
   const following = `Now ${agentName(saved.agent)}${saved.model ? ` · ${modelName(saved.model)}` : ""}, the fix agent.`;
@@ -1375,20 +1376,54 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
             onChange={(mode) => change({ mode })}
           />
         </SettingRow>
-        <SettingRow label="Opens from" detail="The edge of the window the panel slides in from.">
-          <SegmentedControl
-            label="Opens from"
-            value={draft.position}
-            items={panelPositions}
-            onChange={(position) => change({ position })}
-          />
-        </SettingRow>
       </div>
       <p className="settings-footnote">
         Changes apply to the next session you start; a session keeps the agent and access it started
         with.
       </p>
     </section>
+  );
+}
+
+/** The edge of the window the session panel opens from, under General: it
+ *  saves only the position, so the panel's agent and access under Fixes
+ *  stay as they are. */
+export function PanelPositionSetting() {
+  const [saved, setSaved] = useState<PanelSettings["position"] | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const load = () => readPanelSettings().then((settings) => setSaved(settings.position));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, and again when it changes
+  useEffect(() => {
+    load().catch((e: unknown) => setLoadError(errorText(e)));
+    return onPanelSettingsChanged(() => void load().catch(() => {}));
+  }, []);
+  const { save, error, failures } = useAutoSave(async () => {
+    await load();
+    panelSettingsChanged();
+  }, "api/settings/panel");
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved, failures]);
+  if (!saved || !draft) return loadError ? <Alert>{loadError}</Alert> : null;
+  return (
+    <>
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-panel settings-list">
+        <SettingRow
+          label="Opens from"
+          detail="The edge of the window the session panel slides in from."
+        >
+          <SegmentedControl
+            label="Opens from"
+            value={draft}
+            items={panelPositions}
+            onChange={(position) => {
+              setDraft(position);
+              save({ position });
+            }}
+          />
+        </SettingRow>
+      </div>
+    </>
   );
 }
 
@@ -2846,32 +2881,52 @@ function DiagnosticsDialog({
   close: () => void;
   onReport: (report: DiagnosticReport | null) => void;
 }) {
-  const dialog = useModal();
+  const [problem, setProblem] = useState<{ parts: IssueParts | null } | null>(null);
+  const reportOpener = useRef<HTMLButtonElement>(null);
+  const dialog = useModal(problem === null);
   const title = useRef<HTMLHeadingElement>(null);
   // Open on the title rather than on the close control, the first button.
   useEffect(() => title.current?.focus({ preventScroll: true }), []);
+  // The report replaces Diagnostics in the top layer while it is open.
+  // Return to its trigger when the Diagnostics dialog opens again.
+  useLayoutEffect(() => {
+    if (problem !== null) return;
+    reportOpener.current?.focus({ preventScroll: true });
+    reportOpener.current = null;
+  }, [problem]);
   return (
-    <dialog
-      ref={dialog}
-      onCancel={close}
-      aria-labelledby="diagnostics-dialog-title"
-      className={dialogClassName({ size: "wide" })}
-    >
-      <DialogHeader aside={<CloseButton onClick={close} />}>
-        <DialogTitle
-          ref={title}
-          id="diagnostics-dialog-title"
-          tabIndex={-1}
-          className="outline-none"
-        >
-          Check this computer
-        </DialogTitle>
-        <DialogDetail>
-          What baum needs here, what it found, and how to fix each problem.
-        </DialogDetail>
-      </DialogHeader>
-      <DiagnosticsSection onReport={onReport} />
-    </dialog>
+    <>
+      <dialog
+        ref={dialog}
+        onCancel={close}
+        aria-labelledby="diagnostics-dialog-title"
+        className={dialogClassName({ size: "wide" })}
+      >
+        <DialogHeader aside={<CloseButton onClick={close} />}>
+          <DialogTitle
+            ref={title}
+            id="diagnostics-dialog-title"
+            tabIndex={-1}
+            className="outline-none"
+          >
+            Check this computer
+          </DialogTitle>
+          <DialogDetail>
+            What baum needs here, what it found, and how to fix each problem.
+          </DialogDetail>
+        </DialogHeader>
+        <DiagnosticsSection
+          onReport={onReport}
+          onProblem={(parts, opener) => {
+            reportOpener.current = opener;
+            setProblem({ parts });
+          }}
+        />
+      </dialog>
+      {problem ? (
+        <ReportProblemDialog parts={problem.parts} close={() => setProblem(null)} />
+      ) : null}
+    </>
   );
 }
 
@@ -3552,7 +3607,7 @@ export function RepositoryPage({
 
 /** Whether the daemon page runs in the desktop app. */
 function hasFolderPicker() {
-  return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  return Boolean(desktopShell());
 }
 
 function GeneralSection() {
@@ -3562,7 +3617,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Keyboard and plan usage preferences on this device."
+        detail="Keyboard, session panel and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -3606,6 +3661,8 @@ function GeneralSection() {
           />
         </SettingRow>
       </div>
+      <h3 className="settings-subhead">Session panel</h3>
+      <PanelPositionSetting />
       <h3 className="settings-subhead">Plan usage</h3>
       <PlanUsageSettings />
     </section>

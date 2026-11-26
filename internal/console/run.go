@@ -24,9 +24,14 @@ const (
 	EventSession = "session"
 	// EventText: the turn's answer grew; Progress has it.
 	EventText = "text"
+	// EventQueued: a message was queued for after the running turn, or
+	// removed from the queue.
+	EventQueued = "queued"
 	// EventFinished: the turn ended, answered (idle) or not (failed, or idle
 	// when the person stopped it); Get has why.
 	EventFinished = "finished"
+	// EventArchived: a conversation was archived and left the list.
+	EventArchived = "archived"
 )
 
 // Event is a change to a conversation, as the daemon's "console" event

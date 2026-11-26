@@ -204,10 +204,19 @@ func throttled(st Stats, ended bool, now time.Time) string {
 // fingerprinted, so there is nothing to do: an extraction, a lasting skip, or
 // a transient skip recorded today.
 func covered(row Session, fingerprint string, day time.Time) bool {
-	if row.Fingerprint != fingerprint {
+	if row.Fingerprint != captureFingerprint(row.Agent, row.SkipReason, fingerprint) {
 		return false
 	}
 	return row.Coverage == CoverageExtracted || !transient[row.SkipReason] || !row.UpdatedAt.Before(day)
+}
+
+// A reader fix can make a previously unreadable transcript usable without
+// its bytes changing. Version those skips so they get one more attempt.
+func captureFingerprint(agent, reason, fingerprint string) string {
+	if agent == livesessions.AgentCodex && reason == ReasonUnreadable {
+		return fingerprint + ":codex-reader-1"
+	}
+	return fingerprint
 }
 
 // extractorFor is the extractor of a capture: Extractor when set, else one
@@ -263,6 +272,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		if o.DryRun {
 			return report, nil
 		}
+		meta.Fingerprint = captureFingerprint(meta.Agent, reason, meta.Fingerprint)
 		return report, c.Store.Skip(ctx, meta, reason)
 	}
 

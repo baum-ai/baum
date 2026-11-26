@@ -44,6 +44,7 @@ import {
 } from "./pr-filter";
 import { COMMAND, MAC, useShortcuts } from "./shortcuts";
 import { useMenuFocus } from "./context-menu";
+import { useTopLayer } from "./top-layer";
 import "./filter-menu.css";
 
 type Row =
@@ -109,6 +110,7 @@ export function FilterButton({
   label?: string;
 }) {
   const { detailsProps, close, open } = useDisclosure();
+  const panel = useRef<HTMLDivElement>(null);
   const given = page?.fields;
   const focusQuery = () =>
     panel.current?.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")?.focus();
@@ -126,6 +128,7 @@ export function FilterButton({
     setFocusOnOpen(true);
     onOpened?.();
   }, [openRequest]);
+  useTopLayer(panel, open);
   // The panel sits on the window, not in the page, so no scrolling column
   // clips it: under the icon, its right edge on the icon's (its left edge when
   // the icon is in the left half of the window), kept on screen.
@@ -168,7 +171,6 @@ export function FilterButton({
     wasOpen.current = open;
   }, [open, focusOnOpen]);
   const ids = useId();
-  const panel = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   useEffect(() => {
     if (open) page?.typed?.(null, search.trim());
@@ -741,6 +743,8 @@ export function FilterBar({
   const options = (
     ahead ? suggest(`${text} `, caret + 1, entries, inbox, page?.fields, !page, known) : at
   ).slice(0, 12);
+  const list = useRef<HTMLDivElement>(null);
+  useTopLayer(list, options.length > 0);
   const apply = (next: string, now = false) => {
     clearTimeout(timer.current);
     pending.current = null;
@@ -882,6 +886,7 @@ export function FilterBar({
           className={tokens ? "filter-bar-input filter-bar-input-under" : "filter-bar-input"}
         />
         <div
+          ref={list}
           id={`${id}-list`}
           role="listbox"
           aria-label="Suggestions"

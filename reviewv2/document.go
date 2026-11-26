@@ -92,8 +92,11 @@ type VerdictPoint struct {
 // Overview is the overview tab's model-chosen parts. Top level, overview
 // call, except Diagram's tile, which a tile agent fills.
 type Overview struct {
-	// Screenshots are attachment ids from the index, at most 3.
+	// Screenshots are image attachment ids from the index, at most 3.
 	Screenshots []string `json:"screenshots"`
+	// Videos are video clip attachment ids from the index, at most 3. A
+	// document from before them has none.
+	Videos []string `json:"videos,omitempty"`
 	// Diagram is the id of the main diagram tile (owner "overview"), or
 	// null.
 	Diagram *string `json:"diagram"`
@@ -169,6 +172,12 @@ const (
 	BlockTile   = "tile"
 )
 
+// NoteKinds are what a note can be, each drawn with its own icon: a caveat
+// (an exception or a limit to watch), a decision (a choice made on purpose),
+// what stays unchanged, and a follow-up (work left for later). A note
+// without a kind is a plain aside.
+var NoteKinds = []string{"caveat", "decision", "unchanged", "follow_up"}
+
 // Limits of the text blocks, in characters. The host cuts what runs over.
 const (
 	MaxBlocks      = 6
@@ -183,19 +192,23 @@ const (
 // Block is one block of a section's body. Text (prose, note) and the
 // points' text are inline markdown: bold and code only. Title is an
 // optional label above the block; a tile block's title is the tile's own.
+// Kind (optional, one of NoteKinds) is a note's.
 type Block struct {
 	Type  string  `json:"type"`
 	Title string  `json:"title,omitempty"`
+	Kind  string  `json:"kind,omitempty"`
 	Text  string  `json:"text,omitempty"`
 	Items []Point `json:"items,omitempty"`
 	Tile  string  `json:"tile,omitempty"`
 }
 
 // Point is one line of a points block: Text on the page, More (optional)
-// behind a click with the files it cites.
+// behind a click with the files it cites. Tone (optional, one of
+// PointTones) marks the line as new, good, bad, muted or missing.
 type Point struct {
 	Text  string   `json:"text"`
 	More  string   `json:"more,omitempty"`
+	Tone  string   `json:"tone,omitempty"`
 	Cites []Anchor `json:"cites"`
 }
 
@@ -250,13 +263,28 @@ type Tile struct {
 }
 
 // CodeData is a code tile's data: the model names the hunk and, optionally,
-// its first and last line on the new side; the host fills Text, the new
-// side's lines from the diff, and Lines when the model gave none
-// (Complete).
+// its first and last line on the new side and the few lines of them that
+// matter (Focus, new-side line numbers, which the page highlights); the
+// host fills Text, the new side's lines from the diff, and Lines when the
+// model gave none (Complete).
 type CodeData struct {
 	Hunk  string `json:"hunk"`
 	Lines []int  `json:"lines,omitempty"`
+	Focus []int  `json:"focus,omitempty"`
 	Text  string `json:"text,omitempty"`
+}
+
+// FocusWithin is focus kept to the lines from first to last, each once, in
+// order; nil when none is left.
+func FocusWithin(focus []int, first, last int) []int {
+	var out []int
+	for _, line := range focus {
+		if line >= first && line <= last && !slices.Contains(out, line) {
+			out = append(out, line)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // TypeImages is a tile of images a person added to their review page

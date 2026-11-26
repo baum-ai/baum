@@ -53,7 +53,7 @@ func v2DetailsFixture(t *testing.T) (generate.Options, *store.Store, store.Key, 
 			}
 		}
 		section := func(text string) string {
-			return `{"body":[{"type":"prose","title":null,"text":"` + text + `","items":null,"tile":null}],"risks":[],"tiles":[],"propose":null}`
+			return `{"body":[{"type":"prose","title":null,"kind":null,"text":"` + text + `","items":null,"tile":null}],"risks":[],"tiles":[],"propose":null}`
 		}
 		var reply string
 		switch r.Stage {

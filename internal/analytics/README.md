@@ -32,7 +32,7 @@ prompt, message, tool input or output, or file path is stored.
   Codex store once for all clones, and unchanged rollouts are not reopened. Sessions last written
   more than 90 days ago are skipped, and their entries dropped.
 - The index format version invalidates derived evidence after parser changes,
-  including Codex code-mode command extraction.
+  including Codex code-mode command extraction and daemon recovery.
 - An entry is keyed by its files' sizes and modification times (a digest for
   Cursor's generated tree), so a refresh reads only what changed. Files that
   are gone, and the entries of unregistered clones, are dropped; a clone that
@@ -100,7 +100,7 @@ agent-written when an indexed session of the repository recorded creating it
 (the matcher's `commit_ref` evidence), it carries an `Entire-Checkpoint`
 trailer, or a `Co-Authored-By` trailer names an agent by address
 (`locallink.CoauthoredAgents`); each commit counts once, under the strongest.
-The heuristic file-overlap match is not used, so the share is a floor. Under an
+Editing a commit's files does not count, so the share is a floor. Under an
 agent filter only that agent's sessions and trailers count; a checkpoint names
 no agent, so its commit stays in the denominator only. A clone without
 `user.email`, or that git cannot read, is named in `reasons`. Commit lists are

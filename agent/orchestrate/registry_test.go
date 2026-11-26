@@ -78,7 +78,7 @@ func TestReplySchemas(t *testing.T) {
 	// tile and a note); a proposal carries its id.
 	validates(t, "section", SectionSchema(types), sectionReplyJSON(`[]`))
 	validates(t, "section with a proposal", SectionSchema(types), strings.Replace(sectionReplyJSON(`[]`), `"propose":null`,
-		`"propose":{"id":"tl_more_cases","type":"table","shows":"The cases.","cites":[]}`, 1))
+		`"propose":{"id":"tl_more_cases","type":"table","shows":"The cases.","cites":[],"focus":null}`, 1))
 	validates(t, "context", ContextSchema(), contextReplyJSON)
 	validates(t, "overview", OverviewSchema(), overviewReplyJSON)
 	r := NewRegistry(nil)
