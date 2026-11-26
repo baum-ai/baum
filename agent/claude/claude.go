@@ -159,8 +159,13 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	if err := request.ValidateSession(); err != nil {
 		return result, fmt.Errorf("claude: %w", err)
 	}
-	if request.KeepsSession() && (c.Profile != User || kind == runFix) {
-		return result, errors.New("claude: only a User profile review or task can keep or resume a session")
+	if request.KeepsSession() && c.Profile != User {
+		return result, errors.New("claude: only the User profile can keep or resume a session")
+	}
+	// A fix may keep its session, so baum's commit of its work links to it,
+	// but never resumes one: fixArgs has no --resume.
+	if request.ResumeSession != "" && kind == runFix {
+		return result, errors.New("claude: a fix cannot resume a session")
 	}
 	if request.MCP != nil {
 		if c.Profile != User {

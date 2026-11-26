@@ -1,6 +1,7 @@
 # Durable desktop reading state
 
-`uistate` owns the Inbox's bookkeeping, review drafts, each page's
+`uistate` owns the Inbox's bookkeeping, what happened on each pull request
+since its page was last open, review drafts, each page's
 filter and saved Pull requests tabs, and whether the first-run tour was seen
 in the shared private application database
 (`internal/appdb`). It imports no legacy
@@ -11,6 +12,7 @@ reviews are outside this store.
 | --- | --- |
 | `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes; archives (`archived`, optional) |
 | `ui/filters` | each page's filter query and the saved Pull requests tabs and sort (`{pages: {<page>: query}, sorts?: {<page>: sort}, tabs: [{id, name, view, query, sort?}]}`) |
+| `ui/activity` | per-PR what happened since its page was last open: `{prs: {<key>: {at, last: {head, versions, unresolved, review, updated, answers}, unread: {<kind>: count}}}}`, at most 2000 pull requests |
 | `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
 | `ui/review` | per repository/PR, the comments and summary of the reader's own review until it is sent, and the reviews sent from the app |
 
@@ -63,6 +65,8 @@ JSON-content checks. These routes grant no filesystem access.
 - `PUT /api/ui-state/inbox`
 - `GET /api/ui-state/filters`
 - `PUT /api/ui-state/filters`
+- `GET /api/ui-state/activity`
+- `PUT /api/ui-state/activity`
 - `GET /api/ui-state/tour`
 - `PUT /api/ui-state/tour`
 - `GET /api/ui-state/review?key=<URL-encoded pull request key>`

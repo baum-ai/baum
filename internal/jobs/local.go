@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/assemble"
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
@@ -47,6 +48,9 @@ type Local struct {
 	// FixDirectory holds fixes' temporary checkouts; empty is
 	// fix.DefaultDirectory.
 	FixDirectory string
+	// Attributions records the commit a fix pushed as made by its agent's
+	// session, so the pull request links them; nil records none.
+	Attributions *commitattribution.Store
 	// Features builds feature histories; nil refuses feature builds.
 	Features FeatureBuilder
 	// Log receives what a job's agent reports and keeps out of the job, such

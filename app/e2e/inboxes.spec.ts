@@ -77,6 +77,44 @@ test("a first launch opens the Default inbox, and a stale link opens the first i
   await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
 });
 
+test("a narrow Inbox keeps the selected pull request and its action in view", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto(await launchURL());
+
+  const rows = page.locator("button.upnext-row");
+  const detail = page.locator(".upnext-detail");
+  const title = detail.locator("#upnext-title");
+  const open = detail.getByRole("link", { name: "Open", exact: true });
+  const selectedTitle = (row: Locator) => row.locator(".upnext-row-title").innerText();
+
+  const second = rows.nth(1);
+  await second.click();
+  await expect(title).toHaveText(await selectedTitle(second));
+  await expect(open).toBeInViewport({ ratio: 0.98 });
+
+  const snooze = detail.getByRole("button", { name: "Snooze", exact: true });
+  await snooze.click();
+  const choices = page.locator(".upnext-menu").getByRole("menuitem");
+  await expect(choices.first()).toBeFocused();
+  await expect(choices.first()).toBeInViewport({ ratio: 0.98 });
+  await expect(choices.last()).toBeInViewport({ ratio: 0.98 });
+  await page.locator(".upnext-list-summary").click();
+  await expect(choices).toHaveCount(0);
+  await snooze.focus();
+  await page.keyboard.press("Enter");
+  await expect(choices.first()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(snooze).toBeFocused();
+
+  await second.focus();
+  await page.keyboard.press("j");
+  const third = rows.nth(2);
+  await expect(third).toHaveAttribute("aria-current", "true");
+  await expect(title).toHaveText(await selectedTitle(third));
+  await expect(third).toBeInViewport({ ratio: 0.98 });
+  await expect(open).toBeInViewport({ ratio: 0.98 });
+});
+
 test("the Inbox total counts each pull request once, those in no inbox, and badge-off inboxes", async ({
   page,
 }) => {

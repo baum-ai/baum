@@ -43,7 +43,16 @@ test("opens the session panel on a pull request and starts a session there", asy
 
   const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
   await expect(composer).toBeFocused();
+  // It grows with a longer message, its text never spilling out of it, and
+  // shrinks back once it is short again.
+  const oneLine = (await composer.boundingBox())!.height;
+  await composer.fill("first line\nsecond line\nthird line");
+  await expect
+    .poll(async () => (await composer.boundingBox())!.height)
+    .toBeGreaterThan(oneLine * 2);
+  expect(await composer.evaluate((box) => box.scrollHeight <= box.clientHeight)).toBe(true);
   await composer.fill("Why is the retry delay capped?");
+  await expect.poll(async () => (await composer.boundingBox())!.height).toBe(oneLine);
   await composer.press("Enter");
   // The prompt shows at once, before the daemon answers.
   await expect(panel(page).getByText("Why is the retry delay capped?").first()).toBeVisible();
@@ -295,4 +304,53 @@ test("a comment the agent proposes joins the pending review only after Save", as
   await proposal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(proposal).toHaveCount(0);
   await expect(count).toHaveText(String(before + 1));
+});
+
+test("a menu opened beside the panel draws over it, and the panel stays open", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto(await launchURL());
+  const rows = page.locator(".upnext-list button.upnext-row");
+  await expect(rows.first()).toBeVisible({ timeout: 15000 });
+  await page.evaluate(() =>
+    fetch("api/settings/panel", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ position: "right" }),
+    }),
+  );
+  try {
+    await page.reload();
+    await expect(rows.first()).toBeVisible({ timeout: 15000 });
+    await page.keyboard.press("Control+`");
+    await expect(panel(page)).toHaveAttribute("data-position", "right");
+    await page.locator("summary.filter-menu-button").click();
+    const menu = page.locator(".filter-menu-panel");
+    await expect(page.getByRole("combobox", { name: "Add filter", exact: true })).toBeFocused();
+    const sheet = (await panel(page).boundingBox())!;
+    const box = (await menu.boundingBox())!;
+    // Where the menu and the panel overlap, the menu is in front.
+    const left = Math.max(sheet.x, box.x);
+    const right = Math.min(sheet.x + sheet.width, box.x + box.width);
+    const top = Math.max(sheet.y, box.y);
+    const bottom = Math.min(sheet.y + sheet.height, box.y + box.height);
+    expect(right).toBeGreaterThan(left);
+    expect(bottom).toBeGreaterThan(top);
+    const front = await page.evaluate(
+      ([x, y]) => !!document.elementFromPoint(x!, y!)?.closest(".filter-menu-panel"),
+      [(left + right) / 2, (top + bottom) / 2],
+    );
+    expect(front).toBe(true);
+    await page.screenshot({ path: "test-results/menu-over-session-panel.png" });
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(panel(page)).toBeVisible();
+  } finally {
+    await page.evaluate(() =>
+      fetch("api/settings/panel", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position: "bottom" }),
+      }),
+    );
+  }
 });

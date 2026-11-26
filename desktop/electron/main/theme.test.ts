@@ -23,6 +23,7 @@ import {
   type Saved,
   ThemeStore,
   themeBootstrap,
+  windowBackground,
   withinTotal,
 } from "./theme.ts";
 
@@ -48,6 +49,48 @@ function styleOf() {
     },
   };
 }
+
+describe("window background", () => {
+  const bootstrap = (base: Base, tokens: Record<string, string> = {}): ThemeBootstrap => ({
+    base,
+    tokens,
+  });
+
+  it("is the built-in page surface of each base", () => {
+    expect(windowBackground(bootstrap("light"))).toBe("#ffffff");
+    // 89% shadow over the paper, as palette.css mixes it.
+    expect(windowBackground(bootstrap("dark"))).toBe("#1c1c1c");
+  });
+
+  it("follows a theme's page surface, then its seeds", () => {
+    expect(windowBackground(bootstrap("dark", { "--surface-page": "#14202A" }))).toBe("#14202a");
+    expect(windowBackground(bootstrap("light", { "--surface-page": "#fed" }))).toBe("#ffeedd");
+    expect(windowBackground(bootstrap("light", { "--color-paper": "#faf5ec" }))).toBe("#faf5ec");
+    expect(
+      windowBackground(
+        bootstrap("dark", { "--color-paper": "#ffffff", "--color-shadow": "#102030" }),
+      ),
+    ).toBe("#2a3947");
+  });
+
+  it("falls back to the recipe for a colour Electron cannot take", () => {
+    expect(
+      windowBackground(bootstrap("light", { "--surface-page": "color-mix(in srgb, red, blue)" })),
+    ).toBe("#ffffff");
+    expect(windowBackground(bootstrap("dark", { "--color-paper": "white" }))).toBe("#1c1c1c");
+  });
+
+  it("the store says when a different theme is saved", () => {
+    let changes = 0;
+    const store = new ThemeStore(undefined, () => changes++);
+    const next = saved(palette("light", [["--surface-page", "#fafafa"]]));
+    store.set(next);
+    store.set(next);
+    expect(changes).toBe(1);
+    expect(() => store.set(saved(palette("light", [["bad", "x"]])))).toThrow();
+    expect(changes).toBe(1);
+  });
+});
 
 describe("theme", () => {
   it("a saved theme survives a restart", () => {

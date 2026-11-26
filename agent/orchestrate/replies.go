@@ -56,6 +56,7 @@ type sectionReply struct {
 type blockReply struct {
 	Type  string       `json:"type"`
 	Title *string      `json:"title"`
+	Kind  *string      `json:"kind"`
 	Text  *string      `json:"text"`
 	Items []pointReply `json:"items"`
 	Tile  *string      `json:"tile"`
@@ -64,6 +65,7 @@ type blockReply struct {
 type pointReply struct {
 	Text  string            `json:"text"`
 	More  *string           `json:"more"`
+	Tone  *string           `json:"tone"`
 	Cites []json.RawMessage `json:"cites"`
 }
 
@@ -470,11 +472,14 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 				continue
 			}
 			b.Title = c.inline(at+"/title", deref(block.Title), reviewv2.MaxBlockTitle, false)
+			if block.Type == reviewv2.BlockNote {
+				b.Kind = deref(block.Kind)
+			}
 		case reviewv2.BlockPoints:
 			b.Title = c.inline(at+"/title", deref(block.Title), reviewv2.MaxBlockTitle, false)
 			for j, item := range block.Items {
 				pat := fmt.Sprintf("%s/items/%d", at, j)
-				point := reviewv2.Point{Text: c.inline(pat+"/text", item.Text, reviewv2.MaxPoint, false), More: c.inline(pat+"/more", deref(item.More), reviewv2.MaxPointDetail, false)}
+				point := reviewv2.Point{Text: c.inline(pat+"/text", item.Text, reviewv2.MaxPoint, false), More: c.inline(pat+"/more", deref(item.More), reviewv2.MaxPointDetail, false), Tone: deref(item.Tone)}
 				if point.Text == "" {
 					continue
 				}

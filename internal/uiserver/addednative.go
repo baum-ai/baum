@@ -116,7 +116,7 @@ func (a LocalAPI) addNative(ctx context.Context, c repos.Clone, number int, by s
 	if err := a.roomFor(ctx, pr, id); err != nil {
 		return AddedTile{}, err
 	}
-	section := shown.sectionFor(strings.TrimSpace(add.Section), reviewv2.HunkIDs(tile.Cites))
+	section := shown.place(strings.TrimSpace(add.Section), reviewv2.HunkIDs(tile.Cites))
 	if err := a.Added.Add(ctx, pr, addedtiles.Added{Tile: id, Kind: addedtiles.KindNative, Name: add.Type, Digest: addedtiles.NativeDigest, Section: section, By: by}); err != nil {
 		return AddedTile{}, err
 	}
@@ -135,23 +135,6 @@ func nativeTileID(typ string) (string, error) {
 		return "", err
 	}
 	return "added_" + typ + "_" + hex.EncodeToString(b[:]), nil
-}
-
-// sectionFor is where a native tile added to the shown version goes, as
-// section is for a library tile: the section asked for (a tile asked for
-// stands for its section), else the one whose hunks it cites most, else
-// context; with neither, none, so the page places it.
-func (s shownVersion) sectionFor(asked string, hunks []string) string {
-	if owner, ok := s.owners[asked]; ok {
-		asked = owner
-		if owner == reviewv2.OwnerOverview {
-			asked = ""
-		}
-	}
-	if asked == "" && len(hunks) == 0 {
-		return ""
-	}
-	return reviewv2.OwnerFor(s.Review, asked, hunks)
 }
 
 // codeExcerpt is a code tile's data from what the agent named ({hunk,

@@ -19,7 +19,9 @@ import (
 // on the section of the page the person was reading (the page's focus), is
 // kept on this computer only, and has Remove on its menu, with Undo. Like
 // the propose_* tools they are global, so an action never sees them, and
-// refuse any page but the pull request's.
+// refuse any page but a pull request's. They act on the pull request the
+// turn was sent from, so a turn keeps working on it while the person reads
+// another page (tileTarget).
 
 // AddedTiles adds library tiles to a pull request's review page; the
 // daemon's is uiserver's, over internal/addedtiles.
@@ -54,48 +56,70 @@ var addPageTools = []string{"tile_type", "add_tile"}
 // errNoAddedTiles is a daemon without added tiles.
 var errNoAddedTiles = errors.New("adding tiles is not available in this baum")
 
-// errOtherTurnPage is an edit from a turn begun on another page.
-var errOtherTurnPage = errors.New("This conversation was started about another page; ask from the pull request you want to change")
-
-// tilePage is the pull request page the person has open, for a tool that
-// changes its tiles: only a chat on the pull request's page may, and only
-// from a turn sent from that same pull request: a conversation's page
-// follows the person around the app, so a long turn begun about one pull
-// request must not change another they opened meanwhile.
-func tilePage(c CallContext) (string, int, error) {
-	if c.Consumer.Kind == Action || !c.HasPage || c.Page.Page != PagePullRequest || c.Page.Repository == "" || c.Page.PullRequest < 1 {
-		return "", 0, errors.New("tiles are added to the pull request page the person has open: open a pull request's page first")
+// tileTarget is the pull request page a tool that changes tiles acts on:
+// the page the conversation's current turn was sent from, else the page
+// open now. A conversation's page follows the person around the app, so a
+// long turn keeps working on the pull request it was asked about while the
+// person reads another, and never changes the one they opened meanwhile.
+// While the page open now is that same pull request, it is the one read, as
+// the person may have moved to another section since.
+func tileTarget(c CallContext) (PageContext, bool) {
+	switch {
+	case c.HasTurn && c.HasPage && samePull(c.Turn, c.Page):
+		return c.Page, true
+	case c.HasTurn:
+		return c.Turn, true
 	}
-	if c.HasTurn && (c.Turn.Page != PagePullRequest || !strings.EqualFold(c.Turn.Repository, c.Page.Repository) || c.Turn.PullRequest != c.Page.PullRequest) {
-		return "", 0, errOtherTurnPage
-	}
-	return c.Page.Repository, c.Page.PullRequest, nil
+	return c.Page, c.HasPage
 }
 
-// focusSection is the section of the review page the person is reading,
-// from the page's focus: a section of How it works, or "context" for Where
-// this fits; empty on another tab.
+// samePull reports whether two pages are the same pull request's page.
+func samePull(a, b PageContext) bool {
+	return a.Page == PagePullRequest && b.Page == PagePullRequest && strings.EqualFold(a.Repository, b.Repository) && a.PullRequest == b.PullRequest
+}
+
+// tilePage is the pull request a tool that changes its tiles acts on (see
+// tileTarget): only a chat may, and only about a pull request's page.
+func tilePage(c CallContext) (string, int, error) {
+	p, ok := tileTarget(c)
+	if c.Consumer.Kind == Action || !ok || p.Page != PagePullRequest || p.Repository == "" || p.PullRequest < 1 {
+		return "", 0, errors.New("tiles are added to a pull request's review page: ask from the pull request's page")
+	}
+	return p.Repository, p.PullRequest, nil
+}
+
+// focusSection is where on the review page the person is reading, from the
+// focus of the page tileTarget gives: a section of How it works, "context"
+// for Where this fits, or "overview" on the Overview tab; empty elsewhere
+// (Code), where the tile goes on the section whose code it cites most.
 func focusSection(c CallContext) string {
-	if !c.HasPage || len(c.Page.Focus) == 0 {
+	p, ok := tileTarget(c)
+	if !ok || len(p.Focus) == 0 {
 		return ""
 	}
 	var focus struct {
+		Tab     string `json:"tab"`
 		Section string `json:"section"`
 		Tile    string `json:"tile"`
 	}
-	if json.Unmarshal(c.Page.Focus, &focus) != nil {
+	if json.Unmarshal(p.Focus, &focus) != nil {
 		return ""
 	}
-	// A tile link shows the section that owns the tile; the host resolves
-	// a tile ID to that section.
-	if focus.Section == "" {
+	switch {
+	case focus.Section != "":
+		return focus.Section
+	case focus.Tile != "":
+		// A tile link shows the section that owns the tile; the host
+		// resolves a tile ID to that section.
 		return focus.Tile
+	case focus.Tab == "overview":
+		return "overview"
 	}
-	return focus.Section
+	return ""
 }
 
 // sectionArg is the section argument the add tools take.
-const sectionArg = `"section":{"type":"string","maxLength":128,"description":"The section of the review page the tile goes on: a section id, or context for Where this fits. Without it, the section the person is reading, else the one whose code the tile cites most."}`
+const sectionArg = `"section":{"type":"string","maxLength":128,"description":"Where on the review page the tile goes: overview for the Overview tab, context for Where this fits, or a section id. Without it, where the person is reading (overview on the Overview tab), else the section whose code the tile cites most, else overview."}`
 
 const addRule = " It changes only the person's own review page of this pull request, at once; never the review's content. The tile has Remove on its menu, with Undo."
 
@@ -107,7 +131,7 @@ const preferBuiltIn = "Use a built-in or library type whenever one can show what
 func (s *Server) addTools() []Tool {
 	return []Tool{{
 		Name: "add_tile",
-		Description: "Adds a tile to the review on the pull request page the person has open, at once, on a section of the page. " + preferBuiltIn + " " +
+		Description: "Adds a tile to the review on the pull request page this turn was sent from, at once, on a section of the page; it stays that pull request's if the person opens another page meanwhile. " + preferBuiltIn + " " +
 			"The built-in types, drawn by the page itself: " + builtinNames() + ". The library types: " + libraryNames() + ". " +
 			"First read tile_type and write the data yourself from the diff and checkout you have, then pass it as data: the tile shows at once. The host checks the data against the type's schema and this version's hunks and says where it does not fit, never changing anything then; fix it and call again. " +
 			"A built-in type always needs data, and keeps it for later versions of the pull request. For images, pass each image file's absolute path on this computer (take a screenshot, or download an image, to a file first; if the repository's agent instructions (CLAUDE.md, AGENTS.md, their guides) describe how to screenshot its app, use that): the host stores the images itself, so never put image bytes in data. " +
@@ -149,7 +173,7 @@ func (s *Server) addTools() []Tool {
 			if err != nil {
 				return "", err
 			}
-			return addResult(added)
+			return addResult(repository, number, added)
 		},
 	}}
 }
@@ -171,9 +195,9 @@ func unknownType(name string) error {
 
 // addResult answers an add: the tile, whether it shows its data or is being
 // filled, and the section it sits on.
-func addResult(added TileAdded) (string, error) {
-	out := map[string]string{"tile": added.Tile, "state": added.State, "section": added.Section,
-		"note": "Tell the person the tile is on their page, and that Remove on its menu takes it off."}
+func addResult(repository string, number int, added TileAdded) (string, error) {
+	out := map[string]string{"tile": added.Tile, "state": added.State, "section": added.Section, "pull_request": fmt.Sprintf("%s#%d", repository, number),
+		"note": "Tell the person the tile is on this pull request's review page (name the pull request if they have another page open now), and that Remove on its menu takes it off."}
 	if added.State == "filling" {
 		out["note"] = "The tile shows as being filled until baum's fill lands, usually within a minute; tell the person."
 	}

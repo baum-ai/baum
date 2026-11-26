@@ -52,6 +52,25 @@ func TestFixRunsInTheWorkspaceWriteSandbox(t *testing.T) {
 	}
 }
 
+// A fix that keeps its session lets Codex record it, so baum's commit of the
+// fix can be linked to it, and keeps its sandbox; resuming one, which would
+// pass the sandbox another way, is refused.
+func TestFixKeepsItsSessionInItsSandbox(t *testing.T) {
+	script := fakeCodex(t, "codex-cli 0.162.1", strings.Replace(recording, successEvents, fixEvents, 1))
+	t.Setenv("TMPDIR", t.TempDir())
+	dir := t.TempDir()
+	if _, err := (&Backend{Binary: script, Model: "m"}).Fix(context.Background(), agent.Request{Directory: dir, Scratch: t.TempDir(), GitDir: t.TempDir(), Prompt: "fix", MaxCalls: 3, MaxTokens: 100, PersistSession: true}); err != nil {
+		t.Fatal(err)
+	}
+	args := readLines(t, dir, "arguments.txt")
+	if at := slices.Index(args, "--sandbox"); slices.Contains(args, "--ephemeral") || at < 0 || args[at+1] != "workspace-write" {
+		t.Errorf("arguments %q", args)
+	}
+	if _, err := (&Backend{Binary: script, Model: "m"}).Fix(context.Background(), agent.Request{Directory: t.TempDir(), Prompt: "fix", MaxCalls: 3, MaxTokens: 100, ResumeSession: "aaaaaaaa-0000-4000-8000-000000000001"}); err == nil {
+		t.Error("a fix resumed a session")
+	}
+}
+
 // From PermissionProfileVersion on, a fix runs under a permission profile
 // that also keeps the credential paths unreadable.
 func TestFixRunsUnderAPermissionProfile(t *testing.T) {

@@ -172,8 +172,13 @@ func (c *Backend) run(ctx context.Context, request agent.Request, kind runKind, 
 	if err := request.ValidateSession(); err != nil {
 		return result, fmt.Errorf("codex: %w", err)
 	}
-	if request.KeepsSession() && (c.Profile != Local || fix) {
-		return result, errors.New("codex: only a Local profile review or task can keep or resume a session")
+	if request.KeepsSession() && c.Profile != Local {
+		return result, errors.New("codex: only the Local profile can keep or resume a session")
+	}
+	// A fix may keep its session, so baum's commit of its work links to it,
+	// but never resumes one: exec resume takes no --sandbox.
+	if request.ResumeSession != "" && fix {
+		return result, errors.New("codex: a fix cannot resume a session")
 	}
 	if request.MCP != nil {
 		if c.Profile != Local {

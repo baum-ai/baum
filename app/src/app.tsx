@@ -59,7 +59,8 @@ import {
   progressParts,
   type ReloadPart,
 } from "./reload-events";
-import { queueItems, UpNextPage, useUpNext } from "./up-next";
+import { queueItems, UpNextPage, upNextKey, useUpNext } from "./up-next";
+import { usePullActivity } from "./pr-activity";
 import {
   FilterBar,
   FilterButton,
@@ -121,6 +122,7 @@ import {
   publishConsoleResync,
   sessionPanel,
   SessionPanelHost,
+  useConversations,
   useSessionPanel,
 } from "./session-panel";
 import { SampleGuard } from "./sample";
@@ -976,6 +978,23 @@ function Workspace({ url }: { url: UrlState }) {
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
   const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error, groups);
+  // What happened on each pull request since its page was last open, which
+  // its row counts; the page open now has read all of it.
+  const conversations = useConversations();
+  // Pull requests are counted on the pages that show them: counting compares
+  // reads, so what changes meanwhile is counted on coming back.
+  const pullPage = page === "inbox" || page === "pulls";
+  const openGroup = pullPage && groupId ? groups.find((group) => group.id === groupId) : undefined;
+  const activity = usePullActivity(
+    snapshot.entries,
+    conversations.loaded && !conversations.error ? conversations.list : null,
+    openGroup
+      ? openGroup.members.map((number) => upNextKey({ repository: openGroup.repository, number }))
+      : pullPage && selectedEntry
+        ? [upNextKey(selectedEntry.pull_request)]
+        : [],
+    pullPage && revision > 0 && !error,
+  );
   // What the sidebar highlights is the page that shows the queue, with the
   // inbox the address names, when the daemon still has it.
   const railPage: Page =
@@ -1205,9 +1224,13 @@ function Workspace({ url }: { url: UrlState }) {
   });
   // One notice for every repository GitHub could not refresh, whichever
   // refresh failed: the cause and the fix are usually the same connection.
+  // One pull request's details failing to read is not the repository failing
+  // to refresh: that read backs off on its own while the polls go on.
   const unsynced = [
     ...new Set([
-      ...background.filter((s) => s.error).map((s) => s.repository),
+      ...background
+        .filter((s) => s.error && s.error !== "metadata_unavailable")
+        .map((s) => s.repository),
       ...rates.filter((r) => r.error).map((r) => r.repository),
     ]),
   ];
@@ -2095,6 +2118,7 @@ function Workspace({ url }: { url: UrlState }) {
                   : undefined
               }
               entries={indexedEntries}
+              activity={activity}
               Link={LocalLink}
             />
           ) : page === "pulls" ? (
@@ -2460,6 +2484,7 @@ function Workspace({ url }: { url: UrlState }) {
             page={pageContext}
             title={pageTitle}
             liveTick={liveTick}
+            conversations={conversations}
             go={navigate}
           />
         </Profiled>

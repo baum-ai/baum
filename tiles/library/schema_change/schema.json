@@ -110,7 +110,7 @@
         "columns": {
           "type": "array",
           "maxItems": 60,
-          "description": "Every column of a created table; the added, removed, altered and renamed columns of any other.",
+          "description": "Every column of a created table; the added, removed, altered and renamed columns of any other, and a few unchanged ones beside them, never more than the changed ones.",
           "items": { "$ref": "#/$defs/column" }
         },
         "indexes": {
@@ -128,7 +128,7 @@
       "required": ["name", "change", "before", "after", "destructive", "note"],
       "properties": {
         "name": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "change": { "enum": ["added", "removed", "altered", "renamed"] },
+        "change": { "enum": ["added", "removed", "altered", "renamed", "unchanged"], "description": "unchanged: a column of an altered table the pull request leaves as it is, listed for context with before equal to after." },
         "before": { "type": ["string", "null"], "maxLength": 160, "description": "The column's definition before (type and constraints as written; for a rename, its old name first); null for an added column." },
         "after": { "type": ["string", "null"], "maxLength": 160, "description": "The column's definition after, as written; null for a removed column." },
         "destructive": { "type": "boolean", "description": "true when existing rows can lose data or start failing: a removed column, a narrowed type, NOT NULL added without a default, a rename old code still reads." },

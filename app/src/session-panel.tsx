@@ -211,7 +211,7 @@ export function uncleanText(unclean: UncleanDirectory): string {
 
 /** The daemon's conversations, newest first, and whether it runs the panel
  *  at all; read when the app starts and again on each change. */
-function useConversations() {
+export function useConversations() {
   const [list, setList] = useState<ConversationSummary[]>([]);
   const [error, setError] = useState("");
   // Whether a read answered, or failed, at least once.
@@ -220,7 +220,9 @@ function useConversations() {
     try {
       const answer = await listConversations();
       sessionPanel.setAvailable(answer !== null);
-      setList(answer ?? []);
+      const next = answer ?? [];
+      // An unchanged list keeps its value, so nothing renders again for it.
+      setList((list) => (JSON.stringify(list) === JSON.stringify(next) ? list : next));
       setError("");
     } catch (e) {
       // A daemon too old for the panel answers 404: it has none.
@@ -381,16 +383,19 @@ export function SessionPanelHost({
   page,
   title,
   liveTick,
+  conversations,
   go,
 }: {
   page: PageContext;
   title?: string;
   liveTick: number;
+  /** The daemon's conversations (`useConversations`), which the app reads
+   *  once for the panel and for what each pull request's rows count. */
+  conversations: ReturnType<typeof useConversations>;
   /** Goes to a page of the app, as its links do. */
   go: (href: string) => void;
 }) {
   const panel = useSessionPanel();
-  const conversations = useConversations();
   const settings = usePanelSettings();
   usePageReport(page, panel.available !== false);
   // The panel's key works anywhere, a text field included, so it is not one
@@ -526,6 +531,32 @@ function SessionPanel({
   useLayoutEffect(() => {
     composer.current?.focus({ preventScroll: true });
   }, [panel.focus]);
+  // The composer grows with its text up to its CSS max-height, then scrolls.
+  // WebKit, the desktop app's webview, ignores `field-sizing: content`. Its
+  // text re-wraps when the panel's width changes, so that measures it too.
+  const fitComposer = () => {
+    const box = composer.current;
+    if (!box) return;
+    // Measured without a scrollbar, which would narrow it and wrap more.
+    box.style.overflow = "hidden";
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
+    box.style.overflow = "";
+  };
+  useLayoutEffect(fitComposer, [panel.draft]);
+  useEffect(() => {
+    const box = composer.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    // Its first call fits it too: a remounted composer keeps its draft.
+    let width = -1;
+    const observer = new ResizeObserver(() => {
+      if (box.clientWidth === width) return;
+      width = box.clientWidth;
+      fitComposer();
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [panel.available]);
   // Hidden while the keys were in it, they go back to what had them before
   // it opened, or to the page.
   // Measured as it unmounts, before its elements leave the page and the focus

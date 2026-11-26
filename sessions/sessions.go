@@ -56,6 +56,10 @@ type Options struct {
 	// PreviousPaths are directories the repository used to live at, so
 	// sessions recorded there still count.
 	PreviousPaths []string
+	// CheckoutParents hold checkouts of the repository that are gone, each
+	// in a directory of its own, whose sessions started at the top of their
+	// checkout (collector.FindOptions.CheckoutParents): baum's fixes.
+	CheckoutParents []string
 	// Sources restricts the stores read; empty means Sources.
 	Sources []vendors.Slug
 	// Since drops sessions last modified before it.
@@ -219,6 +223,7 @@ func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error)
 		CodexSessionsDir:  opts.CodexSessionsDir,
 		CursorStorePaths:  opts.CursorStorePaths,
 		PreviousPaths:     opts.PreviousPaths,
+		CheckoutParents:   opts.CheckoutParents,
 		Worktrees:         d.worktrees,
 		Since:             opts.Since,
 	})

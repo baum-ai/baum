@@ -261,7 +261,15 @@ func TestShownSectionOfTile(t *testing.T) {
 	if got := s.section("tl_a", nil); got != "context" {
 		t.Errorf("a tile asked for goes on its section; got %q", got)
 	}
-	if got := s.section("tl_o", nil); got != "" {
-		t.Errorf("an overview tile names no section; got %q", got)
+	if got := s.section("tl_o", nil); got != reviewv2.OwnerOverview {
+		t.Errorf("a tile asked for on the overview's tile goes on the overview; got %q", got)
+	}
+	if got := s.section("", nil); got != "" {
+		t.Errorf("a tile with no section and no hunks keeps none; got %q", got)
+	}
+	// A baum.review/1 version's pages are the viewer's own, with no
+	// Overview to stand on: the tile keeps no section.
+	if got := (shownVersion{}).section(reviewv2.OwnerOverview, nil); got != "" {
+		t.Errorf("a baum.review/1 version took a tile on the overview: %q", got)
 	}
 }

@@ -195,6 +195,7 @@
       "properties": {
         "type": { "enum": ["prose", "points", "note", "tile"] },
         "title": { "type": "string", "maxLength": 160, "description": "An optional label above the block, at most 60 characters written; a tile block's title is the tile's own." },
+        "kind": { "enum": ["caveat", "decision", "unchanged", "follow_up"], "description": "A note's kind, drawn with its own icon: a caveat (an exception or limit to watch), a decision (a choice made on purpose), what stays unchanged, or a follow-up (work left for later). A note without one is a plain aside; other blocks have none." },
         "text": { "type": "string", "maxLength": 1500, "description": "Prose (at most 450 characters written) and note (240): inline markdown, bold and code only." },
         "items": {
           "type": "array",
@@ -208,6 +209,7 @@
             "properties": {
               "text": { "type": "string", "minLength": 1, "maxLength": 600, "description": "One line, at most 180 characters written, inline markdown." },
               "more": { "type": "string", "maxLength": 1500, "description": "The detail the page shows when the line is opened, at most 450 characters written." },
+              "tone": { "enum": ["new", "good", "bad", "muted", "missing"], "description": "How the line reads, drawn as its marker: one of v2Tone but plain, which is a line without one." },
               "cites": { "type": "array", "items": { "$ref": "#/$defs/anchor" } }
             }
           }
@@ -304,7 +306,7 @@
     },
     "v2TileData_columns": {
       "type": "object",
-      "description": "Two or three labelled lists side by side.",
+      "description": "Two or three labelled lists side by side, or, with rows, two or three states of one thing compared item by item.",
       "additionalProperties": false,
       "required": ["columns"],
       "properties": {
@@ -315,7 +317,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["label", "items"],
+            "required": ["label"],
             "properties": {
               "label": { "type": "string", "minLength": 1, "maxLength": 40 },
               "tone": { "$ref": "#/$defs/v2Tone" },
@@ -333,6 +335,31 @@
                   }
                 }
               }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "description": "One item per column, null where that column has none. With rows, the columns have no items.",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["title"],
+                  "properties": {
+                    "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+                    "note": { "type": "string", "maxLength": 80 }
+                  }
+                },
+                { "type": "null" }
+              ]
             }
           }
         }

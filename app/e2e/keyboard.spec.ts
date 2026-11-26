@@ -127,6 +127,25 @@ test("Tab on Settings reaches its controls past the sidebar", async ({ page }) =
   expect(settings.slice(settings.indexOf("sections"))).toContain("content");
 });
 
+test("all Settings sections remain in view in the smallest desktop window", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto(await launchURL());
+  await expect(page.getByRole("main")).toBeVisible();
+  await page.goto(new URL("?page=settings&section=tiles", page.url()).toString());
+
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  const tiles = sections.getByRole("button", { name: /Tile library/ });
+  await expect(tiles).toHaveAttribute("aria-current", "page");
+  for (const button of await sections.getByRole("button").all()) {
+    await expect(button).toBeInViewport({ ratio: 1 });
+  }
+
+  await page.keyboard.press("Shift+ArrowUp");
+  const prompts = sections.getByRole("button", { name: /^Prompts/ });
+  await expect(prompts).toBeFocused();
+  await expect(prompts).toHaveAttribute("aria-current", "page");
+});
+
 test("Tab stays inside a dialog and goes through its controls", async ({ page }) => {
   await page.goto(await launchURL());
   await expect(page.locator("button.upnext-row").first()).toBeVisible();

@@ -44,6 +44,7 @@ import {
 import { PageBar, RefreshButton, useReread } from "./shell";
 import { listKeys, listStep, useRowFocus, useShortcuts } from "./shortcuts";
 import { FilterBar, FilterButton } from "./filter-menu";
+import { useTopLayer } from "./top-layer";
 import { KeywordSearch } from "@baum/viewer/components/decision-filters";
 import {
   timelineFields,
@@ -818,7 +819,9 @@ function MoreMenu({
   note: string;
   onRebuild: () => void;
 }) {
-  const { detailsProps, close } = useDisclosure();
+  const { detailsProps, close, open } = useDisclosure();
+  const menu = useRef<HTMLDivElement>(null);
+  useTopLayer(menu, open);
   return (
     <details {...detailsProps} className="group relative ml-auto">
       <summary
@@ -834,7 +837,10 @@ function MoreMenu({
           <circle cx="8" cy="13" r="1.5" />
         </svg>
       </summary>
-      <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-md border border-default bg-surface-card p-1 shadow-overlay">
+      <div
+        ref={menu}
+        className="absolute right-0 mt-1 flex w-60 flex-col rounded-md border border-default bg-surface-card p-1 shadow-overlay"
+      >
         <button
           type="button"
           disabled={starting || blocked !== ""}

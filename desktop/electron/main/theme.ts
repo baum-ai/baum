@@ -109,7 +109,11 @@ const same = (a: Saved, b: Saved) => JSON.stringify(a) === JSON.stringify(b);
 export class ThemeStore {
   private saved: Saved;
 
-  constructor(private readonly path?: string) {
+  /** `onChange` runs after a different theme is saved. */
+  constructor(
+    private readonly path?: string,
+    private readonly onChange?: () => void,
+  ) {
     this.saved = path === undefined ? defaultSaved() : ThemeStore.load(path);
   }
 
@@ -148,6 +152,7 @@ export class ThemeStore {
       }
     }
     this.saved = structuredClone(next);
+    this.onChange?.();
   }
 }
 
@@ -162,6 +167,34 @@ export function themeBootstrap(saved: Saved, prefersDark: boolean): ThemeBootstr
     saved.mode === "light" || saved.mode === "dark" ? saved.mode : prefersDark ? "dark" : "light";
   const theme = saved[slot];
   return { base: theme ? theme.base : slot, tokens: theme ? { ...theme.tokens } : {} };
+}
+
+type Rgb = [number, number, number];
+
+function hexRgb(value: string | undefined): Rgb | null {
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value?.trim() ?? "")?.[1];
+  if (!hex) return null;
+  const full = hex.length === 3 ? [...hex].map((c) => c + c).join("") : hex;
+  return [0, 2, 4].map((i) => Number.parseInt(full.slice(i, i + 2), 16)) as Rgb;
+}
+
+const rgbHex = (rgb: Rgb) =>
+  `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, "0")).join("")}`;
+
+/** The colour a window shows before its page paints: the page surface
+ *  (`--surface-page`) of the connecting and setup screens under the active
+ *  theme, so a dark theme opens without a white flash. Electron takes only a
+ *  plain colour, so a token that is not a hex colour falls back to the
+ *  built-in recipe of viewer/src/palette.css: the paper in light, 89% shadow
+ *  over the paper in dark. */
+export function windowBackground(theme: ThemeBootstrap): string {
+  const page = hexRgb(theme.tokens["--surface-page"]);
+  if (page) return rgbHex(page);
+  const paper = hexRgb(theme.tokens["--color-paper"]) ?? [255, 255, 255];
+  if (theme.base === "light") return rgbHex(paper);
+  const shadow = hexRgb(theme.tokens["--color-shadow"]) ?? [0, 0, 0];
+  const mix = (s: number, p: number) => s * 0.89 + p * 0.11;
+  return rgbHex([mix(shadow[0], paper[0]), mix(shadow[1], paper[1]), mix(shadow[2], paper[2])]);
 }
 
 /** `theme_state` for the native screens and `save_theme` for the daemon's pages. */

@@ -313,3 +313,59 @@ describe("elements written as tags", () => {
     );
   });
 });
+
+describe("baum.compare", () => {
+  const compare = (was: string, now: string) => {
+    current = frame();
+    const result = current.window.baum.compare(was, now) as {
+      was: HTMLElement;
+      now: HTMLElement;
+      same: boolean;
+    };
+    const marks = (node: HTMLElement, tag: string) =>
+      [...node.querySelectorAll(tag)].map((mark) => [mark.className, mark.textContent]);
+    return { ...result, del: marks(result.was, "del"), ins: marks(result.now, "ins") };
+  };
+
+  it("marks the words one side lacks, a run as one mark", () => {
+    const out = compare("TEXT", "TEXT NOT NULL");
+    expect(out.was.textContent).toBe("TEXT");
+    expect(out.now.textContent).toBe("TEXT NOT NULL");
+    expect(out.del).toEqual([]);
+    expect(out.ins).toEqual([["kit-ins", "NOT NULL"]]);
+    expect(out.same).toBe(false);
+  });
+
+  it("marks a removed word as deleted", () => {
+    const out = compare("amount BIGINT", "BIGINT");
+    expect(out.del).toEqual([["kit-del", "amount"]]);
+    expect(out.ins).toEqual([]);
+  });
+
+  it("leaves a rewrite unmarked and calls only identical texts the same", () => {
+    expect(compare("int64", "string, a user login")).toMatchObject({
+      del: [],
+      ins: [],
+      same: false,
+    });
+    expect(compare("TEXT NOT NULL", "TEXT NOT NULL")).toMatchObject({
+      del: [],
+      ins: [],
+      same: true,
+    });
+    expect(compare("DEFAULT 'a  b'", "DEFAULT 'a b'")).toMatchObject({ same: false });
+  });
+
+  it("marks a word whose case changed", () => {
+    const out = compare("DEFAULT 'Draft'", "DEFAULT 'draft'");
+    expect(out.same).toBe(false);
+    expect(out.del).toEqual([["kit-del", "'Draft'"]]);
+    expect(out.ins).toEqual([["kit-ins", "'draft'"]]);
+  });
+
+  it("keeps markup in the texts as text", () => {
+    const out = compare("<b>x</b> y", "<img src=x onerror=alert(1)> y");
+    expect(out.now.querySelector("img")).toBeNull();
+    expect(out.now.textContent).toBe("<img src=x onerror=alert(1)> y");
+  });
+});
