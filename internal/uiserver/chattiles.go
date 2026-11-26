@@ -100,13 +100,13 @@ func (t *ChatTiles) Start(ctx context.Context, owner, repository string, number 
 }
 
 // asked is a section an add tool names, checked against the shown review:
-// a current section or context, or empty.
+// a current section, the overview or context, or empty.
 func (s shownVersion) asked(section string) (string, error) {
-	if section == "" || section == view.ContextSection {
-		return section, nil
+	if section == "" || section == view.ContextSection || section == reviewv2.OwnerOverview {
+		return s.placeable(section), nil
 	}
 	if got := reviewv2.OwnerFor(s.Review, section, nil); got != section {
-		return "", fmt.Errorf("The review has no section %s; name one of its sections, or context for Where this fits", section)
+		return "", fmt.Errorf("The review has no section %s; name one of its sections, overview for the Overview, or context for Where this fits", section)
 	}
 	return section, nil
 }

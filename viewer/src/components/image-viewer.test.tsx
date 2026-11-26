@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { viewerImageWidth } from "../review-image-layout";
 import { ImageViewer, type ViewedImage } from "./image-viewer";
@@ -28,7 +28,7 @@ afterEach(() => {
   root = null;
   document.body.replaceChildren();
   vi.restoreAllMocks();
-  Reflect.deleteProperty(document, "fullscreenEnabled");
+  localStorage.clear();
 });
 
 function mount(image: ViewedImage | null, onClose = () => {}) {
@@ -48,19 +48,28 @@ function mount(image: ViewedImage | null, onClose = () => {}) {
 
 const viewport = () => ({ width: innerWidth, height: innerHeight });
 
-/** Presses at a point of a frame laid out at 0,0–100,100, whose resize grip
- *  is the bottom-right corner, drags it to `width` and lets go. */
-function drag(frame: HTMLElement, x: number, y: number, width?: string) {
-  frame.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+/** Presses the frame's `handle`, moves the pointer by `dx`, `dy` and lets
+ *  go. The frame's laid-out width follows its style. */
+function drag(frame: HTMLElement, handle: string, dx: number, dy = 0) {
   Object.defineProperty(frame, "offsetWidth", {
     configurable: true,
     get: () => Number.parseFloat(frame.style.width) || 0,
   });
-  act(() => {
-    frame.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: x, clientY: y }));
-  });
-  if (width) frame.style.width = width;
-  act(() => window.dispatchEvent(new Event("pointerup")));
+  const grip = frame.querySelector<HTMLElement>(`[data-resize="${handle}"]`)!;
+  const at = (type: string, x: number, y: number) =>
+    act(() => {
+      const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      grip.dispatchEvent(event);
+    });
+  at("pointerdown", 100, 100);
+  at("pointermove", 100 + dx, 100 + dy);
+  at("pointerup", 100 + dx, 100 + dy);
+}
+
+/** Drags the right edge until the frame is `width` pixels wide. */
+function dragTo(frame: HTMLElement, width: number) {
+  drag(frame, "right", (width - Number.parseFloat(frame.style.width)) / 2);
 }
 
 describe("ImageViewer", () => {
@@ -71,9 +80,9 @@ describe("ImageViewer", () => {
     expect(view.frame().style.width).toBe(`${width}px`);
     expect(view.frame().style.aspectRatio).toBe("40 / 20");
 
-    // The person drags the corner; a host re-render with a fresh object
+    // The person drags an edge; a host re-render with a fresh object
     // leaves their size alone.
-    drag(view.frame(), 95, 95, "300px");
+    dragTo(view.frame(), 300);
     view.render({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
     expect(view.frame().style.width).toBe("300px");
     // A window resize leaves it alone too.
@@ -82,14 +91,10 @@ describe("ImageViewer", () => {
     expect(view.frame().style.width).toBe("300px");
   });
 
-  it("refits to a resized window until the person drags the corner", () => {
+  it("refits to a resized window until the person drags an edge", () => {
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
-    // A click on the image itself is not a resize, nor is a press on the
-    // grip that moves nothing.
-    drag(view.frame(), 50, 50);
-    expect(view.dialog.style.top).toBe("");
-    drag(view.frame(), 95, 95);
-    expect(view.dialog.style.top).toBe("");
+    // A press on an edge that moves nothing is not a resize.
+    drag(view.frame(), "bottom-right", 0);
     const before = view.frame().style.width;
     const inner = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
@@ -115,38 +120,96 @@ describe("ImageViewer", () => {
     expect(view.frame().style.aspectRatio).toBe("30 / 60");
   });
 
-  it("goes full screen, and Escape leaves full screen before it closes", () => {
-    const onClose = vi.fn();
-    const requestFullscreen = vi.fn(() => Promise.resolve());
-    // jsdom has no Fullscreen API; the stub is removed after the test.
-    const original = HTMLElement.prototype.requestFullscreen;
-    HTMLElement.prototype.requestFullscreen = requestFullscreen;
-    onTestFinished(() => {
-      HTMLElement.prototype.requestFullscreen = original;
+  it("opens later images at the share of the screen the person last dragged to", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const fit = (width: number, height: number) =>
+      viewerImageWidth({ width, height }, viewport(), 0);
+    const share = 300 / fit(40, 20);
+    dragTo(view.frame(), 300);
+    expect(Number(localStorage.getItem("baum.image-viewer.scale"))).toBeCloseTo(share);
+    view.render(null);
+
+    // Images of other shapes open at the same share of their own fit.
+    const width = () => Number.parseFloat(view.frame().style.width);
+    view.render({ src: "/b.png", alt: "Wide", width: 80, height: 20 });
+    expect(Math.abs(width() - fit(80, 20) * share)).toBeLessThanOrEqual(1);
+    view.render(null);
+    view.render({ src: "/c.png", alt: "Tall", width: 20, height: 40 });
+    expect(Math.abs(width() - fit(20, 40) * share)).toBeLessThanOrEqual(1);
+  });
+
+  it("fits to the screen again and forgets the remembered share", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    dragTo(view.frame(), 300);
+    act(() => view.button("Fit to screen").click());
+    const width = viewerImageWidth({ width: 40, height: 20 }, viewport(), 0);
+    expect(view.frame().style.width).toBe(`${width}px`);
+    expect(localStorage.getItem("baum.image-viewer.scale")).toBe("1");
+  });
+
+  it("remembers nothing from a press that moves the corner a pixel", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const before = Number.parseFloat(view.frame().style.width);
+    drag(view.frame(), "right", -0.5);
+    expect(localStorage.getItem("baum.image-viewer.scale")).toBeNull();
+    expect(view.frame().style.width).toBe(`${before}px`);
+  });
+
+  it("resizes from every edge and corner, never past the screen's fit", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const full = Math.floor(viewerImageWidth({ width: 40, height: 20 }, viewport(), 0));
+    const width = () => Number.parseFloat(view.frame().style.width);
+    // The dialog stays centred, so the frame changes by twice the drag.
+    drag(view.frame(), "top-left", 50, 50);
+    expect(width()).toBe(full - 200);
+    drag(view.frame(), "left", 10);
+    expect(width()).toBe(full - 220);
+    // Height turns into width at the image's proportions (2:1).
+    drag(view.frame(), "top", 0, 10);
+    expect(width()).toBe(full - 260);
+    drag(view.frame(), "bottom", 0, -10);
+    expect(width()).toBe(full - 300);
+    drag(view.frame(), "top-right", -10, 0);
+    expect(width()).toBe(full - 320);
+    drag(view.frame(), "bottom-left", 0, -10);
+    expect(width()).toBe(full - 360);
+    // Dragged outwards, it stops at the full fit.
+    drag(view.frame(), "bottom-right", 5000, 5000);
+    expect(width()).toBe(full);
+  });
+
+  it("follows only the pointer that pressed, and drops a drag cut short by a close", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const start = view.frame().style.width;
+    const grip = view.frame().querySelector<HTMLElement>('[data-resize="right"]')!;
+    const send = (type: string, x: number, pointerId = 1) =>
+      act(() => {
+        const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 0 });
+        Object.defineProperty(event, "pointerId", { value: pointerId });
+        grip.dispatchEvent(event);
+      });
+    send("pointerdown", 500);
+    // A second finger neither moves nor ends the first one's drag.
+    send("pointermove", 400, 2);
+    send("pointerup", 400, 2);
+    expect(view.frame().style.width).toBe(start);
+    // Closed mid-drag: the next image ignores a move with no press.
+    view.render(null);
+    view.render({ src: "/b.png", alt: "Shot", width: 40, height: 20 });
+    const reopened = view.frame().style.width;
+    const next = view.frame().querySelector<HTMLElement>('[data-resize="right"]')!;
+    act(() => {
+      const event = new MouseEvent("pointermove", { bubbles: true, clientX: 100, clientY: 0 });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      next.dispatchEvent(event);
     });
-    // jsdom has no Fullscreen API.
-    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
-    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 }, onClose);
+    expect(view.frame().style.width).toBe(reopened);
+  });
 
-    act(() => view.button("Full screen").click());
-    expect(requestFullscreen).toHaveBeenCalledOnce();
-    // A dialog cannot go full screen itself; its content does.
-    expect(requestFullscreen.mock.contexts[0]).toBe(view.dialog.firstElementChild);
-    expect(view.dialog.dataset.full).toBe("true");
-    expect(view.button("Full screen").getAttribute("aria-pressed")).toBe("true");
-
-    const escape = () => {
-      const cancel = new Event("cancel", { cancelable: true });
-      act(() => view.dialog.dispatchEvent(cancel));
-      if (!cancel.defaultPrevented) act(() => view.dialog.close());
-    };
-    escape();
-    expect(view.dialog.dataset.full).toBeUndefined();
-    expect(view.dialog.open).toBe(true);
-    expect(onClose).not.toHaveBeenCalled();
-
-    escape();
-    expect(view.dialog.open).toBe(false);
-    expect(onClose).toHaveBeenCalledOnce();
+  it("ignores a remembered scale it cannot read", () => {
+    localStorage.setItem("baum.image-viewer.scale", "nope");
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const width = viewerImageWidth({ width: 40, height: 20 }, viewport(), 0);
+    expect(view.frame().style.width).toBe(`${width}px`);
   });
 });

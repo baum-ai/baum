@@ -232,9 +232,9 @@ func TestEvidenceReprojectsWhenAWorktreePlacesATouchedPath(t *testing.T) {
 	useSessionDigests(t)
 	f := linktest.New(t)
 	const editor = "dddddddd-0000-4000-8000-000000000001"
-	// It edits the second commit's file, which links it, and one beside the
-	// clone, where the worktree will be.
-	f.AddEditor(t, editor, "10", "c.txt", "../wt/x.txt")
+	// It creates the second commit, which links it, after editing a file
+	// beside the clone, where the worktree will be.
+	f.AddEditorCommitting(t, editor, "10", f.Commits[1], "c.txt", "../wt/x.txt")
 	req := evidenceRequest(t, f)
 	before := rebuild(t, req)
 	if !slices.ContainsFunc(before, func(s bundle.Session) bool { return s.RootSessionID == editor }) {
@@ -259,7 +259,7 @@ func TestEvidenceReadsAnUnchangedCheckpointOnce(t *testing.T) {
 	useEvidenceMemo(t)
 	useSessionDigests(t)
 	f := linktest.New(t)
-	f.AddCheckpointEditing(t, "b.txt")
+	f.AddCheckpointCommitting(t, f.Commits[1])
 	req := evidenceRequest(t, f)
 	archives := counter("git.archive")
 	first := rebuild(t, req)
@@ -267,7 +267,7 @@ func TestEvidenceReadsAnUnchangedCheckpointOnce(t *testing.T) {
 		t.Fatal("the first build read no checkpoint")
 	}
 	if !slices.ContainsFunc(first, func(s bundle.Session) bool { return s.RootSessionID == linktest.CheckpointSessions[0] }) {
-		t.Fatalf("evidence = %+v, want the checkpoint's editing session linked", first)
+		t.Fatalf("evidence = %+v, want the checkpoint's committing session linked", first)
 	}
 	sameEvidence(t, "first build", first, fullBuild(t, req))
 	archives = counter("git.archive")

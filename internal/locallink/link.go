@@ -141,8 +141,8 @@ type Commit struct {
 // Link is one session matched to a commit.
 type Link struct {
 	Session string `json:"session"`
-	// Method is the independent evidence that matched: commit_ref for commit
-	// creation or files_overlap for inferred contribution.
+	// Method is the evidence that matched: commit_ref, a recorded creation of
+	// the commit.
 	Method     string  `json:"method"`
 	Confidence float64 `json:"confidence"`
 }
@@ -316,7 +316,7 @@ func resolveRequest(ctx context.Context, req Request, graphs bool) (Result, erro
 }
 
 // discoverSessions finds the sessions linkage reads for the commits,
-// without reading any.
+// without reading any, the clone's fixes included (WithFixes).
 func discoverSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit) (*sessions.Discovery, error) {
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
 		opts.Since = since
@@ -324,7 +324,7 @@ func discoverSessions(ctx context.Context, dir string, opts sessions.Options, co
 	if until, ok := sessionsUntil(commits); ok && (opts.StartedBefore.IsZero() || until.Before(opts.StartedBefore)) {
 		opts.StartedBefore = until
 	}
-	d, err := sessions.Discover(ctx, dir, opts)
+	d, err := sessions.Discover(ctx, dir, WithFixes(ctx, dir, opts))
 	if err != nil {
 		return nil, fmt.Errorf("reading sessions: %w", err)
 	}

@@ -1,8 +1,8 @@
-// CPU profiles from `just desktop::profile --engine chromium`, apart from the
+// CPU profiles from `just desktop::profile`, apart from the
 // browser so they can be tested (cpu.test.ts): reading the build's source
 // maps, naming each sampled function by its source, adding up self and total
 // time, lining the profile's clock up with the page's, and the stacks behind
-// the slowest interactions and frames. chromium.ts records the profiles.
+// the slowest interactions and frames. electron.ts records the profiles.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Interaction, LongFrame, Snapshot } from "../../src/perf-collector.ts";

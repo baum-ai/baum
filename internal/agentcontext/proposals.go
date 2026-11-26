@@ -55,18 +55,35 @@ type Proposal struct {
 }
 
 // ProposalAnywhere is a sentinel page name, not a page: the proposals that
-// are not about the page the person has open, the two colour theme targets
-// (TargetTheme, a custom theme, and TargetThemeChoice, switching to an
-// existing one), which the app previews wherever they are and the person
-// saves from anywhere. Propose and Save skip the same-page check for it, and
-// no other target may use it: its proposer refuses any but the theme targets,
-// and the theme targets refuse any real page.
+// are not about the page the person has open, which the person saves from
+// anywhere. They are the two colour theme targets (TargetTheme, a custom
+// theme, and TargetThemeChoice, switching to an existing one), which the app
+// previews wherever they are, and the prompts (TargetPrompt+id, a global
+// prompt, and RepositoryTarget(repository, TargetPrompt+id), a repository's),
+// so a prompt can be changed while reading a review it wrote. Propose and
+// Save skip the same-page check for it, and no other target may use it: its
+// proposer refuses any but these targets, and these targets refuse any real
+// page.
 const ProposalAnywhere = "app"
 
-// isAnywhereTarget reports whether target is one of the theme targets, the
-// only ones proposed under ProposalAnywhere.
+// isAnywhereTarget reports whether target is one proposed under
+// ProposalAnywhere: a theme target or a prompt.
 func isAnywhereTarget(target string) bool {
+	return isThemeTarget(target) || isPromptTarget(target)
+}
+
+// isThemeTarget reports whether target is one of the two theme targets.
+func isThemeTarget(target string) bool {
 	return target == TargetTheme || target == TargetThemeChoice
+}
+
+// isPromptTarget reports whether target is a global prompt (TargetPrompt+id)
+// or a repository's (RepositoryTarget(repository, TargetPrompt+id)).
+func isPromptTarget(target string) bool {
+	if repository, what, ok := ParseRepositoryTarget(target); ok && repository != "" {
+		target = what
+	}
+	return strings.HasPrefix(target, TargetPrompt) && len(target) > len(TargetPrompt)
 }
 
 // Proposer is how one page takes proposals. Every method gets the page
@@ -229,13 +246,13 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	}
 	proposal.Kind = ProposalDiff
 	page, ok := p.registry.Page(consumer)
-	// The exception is for the theme targets alone, and they are proposed
-	// under it alone.
+	// The exception is for the theme and prompt targets alone, and they are
+	// proposed under it alone.
 	if (proposal.Page == ProposalAnywhere) != isAnywhereTarget(proposal.Target) {
 		return Proposal{}, ErrNoProposer
 	}
-	// The theme proposals are the exception: they are not about a page, so
-	// whatever page is open will do.
+	// The theme and prompt proposals are the exception: they are not about a
+	// page, so whatever page is open will do.
 	if !ok || (proposal.Page != ProposalAnywhere && page.Page != proposal.Page) {
 		return Proposal{}, ErrNotCurrentPage
 	}
@@ -272,9 +289,9 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	// before it: only the newest is previewed and saved, and an older one must
 	// not resurface when the newest is saved or dismissed. A replaced proposal
 	// is dropped like a dismissed one.
-	if proposal.Page == ProposalAnywhere {
+	if proposal.Page == ProposalAnywhere && isThemeTarget(proposal.Target) {
 		p.open[consumer] = slices.DeleteFunc(slices.Clone(p.open[consumer]), func(open Proposal) bool {
-			return open.Page == ProposalAnywhere && isAnywhereTarget(open.Target)
+			return open.Page == ProposalAnywhere && isThemeTarget(open.Target)
 		})
 	}
 	if len(p.open[consumer]) >= maxProposals {

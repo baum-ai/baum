@@ -32,19 +32,37 @@ viewer:
 sidecar target="":
     {{ heavy }} oss-test sh desktop/scripts/sidecar.sh {{ target }}
 
-# Build the Linux bundles into target/release/bundle (default: deb)
-build bundles="deb": frontend sidecar
-    {{ heavy }} desktop-test cargo tauri build --bundles {{ bundles }}
+# Build the unpacked Linux app (electron-builder --dir) into
+# target/electron-builder/linux-unpacked
+build: frontend sidecar electron-cache
+    {{ electron }} scripts/bundle.sh --dir linux-amd64 0.0.0 target/release-bundles
 
-# Build the Linux release bundles (deb, AppImage) into target/release-bundles
-# as the release workflow does, without updater signatures. The version
-# defaults to a snapshot's.
-bundle version="0.0.0": frontend sidecar
-    {{ heavy }} desktop-test scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
+# Build the Linux release bundles (deb, AppImage, latest-linux.yml) into
+# target/release-bundles as the release workflow does, without updater
+# signatures. The version defaults to a snapshot's.
+bundle version="0.0.0": frontend sidecar electron-cache
+    {{ electron }} scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
+
+# The bridge release end to end (scripts/bridge-test.sh), under Xvfb: a Tauri
+# AppImage updates itself to the Electron one from a latest.json made as the
+# release makes it, then an Electron AppImage updates itself and refuses a
+# damaged signature. Builds three Linux bundles and a Tauri AppImage into
+# target/bridge, signed with a throwaway key.
+bridge-test: frontend sidecar electron-cache
+    {{ electron }} scripts/bundle.sh linux-amd64 1.2.3 target/bridge/electron
+    {{ electron }} scripts/bundle.sh linux-amd64 1.2.3-test.1 target/bridge/test-1.2.3
+    {{ electron }} scripts/bundle.sh linux-amd64 1.2.4-test.1 target/bridge/test-1.2.4
+    {{ heavy }} desktop-test scripts/bridge-test.sh prepare target/bridge
+    {{ heavy }} desktop-bridge scripts/bridge-test.sh run target/bridge
 
 # Build an ad hoc signed macOS DMG into target/local-dmg (--install also installs it)
 dmg *args: frontend viewer (sidecar "aarch64-apple-darwin") (sidecar "x86_64-apple-darwin")
     scripts/macos-local.sh {{ args }}
+
+# The download caches the desktop-electron service mounts
+[private]
+electron-cache:
+    @mkdir -p "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron" "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron-builder"
 
 dmg_layout_packages := "ds-store==1.3.3 mac-alias==2.2.3 numpy==2.5.4 pillow==13.0.0 tifffile==2026.10.15"
 
@@ -56,40 +74,29 @@ dmg-layout:
         python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30 \
         sh -ec 'pip install --quiet --disable-pip-version-check --target /tmp/py {{ dmg_layout_packages }} && PYTHONPATH=/tmp/py python scripts/dmg-layout.py'
 
-# Regenerate ../third_party/rust.txt, the licences of the crates in the app
-# (just third-party-notices does the rest)
-notices:
-    {{ heavy }} desktop-test scripts/third-party-notices.sh
+# Regenerate ../third_party/electron.txt: Electron's licence and the npm
+# packages the app ships (just third-party-notices does the rest)
+notices: electron-cache
+    {{ electron }} scripts/third-party-notices.sh
 
-# Check in WebKitGTK, under a virtual display in Docker, that no frame of a
-# page can make the app open the browser (tests/navigation). Not run in CI.
-navigation-check:
-    BAUM_OP_RUN=0 {{ dev_compose }} --profile test build desktop-test
-    docker build -q -t baum-desktop-navigation-check \
-        --build-arg DESKTOP_IMAGE="$(BAUM_OP_RUN=0 {{ dev_compose }} --profile test config --images desktop-test)" \
-        {{ source_directory() }}/tests/navigation
-    docker run --rm ${BAUM_DEV_CPUSET:+--cpuset-cpus="$BAUM_DEV_CPUSET"} \
-        --user "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_HOME=/cache/cargo \
-        --add-host attacker.example:127.0.0.1 \
-        -v "{{ source_directory() }}:/oss/desktop" \
-        -v "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/cargo:/cache/cargo" \
-        baum-desktop-navigation-check sh /oss/desktop/tests/navigation/run.sh
+electron := heavy + " desktop-electron"
 
-# Check in WebKitGTK, under a virtual display in Docker, that the tile check
-# window runs in its own web process, that a tile spinning there leaves the
-# main window running, and that closing the window ends the spinning process
-# (tests/check-window). Not run in CI.
-check-window-check:
-    BAUM_OP_RUN=0 {{ dev_compose }} --profile test build desktop-test
-    docker build -q -t baum-desktop-navigation-check \
-        --build-arg DESKTOP_IMAGE="$(BAUM_OP_RUN=0 {{ dev_compose }} --profile test config --images desktop-test)" \
-        {{ source_directory() }}/tests/navigation
-    docker run --rm ${BAUM_DEV_CPUSET:+--cpuset-cpus="$BAUM_DEV_CPUSET"} \
-        --user "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_HOME=/cache/cargo \
-        --add-host attacker.example:127.0.0.1 \
-        -v "{{ source_directory() }}:/oss/desktop" \
-        -v "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/cargo:/cache/cargo" \
-        baum-desktop-navigation-check sh /oss/desktop/tests/check-window/run.sh
+# The Electron shell (electron/): format check, typecheck and unit tests
+electron-check: electron-cache
+    {{ electron }} pnpm check
+
+# The Electron shell's unit tests; pass vitest arguments after it
+electron-test *args: electron-cache
+    {{ electron }} pnpm exec vitest run {{ args }}
+
+# The Electron shell's harness (tests/shell): builds the shell and runs it
+# under Xvfb against a mock daemon. Needs dist/ (just desktop::frontend).
+electron-shell-test *args:
+    @mkdir -p "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron"
+    {{ electron }} sh -c 'pnpm build && pnpm test:shell "$@"' -- {{ args }}
+
+electron-fmt:
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-electron pnpm format
 
 # Check that scripts/updater-manifest.sh rejects tampered releases
 updater-test:
@@ -100,28 +107,30 @@ icons:
     {{ heavy }} --workdir /oss/app ui-test node ../desktop/scripts/prepare-icons.mjs
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 target/icon-source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 target/tray-$s.svg -o icons/tray/$s.png; done'
 
-# Run the native desktop on the Linux or macOS host, with Vite hot reload in Docker
-dev: frontend
+# Run the Electron app on the Linux or macOS host, with its build and Vite hot
+# reload in Docker
+dev: frontend electron-cache
     sh {{ source_directory() }}/scripts/dev.sh
 
 # Run the app on this Wayland display, with the container's own home and daemon
-run: frontend sidecar
+run: frontend sidecar electron-cache
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps \
         -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" \
-        -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \
-        -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-        desktop-test cargo run --locked
+        -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 \
+        desktop-electron sh -c 'pnpm build && exec pnpm exec electron . --ozone-platform=wayland'
 
 # Run the app with its own home, keyring and daemon beside the installed one,
 # one per name (scripts/isolated.sh; --copy-data copies this machine's data,
 # --seed-data writes the seeded profiling dataset)
-isolated *args: frontend viewer sidecar
+isolated *args: frontend viewer sidecar electron-cache
     sh {{ source_directory() }}/scripts/isolated.sh {{ args }}
 
 # Run a scripted journey against the headless app N times after a warm-up,
-# with the profiling build, and write summary.md and metrics.json under
-# target/profile (scripts/profile.sh; --copy-data and --workspace as isolated)
-profile *args: (profile-check args) (frontend "profile") viewer sidecar
+# with the profiling build and a CPU profile per run, and write summary.md
+# and metrics.json under target/profile (scripts/profile.sh; --copy-data and
+# --workspace as isolated; --baseline REF also builds REF and says what
+# changed beyond noise)
+profile *args: (profile-check args) (frontend "profile") viewer sidecar electron-cache
     sh {{ source_directory() }}/scripts/profile.sh {{ args }}
 
 # The profile's arguments, checked before anything is built
@@ -133,9 +142,9 @@ profile-check args:
 isolated-screenshot name="default" out="isolated-screenshot.png":
     #!/bin/sh
     set -eu
-    shot=$(docker exec -w /tmp baum-desktop-{{ name }} sh -c 'rm -f wayland-screenshot-*.png; XDG_RUNTIME_DIR=/tmp/runtime WAYLAND_DISPLAY=wayland-0 weston-screenshooter >/dev/null && ls /tmp/wayland-screenshot-*.png')
+    docker exec baum-desktop-{{ name }} import -display :99 -window root /tmp/isolated-screenshot.png
     cd "{{ invocation_directory() }}"
-    docker cp -q "baum-desktop-{{ name }}:$shot" "{{ out }}"
+    docker cp -q "baum-desktop-{{ name }}:/tmp/isolated-screenshot.png" "{{ out }}"
     echo "{{ out }}"
 
 # A login shell in a running isolated app's container, on its D-Bus session

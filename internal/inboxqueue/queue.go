@@ -285,7 +285,7 @@ func kindOf(e reviewindex.Entry, queue []jobs.Job) string {
 	case blocked(e):
 		return Fix
 	// GitHub can call a head just pushed clean before its checks are queued.
-	case e.Merge == "ready" && !pr.Draft && e.Checks != "running":
+	case e.Merge == "ready" && !pr.Draft && e.Checks != "running" && (pr.ViewerCanPush == nil || *pr.ViewerCanPush):
 		return Merge
 	case !pr.Draft && !pr.Fork && pr.Behind && pr.ViewerCanPush != nil && *pr.ViewerCanPush:
 		return Update

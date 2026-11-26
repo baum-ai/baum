@@ -60,7 +60,7 @@ type Registry struct {
 // The use-when lines of the native types.
 var nativeUseWhen = map[string]string{
 	view.TypeFlow:     "how a request, a job or a person moves through the parts, step by step, with lanes for who or what each path follows",
-	view.TypeColumns:  "two or three lists side by side the reader compares: before and after, allowed and refused, kept and removed",
+	view.TypeColumns:  "two or three lists side by side the reader compares: allowed and refused, kept and removed; or, with rows, before and after compared item by item",
 	view.TypeSequence: "messages between two to four parties in order: a protocol, a handshake, a request across processes",
 	view.TypeTable:    "values a reader compares: limits, codes, states, who may do what",
 }

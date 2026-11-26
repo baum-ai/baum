@@ -224,6 +224,12 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		}
 	}
 
+	// An attachment's context is cut from the redacted body, so a cut never
+	// parts a secret from the text that marks it as one.
+	for i := range bundle.Attachments {
+		bundle.Attachments[i].Context = contextAround(bundle.PullRequest.Body, bundle.Attachments[i].SourceURL)
+	}
+
 	bundle.MaskedSpanCount = total
 	return nil
 }

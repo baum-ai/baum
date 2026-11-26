@@ -1,9 +1,4 @@
-type Shell = Window & {
-  __TAURI_INTERNALS__?: {
-    invoke(command: string, args?: Record<string, unknown>): Promise<unknown>;
-  };
-  __BAUM_DESKTOP__?: unknown;
-};
+import { desktopShell, type DesktopWindow } from "./desktop/native";
 
 /** Whether the desktop shell opens links with its `open_link` command
  *  (`window.__BAUM_DESKTOP__.openLinks === true`). It must on macOS, where
@@ -11,9 +6,9 @@ type Shell = Window & {
  *  navigation, which the shell refuses, before it asks for a new window, so
  *  such a link did nothing. An older shell does not declare it and opens
  *  links from new-window requests. */
-function shellOpensLinks(win: Shell): boolean {
-  if (!win.__TAURI_INTERNALS__) return false;
-  const declared = win.__BAUM_DESKTOP__;
+function shellOpensLinks(win: Window): boolean {
+  if (!desktopShell(win)) return false;
+  const declared = (win as DesktopWindow).__BAUM_DESKTOP__;
   return (
     typeof declared === "object" &&
     declared !== null &&
@@ -27,9 +22,9 @@ function shellOpensLinks(win: Shell): boolean {
  *  `target="_blank"` link, which a browser opens in a new tab and an older
  *  desktop shell hands to the browser. */
 export function openExternal(url: string, win: Window = window) {
-  const shell = win as Shell;
-  if (shellOpensLinks(shell)) {
-    shell.__TAURI_INTERNALS__!.invoke("open_link", { url }).catch((e: unknown) => {
+  const shell = desktopShell(win);
+  if (shell && shellOpensLinks(win)) {
+    shell.invoke("open_link", { url }).catch((e: unknown) => {
       console.warn("baum: the desktop app did not open a link", e);
     });
     return;
@@ -57,14 +52,14 @@ export function openOutsideLinksInBrowser(
   // Tests stand in for a person: a test cannot dispatch a trusted event.
   trusted = (event: Event) => event.isTrusted,
 ) {
-  if (!(target as Shell).__TAURI_INTERNALS__) return () => {};
+  if (!desktopShell(target)) return () => {};
   const click = (event: MouseEvent) => {
     if (!trusted(event) || event.defaultPrevented || event.button !== 0) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
     if (!(link instanceof HTMLAnchorElement) || link.hasAttribute("download")) return;
     const sameWindow = !link.target || link.target.toLowerCase() === "_self";
-    if (!sameWindow && !shellOpensLinks(target as Shell)) return;
+    if (!sameWindow && !shellOpensLinks(target)) return;
     let url: URL;
     try {
       url = new URL(link.href, target.location.href);

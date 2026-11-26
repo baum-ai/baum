@@ -412,3 +412,25 @@ func TestReviewRecordsArePerPullRequestAndValidated(t *testing.T) {
 		}
 	}
 }
+func TestActivityRecordsUnreadCountsPerPullRequest(t *testing.T) {
+	s := store(t)
+	value := `{"prs":{"acme/app#7":{"at":1,"last":{"head":"abc1234","versions":2,"unresolved":1,"review":"approved","updated":"2026-11-25T10:00:00Z","answers":{"c1":"2026-11-25T10:01:00Z"}},"unread":{"pushes":2,"answers":1}}}}`
+	save(t, s, "activity", "", 0, "mutation-00000001", value)
+	if got, err := s.Read("activity", ""); err != nil || string(got.Value) != value {
+		t.Fatalf("read: %+v %v", got, err)
+	}
+	for name, bad := range map[string]string{
+		"no prs":         `{}`,
+		"no last":        `{"prs":{"acme/app#7":{"at":1,"unread":{}}}}`,
+		"negative count": `{"prs":{"acme/app#7":{"at":1,"last":{"head":"","versions":0,"unresolved":0,"review":"","updated":""},"unread":{"pushes":-1}}}}`,
+		"keyed":          value,
+	} {
+		key := ""
+		if name == "keyed" {
+			key = "acme/app#7"
+		}
+		if _, err := s.Replace("activity", key, 1, "mutation-00000002:1", json.RawMessage(bad)); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}

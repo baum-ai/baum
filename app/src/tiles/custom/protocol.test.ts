@@ -81,6 +81,7 @@ describe("readMessage", () => {
     });
     expect(readMessage(m({ kind: "ask" }))).toEqual({ kind: "ask" });
     expect(readMessage(m({ kind: "open" }))).toEqual({ kind: "open" });
+    expect(readMessage(m({ kind: "pong" }))).toEqual({ kind: "pong" });
     expect(readMessage(m({ kind: "key", key: "Escape", shift: true }))).toEqual({
       kind: "key",
       key: "Escape",

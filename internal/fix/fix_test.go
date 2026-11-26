@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/fixdir"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
 func gitIn(t *testing.T, dir string, args ...string) string {
@@ -105,7 +107,7 @@ func options(t *testing.T, r Repositories, a agent.Fixer) Options {
 // refs behind.
 func checkCleanedUp(t *testing.T, r Repositories, o Options) {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(o.Directory, o.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cloneFixes(t, r, o), o.ID)); !os.IsNotExist(err) {
 		t.Errorf("the fix directory remains: %v", err)
 	}
 	if list := gitIn(t, r.Clone, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
@@ -308,6 +310,74 @@ func TestFixAgentFailuresSayWhyAndAreLogged(t *testing.T) {
 				t.Errorf("the log lacks the provider's error:\n%s", log.String())
 			}
 		})
+	}
+}
+
+// cloneFixes is the directory holding r's clone's fixes (fixdir.ForClone).
+func cloneFixes(t *testing.T, r Repositories, o Options) string {
+	t.Helper()
+	common, err := gitlocal.CommonDir(context.Background(), r.Clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fixdir.ForClone(o.Directory, common)
+}
+
+// The agent works in a checkout inside its clone's directory of fixes and
+// keeps its session, so the commit baum makes of its work can be linked to
+// the session after the checkout is gone.
+func TestFixChecksOutInItsClonesDirectoryAndKeepsTheSession(t *testing.T) {
+	r := NewRepositories(t)
+	a := &fakeAgent{fix: func(_ context.Context, dir string) error {
+		return os.WriteFile(filepath.Join(dir, "a.txt"), []byte("fixed\n"), 0o644)
+	}}
+	o := options(t, r, a)
+	o.Checks = true
+	if _, err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if !a.request.PersistSession {
+		t.Error("the agent's session is discarded")
+	}
+	if want := filepath.Join(cloneFixes(t, r, o), o.ID); !strings.HasPrefix(a.request.Directory, want+string(filepath.Separator)) {
+		t.Errorf("checkout %s, want one in %s", a.request.Directory, want)
+	}
+	checkCleanedUp(t, r, o)
+}
+
+// Fix directories left behind for more than a day are removed, in a clone's
+// directory and from before those, in the root; a clone's directory and a
+// recent fix's stay.
+func TestSweepRemovesStaleFixDirectories(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-2 * staleAfter)
+	dirs := map[string]bool{
+		"legacy":           false,
+		"legacy-recent":    true,
+		"clone/stale":      false,
+		"clone/recent":     true,
+		"idle-clone/stale": false,
+	}
+	for dir := range dirs {
+		if err := os.MkdirAll(filepath.Join(root, dir, "git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"legacy", "clone/stale", "idle-clone/stale", "idle-clone"} {
+		if err := os.Chtimes(filepath.Join(root, dir), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweep(root)
+	for dir, kept := range dirs {
+		if _, err := os.Stat(filepath.Join(root, dir)); (err == nil) != kept {
+			t.Errorf("%s: kept %v, want %v", dir, err == nil, kept)
+		}
+	}
+	for _, clone := range []string{"clone", "idle-clone"} {
+		if _, err := os.Stat(filepath.Join(root, clone)); err != nil {
+			t.Errorf("clone directory %s removed: %v", clone, err)
+		}
 	}
 }
 

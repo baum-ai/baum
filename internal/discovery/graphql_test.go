@@ -317,6 +317,11 @@ func TestInboxPageGatewayErrors(t *testing.T) {
 			if (err != nil) != (tc.failed != "") || got.Error != tc.failed || got.Stale != (tc.failed != "") || len(got.PullRequests) != tc.pulls {
 				t.Fatalf("snapshot=%+v err=%v", got, err)
 			}
+			// A failed poll may run again within seconds; the caller backs off
+			// one that keeps failing.
+			if wait := got.NextPoll.Sub(s.now()); tc.failed != "" && wait != failedRetry {
+				t.Fatalf("failed poll next in %v, want within %v", wait, failedRetry)
+			}
 			if !reflect.DeepEqual(*calls, tc.attempt) {
 				t.Fatalf("calls=%v want=%v", *calls, tc.attempt)
 			}

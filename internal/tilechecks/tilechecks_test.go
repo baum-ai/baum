@@ -251,7 +251,6 @@ func TestReportIsClassified(t *testing.T) {
 		{Code: CodeSlow, Message: "800 ms", Sample: "example", Face: "detail", Size: "full"},
 		{Code: CodeScriptError, Message: "TypeError: x is undefined", Sample: "example", Face: "glance", Size: "half", Line: &line},
 		{Code: "made_up", Message: "?"},
-		{Code: CodeHang, Message: "a runner cannot claim this"},
 	}, Runs: []Run{{Sample: "example", Face: "glance", Size: "half", Theme: "light", Width: 488, Height: 180}}}
 	if err := f.checker.Report(job.ID, report); err != nil {
 		t.Fatal(err)
@@ -352,6 +351,67 @@ func TestHangBlocksTheDigest(t *testing.T) {
 	pre, err := f.checker.Preflight(context.Background(), PreflightRequest{Digest: job.Digest, Data: candidate.Data})
 	if err != nil || pre.Verdict != VerdictHang {
 		t.Fatalf("preflight = %+v, %v", pre, err)
+	}
+}
+
+// A runner whose page runs on while a frame stopped answering (Chromium
+// draws the frame in a process of its own) reports the hang: it ends as a
+// hang that blocks the digest, the page is told (and closes the check
+// window), and the checks waiting are announced again.
+func TestAReportedHangEndsAsAHang(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.Wait = 10 * time.Second })
+	candidate := starter(t)
+	done := f.submit(candidate)
+	job := f.claim(t)
+	other := starter(t)
+	other.Definition.Title = "Another"
+	second := f.submit(other)
+	var waitingID string
+	for deadline := time.Now().Add(2 * time.Second); waitingID == "" && time.Now().Before(deadline); {
+		f.checker.mu.Lock()
+		if len(f.checker.queue) == 1 {
+			waitingID = f.checker.queue[0].ID
+		}
+		f.checker.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if waitingID == "" {
+		t.Fatal("the second check was not queued")
+	}
+	report := Report{Problems: []Problem{
+		{Code: CodeHang, Message: "The frame stopped answering.", Sample: "example", Face: "glance", Size: "half", Theme: "light"},
+		{Code: CodeNoHello, Message: "The frame did not start.", Sample: "example", Face: "detail", Size: "full", Theme: "light"},
+	}, Runs: []Run{{Sample: "example", Face: "glance", Size: "half", Theme: "light"}}, Engine: "Chrome"}
+	if err := f.checker.Report(job.ID, report); err != nil {
+		t.Fatal(err)
+	}
+	result := <-done
+	if result.Verdict != VerdictHang || !slices.Equal(codes(result.Errors), []string{CodeHang, CodeNoHello}) {
+		t.Fatalf("result = %+v", result)
+	}
+	if e := result.Errors[0]; e.Message != "The frame stopped answering." || e.Hint != Hints[CodeHang] || e.Face != "glance" || e.Size != "half" {
+		t.Fatalf("hang = %+v", e)
+	}
+	if len(result.Runs) != 1 || result.Engine != "Chrome" {
+		t.Fatalf("result = %+v", result)
+	}
+	if !f.frames.Hung(job.Digest) {
+		t.Fatal("the digest was not marked hung")
+	}
+	if got := f.events.states(job.ID); !slices.Equal(got, []string{StateQueued, StateRunning, StateHung}) {
+		t.Fatalf("events = %v", got)
+	}
+	if got := f.events.states(waitingID); !slices.Equal(got, []string{StateQueued, StateQueued}) {
+		t.Fatalf("events of the waiting check = %v", got)
+	}
+	pre, err := f.checker.Preflight(context.Background(), PreflightRequest{Digest: job.Digest, Data: candidate.Samples[0].Data})
+	if err != nil || pre.Verdict != VerdictHang {
+		t.Fatalf("preflight = %+v, %v", pre, err)
+	}
+	next := f.claim(t)
+	_ = f.checker.Report(next.ID, Report{})
+	if r := <-second; r.Verdict != VerdictPass {
+		t.Fatalf("second = %+v", r)
 	}
 }
 

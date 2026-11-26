@@ -63,7 +63,7 @@ type Store struct {
 
 func valid(kind, key string) bool {
 	switch kind {
-	case "inbox", "tour", "filters":
+	case "inbox", "tour", "filters", "activity":
 		return key == ""
 	case "review":
 		return len(key) <= 300 && pullKey.MatchString(key)
@@ -338,6 +338,43 @@ func validate(kind string, raw []byte) error {
 				return ErrInvalid
 			}
 			ids[tab.ID] = true
+		}
+	case "activity":
+		var value struct {
+			PRs *map[string]*struct {
+				At   *int64 `json:"at"`
+				Last *struct {
+					Head       *string            `json:"head"`
+					Versions   *int               `json:"versions"`
+					Unresolved *int               `json:"unresolved"`
+					Review     *string            `json:"review"`
+					Updated    *string            `json:"updated"`
+					Answers    map[string]*string `json:"answers"`
+				} `json:"last"`
+				Unread map[string]*int `json:"unread"`
+			} `json:"prs"`
+		}
+		if json.Unmarshal(raw, &value) != nil || value.PRs == nil || len(*value.PRs) > 2000 {
+			return ErrInvalid
+		}
+		for key, pr := range *value.PRs {
+			if len(key) > 300 || pr == nil || pr.At == nil || *pr.At < 0 || pr.Last == nil || len(pr.Unread) > 16 {
+				return ErrInvalid
+			}
+			last := pr.Last
+			if last.Head == nil || len(*last.Head) > 128 || last.Versions == nil || *last.Versions < 0 || last.Unresolved == nil || *last.Unresolved < 0 || last.Review == nil || len(*last.Review) > 64 || last.Updated == nil || len(*last.Updated) > 64 || len(last.Answers) > 100 {
+				return ErrInvalid
+			}
+			for id, at := range last.Answers {
+				if len(id) > 128 || at == nil || len(*at) > 64 {
+					return ErrInvalid
+				}
+			}
+			for kind, n := range pr.Unread {
+				if len(kind) > 32 || n == nil || *n < 0 {
+					return ErrInvalid
+				}
+			}
 		}
 	case "tour":
 		var value struct {

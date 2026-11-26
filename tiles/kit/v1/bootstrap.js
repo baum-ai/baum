@@ -5,8 +5,9 @@
 //
 // It runs in <head>, before any author script, so its listeners see every
 // error. The page sends `init`, `update` and `theme` (which may carry colour
-// `tokens`), and the render check's runner `measure`; the bootstrap sends
-// `hello`, `ready`, `resize`, `error`, `jump`, `ask`, `open` and `key`.
+// `tokens`), and the render check's runner `measure` and `ping`; the
+// bootstrap sends `hello`, `ready`, `resize`, `error`, `jump`, `ask`, `open`,
+// `key` and `pong`.
 //
 // A sandboxed frame's errors reach the page only as "Script error.", so the
 // bootstrap reports each one itself, with its message and its line in the
@@ -374,6 +375,9 @@ listen(window, "message", (event) => {
   else if (message.kind === "update") onUpdate(message);
   else if (message.kind === "theme") onTheme(message);
   else if (message.kind === "measure" && state.check && readySent) post("resize", { height: contentHeight() });
+  // The render check's runner asks a frame that has not said hello whether
+  // it still runs: one whose script never yields cannot answer.
+  else if (message.kind === "ping") post("pong", {});
 });
 
 // ---------------------------------------------------------------------------
@@ -598,6 +602,7 @@ Object.defineProperty(window, "baum", {
     cite,
     diff,
     md,
+    compare,
     empty,
     fail,
     refs: Object.freeze({

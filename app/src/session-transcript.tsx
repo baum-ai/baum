@@ -252,21 +252,50 @@ function atBottom() {
  *  `version` keeps them there; once they scroll up, their place is kept.
  *  `follow` is where a reader starts: at the end, on the latest turn, unless
  *  it is false. The reader's position counts only once the first version is
- *  shown, since the page around a loading transcript scrolls by itself. */
+ *  shown, since the page around a loading transcript scrolls by itself.
+ *  What grows after a version is shown, on its own (a reply measured and
+ *  folded), keeps a reader at the
+ *  end too, until the reader clicks or types: what they open grows the page
+ *  where they are reading. */
 export function useFollowScroll(version: string | undefined, follow = true) {
   const pinned = useRef(follow);
   const shown = useRef(false);
+  const growing = useRef(false);
+  const grown = useRef<ResizeObserver | undefined>(undefined);
   useEffect(() => {
     const onScroll = () => {
       if (shown.current) pinned.current = atBottom();
     };
+    const onInput = () => {
+      growing.current = false;
+    };
     // Captured: the panel's scroll does not bubble.
     addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => removeEventListener("scroll", onScroll, { capture: true });
+    addEventListener("pointerdown", onInput, { capture: true, passive: true });
+    addEventListener("keydown", onInput, { capture: true, passive: true });
+    // Growing scrolls nothing, so it is watched: before the frame is drawn.
+    grown.current =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(() => {
+            if (!growing.current || !pinned.current) return;
+            const page = pageScroll();
+            if (page.top + page.view < page.height) page.to(page.height);
+          });
+    return () => {
+      removeEventListener("scroll", onScroll, { capture: true });
+      removeEventListener("pointerdown", onInput, { capture: true });
+      removeEventListener("keydown", onInput, { capture: true });
+      grown.current?.disconnect();
+    };
   }, []);
   useLayoutEffect(() => {
     if (!version) return;
     shown.current = true;
+    growing.current = true;
+    // What the page holds now: a transcript replaces its loader.
+    const main = document.querySelector<HTMLElement>(".local-main");
+    for (const child of (main ?? document.body).children) grown.current?.observe(child);
     if (pinned.current) {
       const page = pageScroll();
       page.to(page.height);
@@ -291,12 +320,25 @@ export function useMessageKeys(
   top: RefObject<HTMLElement | null>,
 ) {
   const current = useRef<HTMLElement | null>(null);
+  // Where the last j or k is scrolling the page to, and how far it still
+  // is: until the page gets there, the marked message counts as shown, so
+  // the next press goes on from it rather than from what the scroll has not
+  // reached yet. Arriving, or a scroll away from it (the reader's own, or
+  // the page stopping short at its end), forgets it.
+  const aim = useRef<{ to: number; left: number } | null>(null);
   const [reading, setReading] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const mark = (target: HTMLElement) => {
+      if (target !== current.current) aim.current = null;
       current.current?.classList.remove("local-message-current");
       target.classList.add("local-message-current");
       current.current = target;
+    };
+    const onScroll = () => {
+      const scroll = aim.current;
+      if (!scroll) return;
+      const left = Math.abs(pageScroll().top - scroll.to);
+      aim.current = left <= 1 || left > scroll.left + 1 ? null : { to: scroll.to, left };
     };
     const onKey = (event: KeyboardEvent) => {
       if (!["j", "k", " ", "Enter"].includes(event.key)) return;
@@ -307,8 +349,9 @@ export function useMessageKeys(
       const marked = current.current;
       const shown =
         marked?.isConnected &&
-        marked.getBoundingClientRect().bottom > edge &&
-        marked.getBoundingClientRect().top < innerHeight;
+        (aim.current !== null ||
+          (marked.getBoundingClientRect().bottom > edge &&
+            marked.getBoundingClientRect().top < innerHeight));
       const at = shown ? messages.indexOf(marked) : -1;
       if (event.key === " " || event.key === "Enter") {
         const target =
@@ -341,10 +384,17 @@ export function useMessageKeys(
       mark(target);
       const reduced = matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       const page = pageScroll();
-      page.to(page.top + target.getBoundingClientRect().top - edge, reduced ? "instant" : "smooth");
+      const to = page.top + target.getBoundingClientRect().top - edge;
+      aim.current = { to, left: Math.abs(page.top - to) };
+      page.to(to, reduced ? "instant" : "smooth");
     };
     addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
+    // Captured: the panel's scroll does not bubble.
+    addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      removeEventListener("keydown", onKey);
+      removeEventListener("scroll", onScroll, { capture: true });
+    };
   }, [body, top]);
   const close = useCallback(() => setReading(null), []);
   return { reading, close };

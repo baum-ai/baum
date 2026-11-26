@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/hookevents"
 )
@@ -24,7 +25,10 @@ import (
 // and the Sessions page show it as they show a real session. A message that
 // mentions a comment has it propose one for the person's pending review
 // (propose_review_comment) through baum's MCP server, as the agent would
-// call the tool, before it answers. A request about the tiles' layout
+// call the tool, before it answers. A message that mentions the review
+// prompt has it propose a change to it (propose_prompt): the repository's
+// prompt on a pull request's page, the global one when it says "every
+// repository". A request about the tiles' layout
 // ("move the risks to the top", "make this wider", "remove this", "undo",
 // "reset") runs the layout tools over HTTP as the agent CLI would (layout).
 type panelAgent struct {
@@ -93,6 +97,9 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	if strings.Contains(strings.ToLower(r.Prompt), "theme") {
 		a.proposeTheme(ctx, r)
 	}
+	if strings.Contains(strings.ToLower(r.Prompt), "review prompt") {
+		a.proposePrompt(ctx, r)
+	}
 	answer := panelAnswer(r.Prompt)
 	// A request to add a tile runs through the add tools.
 	if said, ok := a.tiles(ctx, r); ok {
@@ -160,6 +167,41 @@ func (a *panelAgent) proposeComment(ctx context.Context, r agent.Request) {
 	}
 	if r.Transcript != nil {
 		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_comment", Tool: "mcp__baum__propose_review_comment", Title: "propose_review_comment", Status: status, Text: text})
+	}
+}
+
+// panelPromptLine is the line the panel agent adds to the review prompt.
+const panelPromptLine = "Flag every database migration that can lose data, and say how to roll it back."
+
+// proposePrompt proposes the shared review prompt with panelPromptLine added,
+// as the agent's propose_prompt call would from whatever page is open: the
+// page's repository's prompt, or the global one for "every repository" or a
+// page that shows no repository.
+func (a *panelAgent) proposePrompt(ctx context.Context, r agent.Request) {
+	status, text := "completed", "Proposed the prompt; the person saves it in the panel."
+	err := errors.New("the turn has no MCP server")
+	if a.mcp != nil && r.MCP != nil {
+		consumer, ok := a.mcp.Registry.Authenticate(r.MCP.Token)
+		page, _ := a.mcp.Registry.Page(consumer.ID)
+		if !ok {
+			err = errors.New("the turn's MCP token is not known")
+		} else {
+			entry, _ := prompt.Lookup(prompt.IDReviewV2Shared)
+			kept := strings.TrimRight(entry.Default, "\n")
+			body := kept + "\n\n" + panelPromptLine + entry.Default[len(kept):]
+			after, _ := json.Marshal(agentcontext.PromptChange{Text: &body})
+			target := agentcontext.TargetPrompt + string(entry.ID)
+			if page.Repository != "" && !strings.Contains(strings.ToLower(r.Prompt), "every repository") {
+				target = agentcontext.RepositoryTarget(page.Repository, target)
+			}
+			_, err = a.mcp.Proposals.Propose(ctx, consumer.ID, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere, Target: target, After: after})
+		}
+	}
+	if err != nil {
+		status, text = "failed", err.Error()
+	}
+	if r.Transcript != nil {
+		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_prompt", Tool: "mcp__baum__propose_prompt", Title: "propose_prompt", Status: status, Text: text})
 	}
 }
 

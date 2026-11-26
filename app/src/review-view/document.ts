@@ -33,6 +33,8 @@ export type ReviewV2 = {
   };
   overview: {
     screenshots: string[];
+    /** Description clips the overview chose; none before it chose them. */
+    videos: string[];
     diagram: string | null;
     intent: V2Intent[];
   };
@@ -63,15 +65,39 @@ export type V2Context = {
   related: V2ContextPart | null;
 };
 
+/** A native tile's colour of a step, column or message, and a point's
+ *  marker. */
+export type Tone = "plain" | "new" | "good" | "bad" | "muted" | "missing";
+
+const TONES = new Set<string>(["plain", "new", "good", "bad", "muted", "missing"]);
+
+/** A served tone, or plain for one the page does not know. */
+export const toneOf = (tone: unknown): Tone =>
+  isString(tone) && TONES.has(tone) ? (tone as Tone) : "plain";
+
+/** What a note is (`reviewv2.NoteKinds`); a note without one is a plain aside. */
+export type NoteKind = "caveat" | "decision" | "unchanged" | "follow_up";
+
+const NOTE_KINDS = new Set<string>(["caveat", "decision", "unchanged", "follow_up"]);
+
 /** One line of a points block: `text` (inline markdown) on the page, `more`
- *  and the cited files behind its click. `id` is set for a point made from an
- *  older document's step, which keeps the step's ID (comments rest on it). */
-export type V2Point = { id?: string; text: string; more?: string; cites: Anchor[] };
+ *  and the cited files behind its click, and its `tone` (never plain) as its
+ *  marker. `id` is set for a point made from an older document's step, which
+ *  keeps the step's ID (comments rest on it). */
+export type V2Point = {
+  id?: string;
+  text: string;
+  more?: string;
+  tone?: Exclude<Tone, "plain">;
+  cites: Anchor[];
+};
 
 /** One block of a section's body. A tile block places one of the section's
- *  tiles (by ID); the others are text. `title` is the optional label above. */
+ *  tiles (by ID); the others are text. `title` is the optional label above,
+ *  `kind` a note's. */
 export type V2Block =
-  | { type: "prose" | "note"; title?: string; text: string }
+  | { type: "prose"; title?: string; text: string }
+  | { type: "note"; title?: string; kind?: NoteKind; text: string }
   | { type: "points"; title?: string; items: V2Point[] }
   | { type: "tile"; tile: string };
 
@@ -198,6 +224,7 @@ export function parseReviewV2(value: unknown, drafts?: unknown): ReviewV2 | null
     },
     overview: {
       screenshots: strings(overview.screenshots),
+      videos: strings(overview.videos),
       diagram: isString(overview.diagram) && overview.diagram ? overview.diagram : null,
       intent: records(overview.intent).flatMap((row) =>
         isString(row.asked) &&
@@ -330,9 +357,11 @@ function parseSection(value: Record<string, unknown>, tiles: ViewTile[]): V2Sect
 
 function parsePoint(value: Record<string, unknown>): V2Point | null {
   if (!isString(value.text) || !value.text.trim()) return null;
+  const tone = toneOf(value.tone);
   return {
     text: value.text,
     ...(isString(value.more) && value.more.trim() ? { more: value.more } : {}),
+    ...(tone !== "plain" ? { tone } : {}),
     cites: anchors(value.cites),
   };
 }
@@ -345,8 +374,13 @@ function sectionBody(value: Record<string, unknown>, owned: ViewTile[]): V2Block
   const placed = new Set<string>();
   const body = records(value.body).flatMap((block): V2Block[] => {
     const title = isString(block.title) && block.title.trim() ? { title: block.title.trim() } : {};
-    if ((block.type === "prose" || block.type === "note") && isString(block.text))
-      return block.text.trim() ? [{ type: block.type, ...title, text: block.text }] : [];
+    if (block.type === "prose" && isString(block.text))
+      return block.text.trim() ? [{ type: "prose", ...title, text: block.text }] : [];
+    if (block.type === "note" && isString(block.text)) {
+      const kind =
+        isString(block.kind) && NOTE_KINDS.has(block.kind) ? { kind: block.kind as NoteKind } : {};
+      return block.text.trim() ? [{ type: "note", ...title, ...kind, text: block.text }] : [];
+    }
     if (block.type === "points") {
       const items = records(block.items).flatMap((item) => {
         const point = parsePoint(item);

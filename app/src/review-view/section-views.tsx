@@ -1,27 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import pluralize from "pluralize";
 import { harnessName } from "@baum/viewer/agent-names";
-import { chipClass } from "@baum/viewer/components/chip-classes";
-import { cn } from "@baum/viewer/components/classnames";
+import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { formatShortDateTime } from "@baum/viewer/components/format";
-import { Part } from "@baum/viewer/components/review-parts";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { SegmentedControl } from "@baum/viewer/components/ui";
 import { useUrlState, ViewerLink } from "@baum/viewer/navigation";
 import type { HunkPatchSource } from "@baum/viewer/components/hunk-evidence";
 import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import type { IndexedHunk, ReviewDocument } from "@baum/viewer/review-document";
-import type { ReviewV2 } from "./document";
 import { withSelection } from "@baum/viewer/review-selection";
 import { FileDiff, GeneratedToggle } from "./code-tab";
 import {
-  notesByHunk,
   SECTION_VIEWS,
-  sectionNotes,
-  type HunkNote,
   type SectionView,
   type SectionViews,
   type SessionQuote,
-  testNames,
+  type TestChange,
+  type TestOutlineFile,
+  type TestOutlineItem,
+  testOutline,
   type ViewFile,
 } from "./model";
 
@@ -33,11 +31,14 @@ export function SectionViewTabs({
   value,
   counts,
   onChange,
+  overview = true,
 }: {
   tablist: string;
   value: SectionView;
   counts: SectionViews["counts"];
   onChange: (view: SectionView) => void;
+  /** Off when the Overview stands in its own column beside the others. */
+  overview?: boolean;
 }) {
   // In a narrow pane the row scrolls: the view shown stays in sight.
   const row = useRef<HTMLDivElement>(null);
@@ -59,10 +60,11 @@ export function SectionViewTabs({
         onChange={onChange}
         // Scrolls sideways in a narrow pane rather than widening the page.
         className="max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        items={SECTION_VIEWS.map(({ value: view, label }) =>
-          view === "overview"
-            ? { value: view, label }
-            : { value: view, label, count: counts[view], disabled: counts[view] === 0 },
+        items={SECTION_VIEWS.filter(({ value: view }) => overview || view !== "overview").map(
+          ({ value: view, label }) =>
+            view === "overview"
+              ? { value: view, label }
+              : { value: view, label, count: counts[view], disabled: counts[view] === 0 },
         )}
       />
     </div>
@@ -72,22 +74,21 @@ export function SectionViewTabs({
 /** A section's view other than its Overview. */
 export function SectionViewBody({
   document,
-  review,
-  section,
   shown,
   views,
   context,
+  reveal,
 }: {
   document: ReviewDocument;
-  review: ReviewV2;
-  section: string;
   shown: Exclude<SectionView, "overview">;
   views: SectionViews;
   context: ReviewPlaceContext;
+  /** A file an excerpt asked to see: its fold opens if it is generated,
+   *  again on each new request. */
+  reveal?: { path: string } | null;
 }) {
-  const notes = useMemo(() => sectionNotes(notesByHunk(review), section), [review, section]);
   const files = (list: ViewFile[]) => (
-    <SectionFiles document={document} files={list} notes={notes} context={context} />
+    <SectionFiles document={document} files={list} context={context} />
   );
   switch (shown) {
     case "code":
@@ -98,20 +99,15 @@ export function SectionViewBody({
             <GeneratedFiles
               document={document}
               files={views.code.generated}
-              notes={notes}
               context={context}
               open={views.code.files.length === 0}
+              reveal={reveal}
             />
           ) : null}
         </div>
       );
     case "tests":
-      return (
-        <div className="space-y-5">
-          <TestNames document={document} files={views.tests.files} context={context} />
-          {files(views.tests.files)}
-        </div>
-      );
+      return <TestFiles document={document} files={views.tests.files} context={context} />;
     case "docs":
       return files(views.docs.files);
     case "session":
@@ -119,10 +115,46 @@ export function SectionViewBody({
   }
 }
 
-/** The names of the tests the section's test hunks add or change, read from
- *  their lines once the hunks the review left out are loaded; nothing while
- *  they load, or when the names can't be read with confidence. */
-function TestNames({
+const CHANGES: { change: TestChange; mark: string; label: string; tone: string }[] = [
+  { change: "added", mark: "+", label: "added", tone: "text-status-positive" },
+  { change: "renamed", mark: "→", label: "renamed", tone: "text-status-info" },
+  { change: "changed", mark: "~", label: "changed", tone: "text-status-caution" },
+  { change: "removed", mark: "−", label: "removed", tone: "text-status-critical" },
+];
+
+/** Brings the line a test or helper starts at into view in its file's diff,
+ *  unfolding the code if it is folded, and flashes it. */
+function openInDiff(from: HTMLElement, at?: TestOutlineItem["at"]) {
+  const file = from.closest<HTMLElement>('article[aria-label$=" diff"]');
+  if (!file || !at) return;
+  const fold = file.querySelector<HTMLElement>('header button[aria-expanded="false"]');
+  const go = () => {
+    const row = file.querySelector<HTMLElement>(`tr[data-${at.side}-line="${at.line}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: "center" });
+    row.animate?.(
+      [{ backgroundColor: "var(--surface-selected)" }, { backgroundColor: "transparent" }],
+      { duration: 1200, easing: "ease-out" },
+    );
+  };
+  if (!fold) return go();
+  fold.click();
+  requestAnimationFrame(go);
+}
+
+const lineCounts = (additions: number, deletions: number) => (
+  <span className="font-mono text-xs whitespace-nowrap tabular-nums">
+    {additions > 0 ? <span className="text-status-positive">+{additions}</span> : null}
+    {additions > 0 && deletions > 0 ? " " : null}
+    {deletions > 0 ? <span className="text-status-critical">−{deletions}</span> : null}
+  </span>
+);
+
+/** The section's test files, each diff headed by the tests it adds,
+ *  renames, changes or removes, by name, then the helpers and other lines it
+ *  changes; a line above counts the tests by change. Read once the hunks the
+ *  review left out are loaded. */
+function TestFiles({
   document,
   files,
   context,
@@ -131,31 +163,193 @@ function TestNames({
   files: ViewFile[];
   context: ReviewPlaceContext;
 }) {
-  const names = useTestNames(document, files, context.hunkPatches);
-  if (!names || names.length === 0) return null;
+  const read = useTestHunks(document, files, context.hunkPatches);
+  const outline = useMemo(
+    () => new Map((read ? testOutline(read) : []).map((file) => [file.path, file])),
+    [read],
+  );
+  const tests = [...outline.values()]
+    .flatMap((file) => file.items ?? [])
+    .filter((item) => item.kind === "test");
+  const counts = CHANGES.map((each) => ({
+    ...each,
+    count: tests.filter((test) => test.change === each.change).length,
+  })).filter((each) => each.count > 0);
   return (
-    <Part label="Tests added or changed">
-      <ul className="flex flex-wrap gap-1.5">
-        {names.map((name) => (
-          <li key={name} className="max-w-full min-w-0">
-            <code className={cn(chipClass, "block font-mono text-xs [overflow-wrap:anywhere]")}>
-              {name}
-            </code>
-          </li>
-        ))}
-      </ul>
-    </Part>
+    <div className="space-y-3">
+      {counts.length > 0 ? (
+        <p aria-label="Test changes" className="text-xs text-secondary tabular-nums">
+          Tests:{" "}
+          {counts.map((each, index) => (
+            <span key={each.change}>
+              {index > 0 ? " · " : null}
+              <span className={each.tone}>
+                {each.count} {each.label}
+              </span>
+            </span>
+          ))}
+        </p>
+      ) : null}
+      <SectionFiles
+        document={document}
+        files={files}
+        context={context}
+        intro={(file) => {
+          const read = outline.get(file.path);
+          return read ? <FileTests file={read} /> : null;
+        }}
+      />
+    </div>
   );
 }
 
-function useTestNames(
+const FILE_CAPTIONS: Partial<Record<TestOutlineFile["change"], string>> = {
+  added: "New file",
+  removed: "Deleted file",
+};
+
+/** A test file's tests, then its helpers and other lines, under its diff's
+ *  header; nothing for a file that changes none. */
+function FileTests({ file }: { file: TestOutlineFile }) {
+  if (file.items?.length === 0) return null;
+  if (file.items === null)
+    return (
+      <p className="px-3 py-1.5 text-xs text-tertiary">
+        The tests in this file can't be read from its lines.
+      </p>
+    );
+  const tests = file.items.filter((item) => item.kind === "test");
+  const helpers = file.items.filter((item) => item.kind !== "test");
+  const caption = FILE_CAPTIONS[file.change];
+  return (
+    <div className="py-1.5">
+      {caption ? <p className="px-3 pb-0.5 text-xs text-tertiary">{caption}</p> : null}
+      {tests.length > 0 ? (
+        <OutlineList label={`Tests in ${file.path}`} noun="test" file={file.change} items={tests} />
+      ) : null}
+      {helpers.length > 0 ? (
+        <div className={cn(tests.length > 0 && "mt-1 border-t border-subtle pt-1.5")}>
+          <p className="px-3 text-xs text-tertiary">Helpers and setup</p>
+          <OutlineList
+            label={`Helpers in ${file.path}`}
+            noun="helper"
+            file={file.change}
+            items={helpers}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** A file's list longer than this shows its first few, and the rest on
+ *  request. */
+const FOLD_AT = 8;
+const FOLDED = 5;
+
+function OutlineList({
+  label,
+  noun,
+  file,
+  items,
+}: {
+  label: string;
+  noun: string;
+  file: TestOutlineFile["change"];
+  items: TestOutlineItem[];
+}) {
+  const [open, setOpen] = useState(false);
+  const folded = items.length > FOLD_AT && !open;
+  const shown = folded ? items.slice(0, FOLDED) : items;
+  return (
+    <div>
+      <ul aria-label={label}>
+        {shown.map((item) => (
+          <OutlineItem key={`${item.kind}:${item.name}`} file={file} item={item} />
+        ))}
+      </ul>
+      {items.length > FOLD_AT ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((was) => !was)}
+          className={cn("ml-9 text-xs text-link hover:underline", FOCUS_RING)}
+        >
+          {open
+            ? "Show fewer"
+            : `Show ${items.length - FOLDED} more ${pluralize(noun, items.length - FOLDED)}`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function OutlineItem({ file, item }: { file: TestOutlineFile["change"]; item: TestOutlineItem }) {
+  const change = CHANGES.find((each) => each.change === item.change)!;
+  const gone = item.change === "removed";
+  // A new file's tests are all added and a deleted one's all removed: its
+  // caption says so once, so the rows don't repeat it.
+  const marked = !(
+    (file === "added" && item.change === "added") ||
+    (file === "removed" && item.change === "removed")
+  );
+  // A name that is a sentence (JavaScript's `it("…")`) reads as prose; an
+  // identifier (Go's `TestX`, a helper) as code.
+  const prose = item.kind === "other" || /\s/.test(item.name);
+  return (
+    <li data-change={item.change}>
+      <button
+        type="button"
+        onClick={(event) => openInDiff(event.currentTarget, item.at)}
+        className={cn(
+          "grid w-full grid-cols-[1rem_minmax(0,1fr)_auto] items-baseline gap-x-2 px-3 py-0.5 text-left hover:bg-surface-hover",
+          FOCUS_RING,
+        )}
+      >
+        <span aria-hidden="true" className={cn("text-center font-mono text-xs", change.tone)}>
+          {marked ? change.mark : null}
+        </span>
+        <span className="min-w-0">
+          <span className="sr-only">{change.label}: </span>
+          <span
+            className={cn(
+              "[overflow-wrap:anywhere]",
+              prose ? "text-base" : "font-mono text-xs",
+              item.kind === "test" ? "text-primary" : "text-secondary",
+              gone && "text-tertiary line-through",
+            )}
+          >
+            {item.name}
+          </span>
+          {item.was ? (
+            <span className="block text-xs text-tertiary [overflow-wrap:anywhere]">
+              renamed from <span className="line-through">{item.was}</span>
+            </span>
+          ) : null}
+        </span>
+        <span className="text-tertiary">
+          {item.change === "changed" || item.change === "renamed"
+            ? lineCounts(item.additions, item.deletions)
+            : null}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+/** The files with the hunks the review left out read from their patches;
+ *  undefined while they load. Hunks that can't be loaded stay without code,
+ *  and their files' tests unread. */
+function useTestHunks(
   document: ReviewDocument,
   files: ViewFile[],
   source: HunkPatchSource | null,
-): string[] | null | undefined {
+): { path: string; hunks: IndexedHunk[] }[] | undefined {
   const version = document.review.version;
   const complete = files.every((file) => file.hunks.every((hunk) => hunk.diff));
-  const [loaded, setLoaded] = useState<IndexedHunk[] | null | undefined>(undefined);
+  const [loaded, setLoaded] = useState<{ path: string; hunks: IndexedHunk[] }[] | undefined>(
+    undefined,
+  );
   const key = files.map((file) => file.path).join("\n");
   // biome-ignore lint/correctness/useExhaustiveDependencies: the files are read again only when their paths or the version change
   useEffect(() => {
@@ -165,41 +359,35 @@ function useTestNames(
     Promise.all(
       files.map(async (file) => {
         const missing = file.hunks.find((hunk) => !hunk.diff);
-        if (!missing) return file.hunks;
-        const patch = await source(file.path, version, missing.id);
-        return file.hunks.map((hunk) => {
+        if (!missing) return file;
+        const patch = await source(file.path, version, missing.id).catch(() => null);
+        const hunks = file.hunks.map((hunk) => {
           if (hunk.diff || !patch) return hunk;
           const diff = indexedHunkFromFilePatch(patch, hunk);
           return diff ? { ...hunk, diff } : hunk;
         });
+        return { path: file.path, hunks };
       }),
-    ).then(
-      (all) => current && setLoaded(all.flat()),
-      () => current && setLoaded(null),
-    );
+    ).then((all) => current && setLoaded(all));
     return () => {
       current = false;
     };
   }, [key, version, complete, source]);
-  if (complete) return testNames(files.flatMap((file) => file.hunks));
-  if (!source) return null;
-  return loaded ? testNames(loaded) : loaded;
+  if (complete || !source) return files;
+  return loaded;
 }
-
-/** A note's link from a section's own code goes back to its Overview, at
- *  the risk it names. */
-const toOverview = (_note: HunkNote) => "In Overview →";
 
 function SectionFiles({
   document,
   files,
-  notes,
   context,
+  intro,
 }: {
   document: ReviewDocument;
   files: ViewFile[];
-  notes: Map<string, HunkNote[]>;
   context: ReviewPlaceContext;
+  /** Drawn under each file's header, above its code. */
+  intro?: (file: ViewFile) => ReactNode;
 }) {
   if (files.length === 0) return null;
   return (
@@ -209,9 +397,8 @@ function SectionFiles({
           key={file.path}
           document={document}
           file={file}
-          notes={notes}
           context={context}
-          noteLink={toOverview}
+          intro={intro?.(file)}
         />
       ))}
     </div>
@@ -223,23 +410,24 @@ function SectionFiles({
 function GeneratedFiles({
   document,
   files,
-  notes,
   context,
   open: openFirst,
+  reveal,
 }: {
   document: ReviewDocument;
   files: ViewFile[];
-  notes: Map<string, HunkNote[]>;
   context: ReviewPlaceContext;
   open: boolean;
+  reveal?: { path: string } | null;
 }) {
   const [open, setOpen] = useState(openFirst);
+  useEffect(() => {
+    if (reveal && files.some((file) => file.path === reveal.path)) setOpen(true);
+  }, [reveal, files]);
   return (
     <div className="space-y-3">
       <GeneratedToggle open={open} files={files.length} onToggle={() => setOpen((was) => !was)} />
-      {open ? (
-        <SectionFiles document={document} files={files} notes={notes} context={context} />
-      ) : null}
+      {open ? <SectionFiles document={document} files={files} context={context} /> : null}
     </div>
   );
 }

@@ -44,19 +44,26 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("asks the app to open GitHub's device page once the code has shown", async () => {
-  vi.useFakeTimers();
-  await act(async () => root.render(<GitHubStep onConnected={() => {}} />));
-  status = pending;
-  const signIn = [...node.querySelectorAll("button")].find(
-    (b) => b.textContent === "Sign in with GitHub",
-  );
-  await act(async () => signIn!.click());
-  expect(node.textContent).toContain("ABCD-EFGH");
-  expect(invoke).not.toHaveBeenCalledWith("github_connection", { action: "open" });
-  await act(async () => vi.advanceTimersByTime(5000));
-  // Through the app: the window's own navigations never open the browser.
-  expect(invoke).toHaveBeenCalledWith("github_connection", { action: "open" });
-  expect(window.open).not.toHaveBeenCalled();
-  expect(location.href).not.toContain("github.com");
-});
+it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+  "asks the app to open GitHub's device page once the code has shown (%s)",
+  async (global) => {
+    vi.useFakeTimers();
+    if (global !== "__TAURI_INTERNALS__") {
+      vi.stubGlobal("__TAURI_INTERNALS__", undefined);
+      vi.stubGlobal(global, { invoke });
+    }
+    await act(async () => root.render(<GitHubStep onConnected={() => {}} />));
+    status = pending;
+    const signIn = [...node.querySelectorAll("button")].find(
+      (b) => b.textContent === "Sign in with GitHub",
+    );
+    await act(async () => signIn!.click());
+    expect(node.textContent).toContain("ABCD-EFGH");
+    expect(invoke).not.toHaveBeenCalledWith("github_connection", { action: "open" });
+    await act(async () => vi.advanceTimersByTime(5000));
+    // Through the app: the window's own navigations never open the browser.
+    expect(invoke).toHaveBeenCalledWith("github_connection", { action: "open" });
+    expect(window.open).not.toHaveBeenCalled();
+    expect(location.href).not.toContain("github.com");
+  },
+);

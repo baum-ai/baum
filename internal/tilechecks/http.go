@@ -26,7 +26,8 @@ const (
 //     job, or 204 when none came.
 //   - PUT /api/tile-checks/{id}/result ends the running job id with the
 //     runner's report: 204, or 404 when no such job is running. A report
-//     marked abandoned (the runner's page went away) ends it unavailable.
+//     marked abandoned (the runner's page went away) ends it unavailable;
+//     one with a hang problem (a frame stopped answering) ends it a hang.
 //   - POST /api/tile-checks/{id}/alive says the runner is still drawing the
 //     running job id (Alive), which keeps it from being a hang: 204, or 404.
 //   - GET /api/tile-checks/state answers {"waiting": n, "running": bool}

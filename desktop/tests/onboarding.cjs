@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
   page.on("pageerror", error => errors.push(error.message));
   const calls = [];
   let fail = false;
+  let failSetupState = false;
   const disconnected = { state: 'disconnected', host: 'github.com', saved: false, override: false };
   let github = disconnected;
   const accessPage = 'https://github.com/settings/connections/applications/Ov23liFSMjrhof9WQlOi';
@@ -25,7 +26,10 @@ const assert = require('node:assert/strict');
   const state = { first_run: true, home: '/workspace/sample', command: { installed: false, target: '/app/baum', plan: { link: '/workspace/sample/.local/bin/baum', on_path: true } }, hooks: { agents: ['codex', 'claude-code'].map(agent => ({ agent, name: agent === 'codex' ? 'Codex' : 'Claude Code', detected: true, signed_in: agent === 'claude-code', installed: false, enabled: false, plugin: 'baum@baum' })) } };
   await page.exposeFunction('nativeInvoke', async (command, args) => {
     calls.push([command, args]);
-    if (command === 'setup_state') return state;
+    if (command === 'setup_state') {
+      if (failSetupState) throw Error('Could not check this computer');
+      return state;
+    }
     if (command === 'connection') return { phase: 'connecting' };
     if (command === 'tray_panel') return null;
     if (command === 'github_connection') {
@@ -58,7 +62,7 @@ const assert = require('node:assert/strict');
     }
     return { ok: true, lines: ['Done'] };
   });
-  await page.addInitScript(() => { window.__TAURI_INTERNALS__ = { invoke: (...args) => window.nativeInvoke(...args) }; });
+  await page.addInitScript(() => { window.baumDesktop = { invoke: (...args) => window.nativeInvoke(...args) }; });
   await page.route('http://setup.test/**', async route => {
     const file = new URL(route.request().url()).pathname.slice(1) || 'setup.html';
     const contentType = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : file.endsWith('.woff2') ? 'font/woff2' : 'text/html';
@@ -207,6 +211,25 @@ const assert = require('node:assert/strict');
   await expect(page.locator('#review-panel')).not.toContainText('baum captures the decisions');
   assert.equal(await page.locator('#continue').textContent(), 'Continue →');
   await page.screenshot({ path: `${screenshots}/onboarding-reviews.png`, fullPage: true });
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.locator('#title').focus();
+  await expect(page.locator('#back')).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('#continue')).toBeInViewport({ ratio: 1 });
+  const formScroll = page.locator('.setup-scroll');
+  const automatic = page.locator('#review-automatic input:checked');
+  await expect(automatic).not.toBeInViewport();
+  await automatic.focus();
+  await expect(automatic).toBeInViewport({ ratio: 1 });
+  assert(await formScroll.evaluate(form => form.scrollTop > 0));
+  await expect(page.locator('#continue')).toBeInViewport({ ratio: 1 });
+  await page.locator('#continue').press('Enter');
+  await expect(page.locator('#step-label')).toHaveText('STEP 3 OF 3');
+  await expect.poll(() => formScroll.evaluate(form => form.scrollTop)).toBe(0);
+  await expect(page.locator('#title')).toBeFocused();
+  await page.locator('#back').press('Enter');
+  await expect(page.locator('#step-label')).toHaveText('STEP 2 OF 3');
+  await expect.poll(() => formScroll.evaluate(form => form.scrollTop)).toBe(0);
+  await page.setViewportSize({ width: 1000, height: 800 });
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   assert.notEqual(
@@ -278,6 +301,18 @@ const assert = require('node:assert/strict');
   assert.equal(await page.locator('#codex-install').textContent(), 'Connect');
   assert.equal(await page.locator('#claude-code-install').getAttribute('aria-label'), 'Connect Claude Code');
   assert(await page.locator('#refresh').isVisible(), 'An unfinished step should offer to recheck');
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.locator('#title').focus();
+  failSetupState = true;
+  await page.locator('#refresh').press('Enter');
+  await expect(page.getByRole('alert')).toContainText('Could not check this computer');
+  await expect(page.getByRole('alert')).toBeInViewport({ ratio: 0.99 });
+  await expect(page.locator('#refresh')).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('#refresh')).toBeFocused();
+  failSetupState = false;
+  await page.locator('#refresh').press('Enter');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.setViewportSize({ width: 1000, height: 800 });
   assert.equal(await page.locator('#continue').textContent(), 'Open baum →');
   assert(await page.locator('.agent-logo').evaluateAll(images => images.every(image => image.tagName.toLowerCase() === 'svg')), 'Vendor icons use palette-aware SVG marks');
   await page.locator('#command-install').click();

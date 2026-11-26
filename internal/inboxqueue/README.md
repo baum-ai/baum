@@ -28,7 +28,7 @@ Each open pull request is one item with a kind, which is also what an inbox's
 - `review`, or `clone` when it needs a clone: the user's review is requested,
   or it is assigned to them and they did not write it;
 - for their own: `fix` (changes requested, a conflict, failing checks or
-  unresolved threads), `merge` (ready, not a draft, checks not running, and not
+  unresolved threads), `merge` (ready, with no known read-only permission, not a draft, checks not running, and not
   stacked on an open member of its stack) or `update` (behind a base they can
   push to);
 - `fix` with `fixing` set: their own that an agent is fixing now, which is not

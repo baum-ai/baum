@@ -543,6 +543,21 @@ func (s *Service) backoff(failures int) time.Duration {
 	return s.interval() * time.Duration(1<<min(max(failures-1, 0), 8))
 }
 
+// quickRetries are the waits after a repository's first failed passes. Most
+// failures are a moment's: a 502 or a dropped connection, which the app shows
+// until a pass succeeds. Longer outages then back off from the interval.
+var quickRetries = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
+
+// pollBackoff is how long after its failures-th failed pass in a row a
+// repository is polled again: quickRetries, then the interval doubling, for at
+// most 15 minutes.
+func (s *Service) pollBackoff(failures int) time.Duration {
+	if failures <= len(quickRetries) {
+		return min(quickRetries[max(failures, 1)-1], s.interval())
+	}
+	return min(s.interval()*time.Duration(1<<min(failures-1-len(quickRetries), 8)), 15*time.Minute)
+}
+
 // spreadOffset is how long after this process's first pass a read it has
 // not made yet may be due, the same for a pull request in every process.
 func spreadOffset(key string) time.Duration {
@@ -746,8 +761,7 @@ func (s *Service) Sync(ctx context.Context) {
 					p.state.Error = "discovery_timeout"
 				}
 				p.state.Failures = previous.Failures + 1
-				backoff := min(s.interval()*time.Duration(1<<min(p.state.Failures-1, 8)), 15*time.Minute)
-				p.next = s.now().Add(backoff)
+				p.next = s.now().Add(s.pollBackoff(p.state.Failures))
 				if snapshot.NextPoll.After(p.next) {
 					p.next = snapshot.NextPoll
 				}
@@ -897,7 +911,7 @@ func (s *Service) Sync(ctx context.Context) {
 			state.Failures = p.previous.Failures + 1
 			// A failed read backs off on its own; the polls go on.
 			if state.Error != "rate_limited" && state.Error != "metadata_unavailable" {
-				next = maxTime(next, s.now().Add(min(s.interval()*time.Duration(1<<min(state.Failures-1, 8)), 15*time.Minute)))
+				next = maxTime(next, s.now().Add(s.pollBackoff(state.Failures)))
 			}
 		}
 		state.NextRefresh = next

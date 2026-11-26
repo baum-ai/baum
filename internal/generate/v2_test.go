@@ -59,7 +59,7 @@ func v2Replies(t *testing.T) func(context.Context, agent.Request, int) (agent.Re
 			reply = `{"change_kind":"feature","sections":[{"id":"sec_all","title":"The whole change","kind":"logical","hunks":[` + strings.Join(ids, ",") +
 				`],"gist":"It changes everything at once.","scope":null,"level":2,"level_reasons":[{"text":"It is small.","cites":[]}]}],"tiles":[]}`
 		case "section-sec-all":
-			reply = `{"body":[{"type":"prose","title":null,"text":"It changes the code.","items":null,"tile":null},{"type":"points","title":null,"text":null,"items":[{"text":"It does **one** thing.","more":null,"cites":` + cite + `},{"text":"It does another.","more":"With a detail.","cites":` + cite + `}],"tile":null}],"risks":[],"tiles":[],"propose":null}`
+			reply = `{"body":[{"type":"prose","title":null,"kind":null,"text":"It changes the code.","items":null,"tile":null},{"type":"points","title":null,"kind":null,"text":null,"items":[{"text":"It does **one** thing.","more":null,"tone":null,"cites":` + cite + `},{"text":"It does another.","more":"With a detail.","tone":null,"cites":` + cite + `}],"tile":null}],"risks":[],"tiles":[],"propose":null}`
 		case "context":
 			reply = `{"area":{"text":"The code.","files":[]},"reached_by":{"text":"","files":[]},"contracts":{"text":"","files":[]},"related":{"text":"","files":[]}}`
 		case "overview":

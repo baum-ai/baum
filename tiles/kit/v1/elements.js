@@ -594,6 +594,78 @@ function diff(citation, options) {
 }
 
 // ---------------------------------------------------------------------------
+// Before and after, word by word, as the review's columns compare them.
+
+/** Which words of `a` and `b` (arrays of words and spaces) are in their
+ *  longest run in common, as two sets of positions. */
+function keptWords(a, b) {
+  const words = (pieces) => pieces.flatMap((piece, at) => (/^\s+$/.test(piece) ? [] : [at]));
+  const [wa, wb] = [words(a), words(b)];
+  const lengths = Array.from({ length: wa.length + 1 }, () => new Array(wb.length + 1).fill(0));
+  for (let i = wa.length - 1; i >= 0; i--)
+    for (let j = wb.length - 1; j >= 0; j--)
+      lengths[i][j] =
+        a[wa[i]] === b[wb[j]]
+          ? lengths[i + 1][j + 1] + 1
+          : Math.max(lengths[i + 1][j], lengths[i][j + 1]);
+  const keptA = new Set();
+  const keptB = new Set();
+  for (let i = 0, j = 0; i < wa.length && j < wb.length; ) {
+    if (a[wa[i]] === b[wb[j]]) {
+      keptA.add(wa[i++]);
+      keptB.add(wb[j++]);
+    } else if (lengths[i + 1][j] >= lengths[i][j + 1]) i++;
+    else j++;
+  }
+  // Mark only texts mostly alike: where under half the words of the
+  // shorter are shared, it was rewritten and marking every word says nothing.
+  const common = keptA.size > 0 && keptA.size * 2 >= Math.min(wa.length, wb.length);
+  return { common, keptA, keptB };
+}
+
+/** A text's pieces as a span, the runs of words not in `kept` in `tag`
+ *  (with the spaces between them), when `marking`. */
+function markedText(pieces, kept, marking, tag, className) {
+  const node = el("span");
+  const marked = (at) =>
+    marking && at >= 0 && at < pieces.length && !kept.has(at) && !/^\s+$/.test(pieces[at]);
+  let run = null;
+  for (const [at, text] of pieces.entries()) {
+    if (marked(at) || (marked(at - 1) && marked(at + 1))) {
+      if (!run) {
+        run = el(tag, className);
+        node.append(run);
+      }
+      run.append(text);
+    } else {
+      run = null;
+      node.append(text);
+    }
+  }
+  return node;
+}
+
+function compare(was, now) {
+  const before = str(was);
+  const after = str(now);
+  const split = (text) => text.match(/\s+|\S+/g) ?? [];
+  const [a, b] = [split(before), split(after)];
+  // Words of long texts are compared only up to a bound, so a render stays
+  // fast; past it, the two are drawn unmarked.
+  const { common, keptA, keptB } =
+    a.length * b.length <= 40000 ? keptWords(a, b) : { common: false, keptA: new Set(), keptB: new Set() };
+  // The same only as written: case and spacing count, as they do in code,
+  // values and quoted literals.
+  const same = before === after;
+  const marking = common && !same && before !== "" && after !== "";
+  return {
+    was: markedText(a, keptA, marking, "del", "kit-del"),
+    now: markedText(b, keptB, marking, "ins", "kit-ins"),
+    same,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // States, and the elements' tags.
 
 function empty(text) {

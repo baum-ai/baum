@@ -159,6 +159,26 @@ func (s *Service) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, s.detail(c))
 	})
+	mux.HandleFunc("POST /api/console/conversations/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			// Discard archives even when that loses work (UncleanError).
+			Discard bool `json:"discard"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		c, err := s.Archive(r.Context(), r.PathValue("id"), input.Discard)
+		var unclean *UncleanError
+		if errors.As(err, &unclean) {
+			writeJSON(w, http.StatusConflict, map[string]any{"code": "unclean_directory", "message": unclean.Error(), "unclean": unclean})
+			return
+		}
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.detail(c))
+	})
 	mux.HandleFunc("PUT /api/console/page", func(w http.ResponseWriter, r *http.Request) {
 		var page agentcontext.PageContext
 		if !decode(w, r, &page) {
