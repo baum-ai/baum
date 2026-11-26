@@ -198,6 +198,10 @@ export function HistoryToolbar({
   );
 }
 
+/** The attribute on each of two compared versions' panes, so a key the
+ *  page listens for can go to the pane that has the focus. */
+export const COMPARED_PANE = "data-compared-pane";
+
 export function ReviewHistory({
   document,
   view,
@@ -224,6 +228,7 @@ export function ReviewHistory({
       >
         {(!selection || compare) && (
           <div
+            {...(compare ? { [COMPARED_PANE]: "current" } : {})}
             className={
               compare ? "flex min-h-0 min-w-0 flex-col wide:overflow-hidden 2xl:pr-5" : "contents"
             }
@@ -238,6 +243,7 @@ export function ReviewHistory({
         )}
         {selection && (
           <section
+            {...(compare ? { [COMPARED_PANE]: "historical" } : {})}
             aria-label={`Historical ${compare ? "comparison" : "view"} v${selection.version}`}
             className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col wide:overflow-hidden",

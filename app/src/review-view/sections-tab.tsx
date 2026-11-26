@@ -177,10 +177,16 @@ function SectionBody({
   const select = (next: SectionView) =>
     context.select(selectionOf({ tab: "sections", section: section.id, view: next }));
   // Once wide the side column takes h and l itself, since it can fold.
-  useSectionViewKeys((key) => {
-    const next = viewKeyStep(key, shown, steppableViews(views.counts, true));
-    if (next && next !== shown) select(next);
-  }, !side);
+  useSectionViewKeys(
+    (key) => {
+      const next = viewKeyStep(key, shown, steppableViews(views.counts, true));
+      if (!next || next === shown) return false;
+      select(next);
+      return true;
+    },
+    root,
+    !side,
+  );
   const overview = (
     <SectionOverview
       document={document}

@@ -1,4 +1,4 @@
-import { act, type ReactNode, useState } from "react";
+import { act, type ReactNode, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
@@ -11,7 +11,8 @@ import { parseReviewV2, type ReviewV2 } from "./document";
 import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
-import { steppableViews, viewKeyStep } from "./section-views";
+import { steppableViews, useSectionViewKeys, viewKeyStep } from "./section-views";
+import { COMPARED_PANE } from "@baum/viewer/components/review-history";
 import { useViewPlaces } from "./places";
 import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
 import { foldedLines } from "../tiles/builtins/code-excerpt";
@@ -429,6 +430,44 @@ describe("a section's views", () => {
     expect(aside).not.toBeNull();
     await press("h", aside!);
     expect(selected()).toBe("Docs 1");
+  });
+
+  it("gives h and l to the compared version that has the focus, else to one that can step", async () => {
+    const pressed: string[] = [];
+    function Pane({ name, moves }: { name: string; moves: boolean }) {
+      const ref = useRef<HTMLDivElement>(null);
+      useSectionViewKeys((key) => {
+        if (moves) pressed.push(`${name} ${key}`);
+        return moves;
+      }, ref);
+      return (
+        <div {...{ [COMPARED_PANE]: name }}>
+          <div ref={ref}>
+            <button type="button">{name}</button>
+          </div>
+        </div>
+      );
+    }
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () =>
+      root!.render(
+        <>
+          <Pane name="current" moves={false} />
+          <Pane name="historical" moves />
+        </>,
+      ),
+    );
+    const [current, historical] = host.querySelectorAll("button");
+    await press("l", historical!);
+    // From the current pane the current section takes the key, and nothing
+    // in the other pane moves.
+    await press("h", current!);
+    // From neither, the current section has nowhere to go: the other steps.
+    await press("l");
+    expect(pressed).toEqual(["historical l", "historical l"]);
+    host.remove();
   });
 
   it("steps the side column's views without the Overview, round from either end", () => {

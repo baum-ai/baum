@@ -3049,7 +3049,8 @@ builds the rail's model (the sections and the file list) from it.
   `it("…"` and `test("…"`), then under Helpers and setup the functions,
   types, variables and imports it changes by name and its Other lines. A test
   removed with another added in its place, or beside one with a like name, is
-  renamed. A file whose tests can't be read with confidence (another
+  renamed; like-named tests in different `describe` groups stay separate
+  rows, and a group's lines between its tests count as its Other lines. A file whose tests can't be read with confidence (another
   language, a name built at run time, a change inside a block that opens
   above its hunk) says so. A row marks its change unless the file's New or
   Deleted already says it, gives line counts only for a changed or renamed
@@ -3071,7 +3072,9 @@ builds the rail's model (the sections and the file list) from it.
   and `l` step through the section's views that have something (with the
   Overview too while it is a tab), wrapping as the row's arrows do; in the
   wide layout they unfold the column first if it was collapsed. While the
-  right-hand sidebar has the keys it keeps `h` and `l` for its own tabs. It
+  right-hand sidebar has the keys it keeps `h` and `l` for its own tabs.
+  With two versions compared, the version that has the focus takes them,
+  and a section with no other view leaves them to the other. It
   starts collapsed until the reader first opens it, then stays as they left
   it (`section-split.tsx`). Its code is drawn a frame after the section, as
   work React can drop, so a big diff never holds the Overview back. An excerpt of code in the Overview (a

@@ -113,7 +113,8 @@ export function SectionSplit({
       setReveal(null);
       select(next);
     }
-  });
+    return true;
+  }, grid);
   return (
     <div
       ref={grid}

@@ -1,8 +1,9 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import pluralize from "pluralize";
 import { harnessName } from "@baum/viewer/agent-names";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { formatShortDateTime } from "@baum/viewer/components/format";
+import { COMPARED_PANE } from "@baum/viewer/components/review-history";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { SegmentedControl } from "@baum/viewer/components/ui";
 import { useUrlState, ViewerLink } from "@baum/viewer/navigation";
@@ -94,8 +95,15 @@ export function viewKeyStep(
 
 /** h and l, anywhere but a text field or a dialog, move through the
  *  section's views (Code, Tests, Docs…). The right-hand sidebar keeps them
- *  while it holds the keys: it takes them first and marks them used. */
-export function useSectionViewKeys(go: (key: "h" | "l") => void, enabled = true) {
+ *  while it holds the keys: it takes them first and marks them used. With
+ *  two versions compared, the pane that has the focus takes them; `go` says
+ *  whether it moved, and a section with nowhere to go leaves the key to the
+ *  other. */
+export function useSectionViewKeys(
+  go: (key: "h" | "l") => boolean,
+  root: RefObject<HTMLElement | null>,
+  enabled = true,
+) {
   const latest = useRef(go);
   latest.current = go;
   useEffect(() => {
@@ -118,12 +126,14 @@ export function useSectionViewKeys(go: (key: "h" | "l") => void, enabled = true)
         )
       )
         return;
-      event.preventDefault();
-      latest.current(event.key);
+      const pane =
+        event.target instanceof Element ? event.target.closest(`[${COMPARED_PANE}]`) : null;
+      if (pane && root.current && !pane.contains(root.current)) return;
+      if (latest.current(event.key)) event.preventDefault();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [enabled]);
+  }, [enabled, root]);
 }
 
 /** A section's view other than its Overview. */
