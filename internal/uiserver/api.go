@@ -35,6 +35,7 @@ import (
 // Providers for later capabilities may be installed without changing the
 // authentication or instance boundary.
 type LocalAPI struct {
+	Integrations     http.Handler
 	Registry         *repos.Registry
 	Config           config.Config
 	PRs, Index, Jobs http.Handler
@@ -234,6 +235,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 			}
 			writeJSON(w, map[string]any{"available": false, "code": code})
 		})
+	}
+	if a.Integrations != nil {
+		mux.Handle("/api/integrations", a.Integrations)
+		mux.Handle("/api/integrations/", a.Integrations)
 	}
 	merge := provider(a.Merge, "merge_unavailable")
 	mux.Handle("GET /api/prs/merge-options", merge)

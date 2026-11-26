@@ -25,6 +25,7 @@ builds:
       - -trimpath
     ldflags:
       - -s -w -X github.com/baum-ai/baum/internal/cli.buildVersion={{ .Version }}
+      - -X github.com/baum-ai/baum/internal/integrations/linear.releaseClientID={{ index .Env "BAUM_LINEAR_CLIENT_ID" }}
     goos:
       - linux
       - darwin

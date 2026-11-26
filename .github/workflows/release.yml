@@ -215,6 +215,7 @@ jobs:
           # the bundle, so the before hook skips it: no JavaScript tooling
           # runs while this job holds a token that can write to the repository.
           BAUM_SKIP_VIEWER_FRESH: "1"
+          BAUM_LINEAR_CLIENT_ID: ${{ vars.BAUM_LINEAR_CLIENT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The desktop bundles carry these exact binaries.

@@ -60,6 +60,8 @@ import (
 	"github.com/baum-ai/baum/internal/hookrefresh"
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/inboxqueue"
+	"github.com/baum-ai/baum/internal/integrations"
+	"github.com/baum-ai/baum/internal/integrations/linear"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -834,7 +836,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		drafts := &tiledrafts.Store{Changed: func(pr string) {
 			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		local := uiserver.LocalAPI{Drafts: drafts, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		local := uiserver.LocalAPI{Integrations: integrations.Handler(linear.New(ctx, os.Getenv("BAUM_LINEAR_CLIENT_ID"))), Drafts: drafts, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
