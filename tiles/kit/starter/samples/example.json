@@ -1,0 +1,39 @@
+{
+  "name": "example",
+  "data": {
+    "summary": "Raises the retry limit to **10** and drops the backoff cap.",
+    "items": [
+      {
+        "title": "Backoff cap removed",
+        "severity": "high",
+        "text": "Retries now wait up to `2^10` seconds.",
+        "cites": [{ "type": "hunk", "id": "h_3e8a1c0d5b72", "lines": [13, 13] }]
+      },
+      {
+        "title": "Retry limit raised to 10",
+        "severity": "medium",
+        "text": null,
+        "cites": [{ "type": "hunk", "id": "h_3e8a1c0d5b72", "lines": [12, 12] }]
+      }
+    ]
+  },
+  "hunks": {
+    "h_3e8a1c0d5b72": {
+      "path": "internal/worker/retry.go",
+      "change": "modified",
+      "range": [10, 14],
+      "additions": 2,
+      "deletions": 2,
+      "header": "@@ -10,5 +10,5 @@ var defaults = Policy{",
+      "lines": [
+        { "kind": "context", "old": 10, "new": 10, "text": "var defaults = Policy{" },
+        { "kind": "context", "old": 11, "new": 11, "text": "\tBase: time.Second," },
+        { "kind": "remove", "old": 12, "text": "\tLimit: 5," },
+        { "kind": "remove", "old": 13, "text": "\tCap: time.Minute," },
+        { "kind": "add", "new": 12, "text": "\tLimit: 10," },
+        { "kind": "add", "new": 13, "text": "\tCap: 0," },
+        { "kind": "context", "old": 14, "new": 14, "text": "}" }
+      ]
+    }
+  }
+}

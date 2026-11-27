@@ -75,6 +75,8 @@ beforeEach(() => {
     mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.includes("api/prs/merge-options")) return Response.json(optionsAnswer);
       posts.push(JSON.parse(String(init?.body)));
+      // A browser drops the focus from the methods it disables while merging.
+      (document.activeElement as HTMLElement | null)?.blur();
       return mergeAnswer;
     }),
   );
@@ -131,6 +133,28 @@ it("shows GitHub's refusal in the dialog and stays open", async () => {
   expect(button("Merge pull request").disabled).toBe(false);
 });
 
+it("retries with Enter after GitHub refuses the merge", async () => {
+  mergeAnswer = Response.json(
+    { code: "github_failed", message: "Something went wrong while executing your query." },
+    { status: 502 },
+  );
+  const close = vi.fn();
+  await render(async () => {}, close);
+  const enter = () =>
+    act(async () => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+  await enter();
+  expect(node.textContent).toContain("Something went wrong");
+  expect(document.activeElement).toBe(node.querySelector('input[value="SQUASH"]'));
+  mergeAnswer = Response.json({ merged: true });
+  await enter();
+  expect(posts).toHaveLength(2);
+  expect(close).toHaveBeenCalledOnce();
+});
+
 it("will not merge when the head moved since the inbox was read", async () => {
   optionsAnswer = { ...options, head_sha: "newer" };
   await render();
@@ -139,8 +163,9 @@ it("will not merge when the head moved since the inbox was read", async () => {
   expect(posts).toEqual([]);
 });
 
-it("offers Merge on ready rows only and opens the dialog from the row", async () => {
-  const rows = [entry(1), entry(2, "blocked"), entry(3, "conflict")];
+it("offers Merge on rows GitHub can merge, not on a conflict, and opens the dialog from the row", async () => {
+  const rows = [entry(1), entry(2, "blocked"), entry(3, "conflict"), entry(4)];
+  rows[3]!.pull_request.viewer_can_push = false;
   await act(async () =>
     root.render(
       <Inbox
@@ -160,10 +185,13 @@ it("offers Merge on ready rows only and opens the dialog from the row", async ()
     act(async () =>
       node.querySelector<HTMLButtonElement>(`button[aria-label="Actions for ${name}"]`)!.click(),
     );
-  for (const name of ["acme/demo #2", "acme/demo #3"]) {
-    await openActions(name);
-    expect(choices()).toHaveLength(0);
-  }
+  await openActions("acme/demo #4");
+  expect(choices()).toHaveLength(0);
+  await openActions("acme/demo #3");
+  expect(choices()).toHaveLength(0);
+  // Blocked (failing checks, missing reviews) is the person's call.
+  await openActions("acme/demo #2");
+  expect(choices()).toHaveLength(1);
   await openActions("acme/demo #1");
   expect(choices()).toHaveLength(1);
   await act(async () => choices()[0]!.click());

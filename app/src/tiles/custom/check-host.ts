@@ -1,0 +1,104 @@
+import { appURL } from "../../api";
+import { desktopShell, invoke, type DesktopWindow } from "../../desktop/native";
+import { framesAllowedHere } from "./environment";
+
+/** Where the render check's runner draws (see "Render check" in
+ *  oss/ARCHITECTURE.md). A desktop shell that declares
+ *  `window.__BAUM_DESKTOP__.checkWindow === true` (the Electron shell, and
+ *  the Tauri shell on Linux) gives it a window of its own, `tile-check`, with
+ *  its own renderer process: the main page opens it on the first
+ *  `tile_check` event and closes it after a hang (which ends that process,
+ *  and the loop with it) or 2 minutes without checks. Anywhere else frames
+ *  are allowed (a browser, the Tauri shell on macOS) the runner draws inside
+ *  the page; where they are not (a shell that declares no frames), nothing
+ *  draws and the daemon answers `unavailable`. */
+
+/** Whether the shell gives the render check a window of its own. */
+export function checkWindowHere(win: DesktopWindow = window): boolean {
+  if (!desktopShell(win)) return false;
+  const declared = win.__BAUM_DESKTOP__;
+  return (
+    typeof declared === "object" &&
+    declared !== null &&
+    Object.hasOwn(declared, "checkWindow") &&
+    (declared as { checkWindow?: unknown }).checkWindow === true &&
+    framesAllowedHere(win)
+  );
+}
+
+/** Whether the runner draws inside this page. */
+export function inPageChecksHere(win: DesktopWindow = window): boolean {
+  return !checkWindowHere(win) && framesAllowedHere(win);
+}
+
+/** The first-show preflight runs only where a hang cannot freeze the page:
+ *  in the check window. */
+export const preflightHere = checkWindowHere;
+
+/** How long the check window stays open without a check. */
+export const IDLE_CLOSE = 2 * 60 * 1000;
+
+export type TileCheckEvent = { id: string; state: string };
+
+let idle: ReturnType<typeof setTimeout> | undefined;
+let inPage: ((event: TileCheckEvent) => void) | null = null;
+
+/** Sets what draws checks inside the page (the runner's module registers
+ *  it, so this module stays free of it). */
+export function setInPageRunner(run: ((event: TileCheckEvent) => void) | null) {
+  inPage = run;
+}
+
+/** The shell's commands, one after another: a close after a hang and the
+ *  open for a check still waiting must reach the shell in that order. */
+let commands: Promise<unknown> = Promise.resolve();
+function command(name: "open_check_window" | "close_check_window") {
+  commands = commands.then(() => invoke(name)).catch(() => undefined);
+}
+
+function closeWindow() {
+  clearTimeout(idle);
+  idle = undefined;
+  command("close_check_window");
+}
+
+/** What the main page does with a `tile_check` event. */
+export function onTileCheckEvent(raw: unknown, win: DesktopWindow = window) {
+  let event: TileCheckEvent;
+  try {
+    event = (typeof raw === "string" ? JSON.parse(raw) : raw) as TileCheckEvent;
+  } catch {
+    return;
+  }
+  if (typeof event?.id !== "string" || typeof event.state !== "string") return;
+  if (checkWindowHere(win)) {
+    if (event.state === "hung") return closeWindow();
+    // Opening is idempotent, and the shell may have closed the window
+    // itself (a reconnection), so every new check asks.
+    // After a hang the daemon announces the checks still waiting again, so
+    // the window closed for the hang opens afresh for them.
+    if (event.state === "queued") command("open_check_window");
+    clearTimeout(idle);
+    idle = setTimeout(closeWindow, IDLE_CLOSE);
+    return;
+  }
+  if (event.state === "queued" && inPageChecksHere(win)) inPage?.(event);
+}
+
+/** What the main page does once when it loads: the daemon does not replay
+ *  `tile_check` events to a new connection, so the page asks whether checks
+ *  are waiting and treats them like a `queued` event (opening the check
+ *  window, or drawing in the page). Nothing waiting does nothing. */
+export async function checkWaitingJobs(win: DesktopWindow = window) {
+  if (!checkWindowHere(win) && !inPageChecksHere(win)) return;
+  try {
+    const response = await fetch(appURL("api/tile-checks/state"));
+    if (!response.ok) return;
+    const state = (await response.json()) as { waiting?: unknown };
+    if (typeof state.waiting === "number" && state.waiting > 0) {
+      onTileCheckEvent({ id: "waiting", state: "queued" }, win);
+    }
+  } catch {
+    // The next check's event opens it.
+  }
+}

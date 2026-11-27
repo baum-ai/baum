@@ -26,9 +26,7 @@ type Prompt struct {
 type Prompts interface {
 	// Instructions returns the review instructions for a backend. The loop
 	// ignores Version and Digest: the host records the version in the
-	// document's generator.prompt_version and keeps the digest. The loop
-	// appends the offered tile guidance (tilecatalogue.Instructions) to the
-	// body itself.
+	// document's generator.prompt_version and keeps the digest.
 	Instructions(ctx context.Context, backend string) (Prompt, error)
 }
 
@@ -55,6 +53,32 @@ type StagedPrompt struct {
 	Outline         string
 	Details         string
 	Context         string
+}
+
+// ReviewV2Prompts supplies the instructions of a baum.review/2 generation
+// (agent/orchestrate): the map, the section and context agents, the tile
+// agents and the overview.
+type ReviewV2Prompts interface {
+	// ReviewV2Instructions returns the texts for a backend. Version and
+	// Digest are recorded with the version, as a staged prompt's are.
+	ReviewV2Instructions(ctx context.Context, backend string) (ReviewV2Prompt, error)
+}
+
+// ReviewV2Prompt is one immutable set of baum.review/2 instructions for one
+// backend. Shared starts every call's prompt: what the levels are, the
+// ground rules and the copy rules. Each level's text follows it, ending with
+// the backend's submit block; the call's input comes after. Tile is the
+// shared tile prompt of the native types, Natives the part each native type
+// adds to it, by type. Digest identifies every text together.
+type ReviewV2Prompt struct {
+	Version, Digest string
+	Shared          string
+	Map             string
+	Section         string
+	Context         string
+	Tile            string
+	Natives         map[string]string
+	Overview        string
 }
 
 // StaticPrompts is a fixed Prompts for tests and simple hosts: the prompt for

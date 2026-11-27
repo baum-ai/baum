@@ -174,6 +174,9 @@ type Summary struct {
 	ReviewMinutes *int            `json:"review_minutes"`
 	RiskScore     json.RawMessage `json:"risk_score"`
 	Run           *Run            `json:"run,omitempty"`
+	// Kept is the newer head the latest version was found to still cover,
+	// nil when there is none (see Kept).
+	Kept *Kept `json:"kept,omitempty"`
 }
 
 // The projection of a latest document, shared by Snapshot's fallback, the
@@ -419,6 +422,9 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 	}
 	for i := range out {
 		entries[out[i].Key] = &out[i]
+	}
+	if err = keptHeads(ctx, tx, entries); err != nil {
+		return nil, err
 	}
 	// Opening for writes creates runs.
 	var exists int

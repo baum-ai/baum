@@ -74,7 +74,8 @@ test("an unspecified merge blocker is not called a required review", async ({ pa
     .filter({ has: page.getByRole("heading", { name: "On GitHub", exact: true }) });
   await expect(explanation).toContainText("Merge blocked by GitHub");
   await expect(explanation).toContainText("GitHub has not supplied the reason.");
-  await expect(page.getByRole("link", { name: "Open on GitHub", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open on GitHub", exact: true })).toHaveCount(0);
+  await expect(page.locator(".upnext-panel").getByRole("button", { name: /^Merge/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Merge all/ })).toHaveCount(0);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });

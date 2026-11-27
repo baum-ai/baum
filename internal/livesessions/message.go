@@ -57,6 +57,8 @@ func (t *Transcripts) message(ctx context.Context, agent, id, text string) error
 	switch {
 	case found == nil:
 		return ErrNotTracked
+	case found.Origin == OriginPanel:
+		return ErrPanelSession
 	case !found.Messageable:
 		return errNotMessageable
 	}
@@ -87,6 +89,8 @@ func (t *Transcripts) handleMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]bool{"sent": true})
 	case errors.Is(err, ErrNotTracked):
 		writeJSON(w, http.StatusNotFound, map[string]any{"code": "live_session_not_found", "message": "This session is no longer listed."})
+	case errors.Is(err, ErrPanelSession):
+		writePanelSession(w)
 	case errors.Is(err, errNotMessageable):
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "session_not_at_prompt", "message": "Only a session waiting at its prompt can be messaged."})
 	case errors.Is(err, ErrAgentGone):

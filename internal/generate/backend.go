@@ -132,6 +132,9 @@ func (e explicitPath) Check(ctx context.Context) (string, error) {
 // ConcurrentCalls forwards the backend's agent.ConcurrentCaller.
 func (e explicitPath) ConcurrentCalls() bool { return ConcurrentCalls(e.CheckedBackend) }
 
+// KeepsSessions forwards the backend's agent.SessionKeeper.
+func (e explicitPath) KeepsSessions() bool { return agent.KeepsSessions(e.CheckedBackend) }
+
 // Fix forwards a fix (agent.Fixer) to a backend that can make one.
 func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
 	fixer, ok := e.CheckedBackend.(agent.Fixer)

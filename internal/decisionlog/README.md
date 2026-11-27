@@ -70,7 +70,8 @@ not a failure.
    unchanged and the session is covered by the current repository-context
    version, nothing happens, except that a stored path that failed is replaced
    by the one found. An unrelated repository change does not remine a covered
-   transcript.
+   transcript. Unreadable Codex skips include a reader version so a parser fix
+   can retry unchanged files.
 3. baum's own generation runs are skipped (`generation_run`).
 4. The transcript is rendered and redacted. When it has the head extraction's
    content hash and the current repository-context version, the head still
@@ -161,7 +162,12 @@ the transcript changes; other skips only when it changes.
   with others.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
   reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
-  (`capture`, or a feature log stage) and the `item` it was about.
+  (`capture`, a feature log stage, `decision_relevance`, or `stack_summary`)
+  and the `item` it was about. `Calls` makes one such call for another part
+  of the daemon, a stack's summary (`internal/reviewgroups`, item
+  `group:<id>`): the backend and model resolved as capture's, the cost
+  reserved, a reply its caller's check refuses recorded as failed, and no
+  capture gate.
 
 Nothing is pruned: the ledger and the decisions, obsolete ones included, are
 kept for good, as hosted extraction keeps them.
@@ -240,7 +246,8 @@ diff and each decision's title, summary, rationale, stored evidence, files
 and superseded flag. It reads no full session transcript. File overlap,
 branch, date and session membership alone cannot establish relevance;
 file-less human decisions remain eligible. Input is capped at 384 KiB and
-output at 4,096 tokens. A batch has three minutes including Git reads, and
+output at 4,096 tokens plus 300 per decision in the batch, so a full batch's
+reply is not cut off before it is submitted. A batch has three minutes including Git reads, and
 the model call has two. It uses the configured extraction backend/model and
 gate, with no hosted-service dependency. One validated result per supplied
 decision ID is required: `relevant`, `unrelated` or `uncertain`, with a short
@@ -360,8 +367,9 @@ minutes.
 
 The commits are linked to the sessions on this machine with the local
 linkage of the review page (`locallink.LinkCommits`: checkpoint candidate discovery followed by
-independent creation or edit evidence; generation runs left out), and their links replace the ones
-they had:
+a recorded creation of each commit; generation runs left out), and their links replace the ones
+they had. Opening the store drops the edit-overlap (`files_overlap`) links earlier versions stored,
+marking the features they placed sessions in:
 
 - each run, the commits just recorded, made in the last 7 days (hosted looks
   back a day; a laptop may be off for days);

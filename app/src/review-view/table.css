@@ -1,0 +1,28 @@
+/* A table's repeated values are tinted so equal values read alike, with
+ * the theme's data colours. Dark paper swaps the bright series for the
+ * earthier caramel and sage and needs a stronger mix to show. */
+.table-tint {
+  --tint-mix: 14%;
+  background: color-mix(in srgb, var(--tint) var(--tint-mix), transparent);
+}
+.table-tint[data-tint="0"] {
+  --tint: var(--data-1);
+}
+.table-tint[data-tint="1"] {
+  --tint: var(--data-2);
+}
+.table-tint[data-tint="2"] {
+  --tint: var(--data-3);
+}
+.table-tint[data-tint="3"] {
+  --tint: var(--data-4);
+}
+:root[data-theme="dark"] .table-tint {
+  --tint-mix: 34%;
+}
+:root[data-theme="dark"] .table-tint[data-tint="1"] {
+  --tint: var(--data-caramel);
+}
+:root[data-theme="dark"] .table-tint[data-tint="3"] {
+  --tint: var(--data-sage);
+}

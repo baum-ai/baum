@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
@@ -200,6 +201,8 @@ func (f *proposalFixture) propose(tool string, args any) (agentcontext.Proposal,
 	if err := json.Unmarshal([]byte(text), &receipt); err != nil {
 		f.t.Fatalf("%s: %v %s", tool, err, text)
 	}
+	// A theme choice also says which slot it is for.
+	delete(receipt, "applies_to")
 	keys := slices.Sorted(func(yield func(string) bool) {
 		for k := range receipt {
 			if !yield(k) {
@@ -367,13 +370,17 @@ func inboxPut(edit func([]map[string]any) []map[string]any) func(*proposalFixtur
 func proposalCases() []proposalCase {
 	value := "value typed by the person"
 	return []proposalCase{{
-		name: "appearance", page: settingsAt("general"), tool: "propose_appearance", args: map[string]any{"theme": "light", "page_modifier": "alt"},
-		route:  fixed("PUT", "/api/settings/appearance", `{"theme":"light","page_modifier":"alt"}`),
-		change: fixed("PUT", "/api/settings/appearance", `{"key_hints":false}`),
+		name: "appearance", page: settingsAt("general"), tool: "propose_appearance", args: map[string]any{"key_hints": false, "page_modifier": "alt"},
+		route:  fixed("PUT", "/api/settings/appearance", `{"key_hints":false,"page_modifier":"alt"}`),
+		change: fixed("PUT", "/api/settings/appearance", `{"key_hints":true}`),
+	}, {
+		name: "review page", page: settingsAt("general"), tool: "propose_appearance", args: map[string]any{"review_page": "tiles"},
+		route:  fixed("PUT", "/api/settings/appearance", `{"review_page":"tiles"}`),
+		change: fixed("PUT", "/api/settings/appearance", `{"review_page":"full"}`),
 	}, {
 		name: "appearance without a section", page: settingsAt(""), tool: "propose_appearance", args: map[string]any{"key_hints": false},
 		route:  fixed("PUT", "/api/settings/appearance", `{"key_hints":false}`),
-		change: fixed("PUT", "/api/settings/appearance", `{"theme":"dark"}`),
+		change: fixed("PUT", "/api/settings/appearance", `{"key_hints":true}`),
 	}, {
 		name: "plan usage", page: settingsAt("general"), tool: "propose_plan_usage", args: map[string]any{"provider": "codex", "shown": false},
 		route:  fixed("PUT", "/api/settings/plan-usage", `{"provider":"codex","shown":false}`),
@@ -402,6 +409,10 @@ func proposalCases() []proposalCase {
 			return "PUT", "/api/settings/time-limits", fmt.Sprintf(`{"review_time_limit_minutes":30,"run_time_limit_minutes":%d}`, s.Run)
 		},
 		change: fixed("PUT", "/api/settings/time-limits", `{"review_time_limit_minutes":20,"run_time_limit_minutes":20}`),
+	}, {
+		name: "labs", page: settingsAt("reviews"), tool: "propose_labs", args: map[string]any{"tile_reviews": true},
+		route:  fixed("PUT", "/api/settings/labs", `{"tile_reviews":true}`),
+		change: fixed("PUT", "/api/settings/labs", `{"tile_reviews":true}`),
 	}, {
 		name: "job concurrency", page: settingsAt("computer"), tool: "propose_job_concurrency", args: map[string]any{"job_concurrency": 2},
 		route:  fixed("PUT", "/api/settings/job-concurrency", `{"job_concurrency":2}`),
@@ -435,6 +446,20 @@ func proposalCases() []proposalCase {
 		route:  fixed("PUT", "/api/repositories/owner/repo/prompts/fix-conflicts", `{"text":null}`),
 		change: fixed("PUT", "/api/settings/prompts/fix-conflicts", `{"text":"The global text the repository inherits, edited."}`),
 	}, {
+		name: "repository prompt from its pull request", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}
+		},
+		tool: "propose_prompt", args: map[string]any{"id": "fix-checks", "text": "Repository checks text.", "repository": "owner/repo"},
+		route:  fixed("PUT", "/api/repositories/owner/repo/prompts/fix-checks", `{"text":"Repository checks text."}`),
+		change: fixed("PUT", "/api/repositories/owner/repo/prompts/fix-checks", `{"text":"Edited by hand."}`),
+	}, {
+		name: "global prompt from a pull request", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}
+		},
+		tool: "propose_prompt", args: map[string]any{"id": "fix-checks", "text": "Fix the failing checks."},
+		route:  fixed("PUT", "/api/settings/prompts/fix-checks", `{"text":"Fix the failing checks."}`),
+		change: fixed("PUT", "/api/settings/prompts/fix-checks", `{"text":"The person's own text."}`),
+	}, {
 		name: "repository settings", page: repositoryAt(""), tool: "propose_repository_settings", args: map[string]any{"automatic": false},
 		// The page sends the whole settings object.
 		route:  fixed("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"decisions":null}`),
@@ -445,7 +470,7 @@ func proposalCases() []proposalCase {
 		},
 		tool: "propose_inbox", args: map[string]any{"name": "Platform", "query": "repo=owner/repo", "color": "green"},
 		route: inboxPut(func(list []map[string]any) []map[string]any {
-			return append(list, map[string]any{"name": "Platform", "color": "green", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "repo=owner/repo", "no_bots": false, "badge": true})
+			return append(list, map[string]any{"name": "Platform", "color": "green", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "repo=owner/repo", "no_bots": false, "badge": true, "auto_review": true})
 		}),
 		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["badge"] = false; return list }),
 	}, {
@@ -458,6 +483,25 @@ func proposalCases() []proposalCase {
 			return list
 		}),
 		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["color"] = "red"; return list }),
+	}, {
+		name: "turn off automatic reviews of an inbox", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PageInbox}
+		},
+		tool: "propose_inbox", inbox: 1, args: map[string]any{"auto_review": false},
+		route: inboxPut(func(list []map[string]any) []map[string]any {
+			list[0]["auto_review"] = false
+			return list
+		}),
+		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["color"] = "red"; return list }),
+	}, {
+		name: "new inbox without automatic reviews", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PageInbox}
+		},
+		tool: "propose_inbox", args: map[string]any{"name": "Quiet", "auto_review": false},
+		route: inboxPut(func(list []map[string]any) []map[string]any {
+			return append(list, map[string]any{"name": "Quiet", "color": "blue", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "", "no_bots": false, "badge": true, "auto_review": false})
+		}),
+		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["badge"] = false; return list }),
 	}, {
 		name: "query of an inbox with the older fields", page: func(*proposalFixture) agentcontext.PageContext {
 			return agentcontext.PageContext{Page: agentcontext.PageInbox}
@@ -625,8 +669,8 @@ func TestInvalidProposalsAreRefusedWithThePagesReason(t *testing.T) {
 		path   string
 		body   string
 	}{
-		{"theme", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"theme": "neon"}, "PUT", "/api/settings/appearance", `{"theme":"neon"}`},
 		{"page modifier", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"page_modifier": "shift"}, "PUT", "/api/settings/appearance", `{"page_modifier":"shift"}`},
+		{"review page", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"review_page": "grid"}, "PUT", "/api/settings/appearance", `{"review_page":"grid"}`},
 		{"plan", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_plan_usage", map[string]any{"provider": "gemini", "shown": true}, "PUT", "/api/settings/plan-usage", `{"provider":"gemini","shown":true}`},
 		{"effort", agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "reviews"}, "propose_reviews", map[string]any{"effort": "extreme"}, "PUT", "/api/automatic", `{"effort":"extreme"}`},
 		{"backend", agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "reviews"}, "propose_reviews", map[string]any{"backend": "cursor-agent"}, "PUT", "/api/automatic", `{"backend":"cursor-agent"}`},
@@ -696,16 +740,14 @@ func TestProposalsBelongToTheOpenPage(t *testing.T) {
 	refused("a Reviews change on General", err)
 	_, err = f.propose("propose_inbox", map[string]any{"name": "X"})
 	refused("an inbox on Settings", err)
-	_, err = f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "owner/repo"})
-	refused("a repository's prompt on Settings", err)
+	_, err = f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "nobody/unknown"})
+	refused("a prompt of a repository baum does not watch", err)
 
 	f.page(agentcontext.PageContext{Page: agentcontext.PageRepositories, Repository: "owner/repo", Section: "prompts"})
-	_, err = f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "other/repo"})
-	refused("another repository's prompt", err)
 	_, err = f.propose("propose_repository_settings", map[string]any{"automatic": false})
 	refused("a Reviews change on Prompts", err)
-	_, err = f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageRepositories, Target: agentcontext.RepositoryTarget("other/repo", agentcontext.TargetPrompt+"fix-checks"), After: json.RawMessage(`{"text":"x"}`)})
-	refused("another repository's target", err)
+	_, err = f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageRepositories, Target: agentcontext.RepositoryTarget("owner/repo", agentcontext.TargetPrompt+"fix-checks"), After: json.RawMessage(`{"text":"x"}`)})
+	refused("a prompt proposed as the page's", err)
 	f.page(agentcontext.PageContext{Page: agentcontext.PageRepositories})
 	_, err = f.propose("propose_repository_settings", map[string]any{"automatic": false})
 	refused("a repository change on the Repositories list", err)
@@ -757,6 +799,60 @@ func TestProposalsBelongToTheOpenPage(t *testing.T) {
 		if err := f.save(p, agentcontext.SaveInput{}); err != nil || f.state() == before {
 			t.Errorf("%s: not saved back on its page: %v", tc.name, err)
 		}
+	}
+
+	// A prompt is any page's: one proposed while reading a review is saved
+	// from wherever the person is.
+	f.page(agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7})
+	p, err := f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "Read the failing check's log first.", "repository": "owner/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Page != agentcontext.ProposalAnywhere || p.Target != agentcontext.RepositoryTarget("owner/repo", agentcontext.TargetPrompt+"fix-checks") {
+		t.Errorf("recorded on %q as %q", p.Page, p.Target)
+	}
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	if err := f.save(p, agentcontext.SaveInput{}); err != nil {
+		t.Fatalf("not saved from another page: %v", err)
+	}
+	if got := f.must("GET", "/api/repositories/owner/repo/prompts", ""); !strings.Contains(got, "Read the failing check's log first.") {
+		t.Errorf("the repository's prompt was not saved: %s", got)
+	}
+}
+
+// A prompt proposal's Before is the scope's own text and the text it
+// inherits, so the person sees the change against the text that runs now.
+func TestPromptProposalsShowTheTextInUse(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7})
+	before := func(tool string, args map[string]any) map[string]*string {
+		t.Helper()
+		p, err := f.propose(tool, args)
+		if err != nil {
+			t.Fatalf("%s: %v", tool, err)
+		}
+		var out map[string]*string
+		if err := json.Unmarshal(p.Before, &out); err != nil {
+			t.Fatalf("%s: %v %s", tool, err, p.Before)
+		}
+		return out
+	}
+	entry, _ := prompt.Lookup("fix-checks")
+	// Not customised anywhere: no own text, the built-in inherited.
+	got := before("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "owner/repo"})
+	if got["text"] != nil || got["inherited_text"] == nil || *got["inherited_text"] != entry.Default {
+		t.Errorf("an uncustomised repository prompt: %v", got)
+	}
+	// The repository inherits the global custom text, and has its own.
+	got = before("propose_prompt_reset", map[string]any{"id": "fix-conflicts", "repository": "owner/repo"})
+	if got["text"] == nil || *got["text"] != "The repository's conflicts prompt." || got["inherited_text"] == nil || *got["inherited_text"] != promptSentinel {
+		t.Errorf("a customised repository prompt: %v", got)
+	}
+	// The global prompt inherits the built-in.
+	conflicts, _ := prompt.Lookup("fix-conflicts")
+	got = before("propose_prompt_reset", map[string]any{"id": "fix-conflicts"})
+	if got["text"] == nil || *got["text"] != promptSentinel || got["inherited_text"] == nil || *got["inherited_text"] != conflicts.Default {
+		t.Errorf("a customised global prompt: %v", got)
 	}
 }
 
@@ -835,7 +931,7 @@ func TestAgentEnvironmentValuesNeverPassThroughTheAgent(t *testing.T) {
 	noValue("removal")
 	// Only the agent environment takes a value.
 	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
-	theme, err := f.propose("propose_appearance", map[string]any{"theme": "dark"})
+	theme, err := f.propose("propose_appearance", map[string]any{"key_hints": false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -908,7 +1004,7 @@ func TestProposalAnswersCarryNoCurrentValue(t *testing.T) {
 		t.Errorf("the person does not see the current text: %s", p.Before)
 	}
 	// A guessed Before is refused without saying what the value is.
-	_, err := f.mcp.Proposals.Propose(context.Background(), f.id, agentcontext.Proposal{Page: agentcontext.PageSettings, Target: agentcontext.TargetPrompt + "fix-conflicts",
+	_, err := f.mcp.Proposals.Propose(context.Background(), f.id, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere, Target: agentcontext.TargetPrompt + "fix-conflicts",
 		Before: json.RawMessage(`{"text":"a guess"}`), After: json.RawMessage(`{"text":null}`)})
 	if !errors.Is(err, agentcontext.ErrNotRecorded) || strings.Contains(err.Error(), "SENTINEL") {
 		t.Errorf("a guess: %v", err)

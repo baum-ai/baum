@@ -1,13 +1,12 @@
 package agent
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
 )
 
-// ErrSessionNotFound is a resume or fork whose session the CLI could not
+// ErrSessionNotFound is a resume whose session the CLI could not
 // find: its files were deleted, or it was recorded under another working
 // directory. The call made no model request, so nothing was spent.
 var ErrSessionNotFound = errors.New("the agent session to continue was not found")
@@ -49,8 +48,8 @@ func MissingSession(output string) (string, bool) {
 	return "", false
 }
 
-// SessionNotFound is the error a backend returns for a resume or fork whose
-// session is gone, with the CLI's own line.
+// SessionNotFound is the error a backend returns for a resume whose session
+// is gone, with the CLI's own line.
 func SessionNotFound(cli, line string) error {
 	return fmt.Errorf("%w: %s: %s", ErrSessionNotFound, cli, line)
 }
@@ -65,22 +64,6 @@ func sessionMissing(request Request, result Result, err error) bool {
 	}
 	_, missing := MissingSession(err.Error())
 	return missing
-}
-
-// Continue runs one call of a conversation that keeps its agent session
-// (Request.PersistSession, ResumeSession and ForkSession) through the loop's
-// provider retries, stall watchdog and budgets, charging its calls and tokens
-// to outcome. Unlike RunTask it neither validates nor repairs the reply: a
-// repair has to continue the same session, so the caller checks the reply and
-// calls Continue again with the session the result names. A resume or fork
-// whose session the CLI cannot find fails at once, without retries, with an
-// error wrapping ErrSessionNotFound.
-func (g *Generator) Continue(ctx context.Context, budgets Budgets, request Request, outcome *Outcome) (Result, error) {
-	if err := request.ValidateSession(); err != nil {
-		return Result{}, err
-	}
-	stalls := 0
-	return g.call(ctx, budgets, request, outcome, &stalls)
 }
 
 // sessionNotFound wraps an error that names a missing session.

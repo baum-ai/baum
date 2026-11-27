@@ -304,11 +304,11 @@ func TestFocusIsThePagesOwn(t *testing.T) {
 	if text, _ := data(t, s, token, "focus", nil); text != "none" {
 		t.Fatalf("no focus: %q", text)
 	}
-	if err := s.Registry.SetPage(id, PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12, Focus: json.RawMessage(`{"section":"s2","stop":3,"overview":false,"anchors":["h_1"]}`)}); err != nil {
+	if err := s.Registry.SetPage(id, PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12, Focus: json.RawMessage(`{"section":"s2","overview":false,"anchors":["h_1"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	text, _ := data(t, s, token, "focus", nil)
-	if text != `{"page":"pull_request","focus":{"section":"s2","stop":3,"overview":false,"anchors":["h_1"]}}` {
+	if text != `{"page":"pull_request","focus":{"section":"s2","overview":false,"anchors":["h_1"]}}` {
 		t.Fatalf("focus %s", text)
 	}
 	// An action's page is its pull request, with no focus.
@@ -509,7 +509,7 @@ func TestActionReaderFiltersAllRepositoryRoutes(t *testing.T) {
 func TestActionRouteTableCoversTheToolsAndBindsClones(t *testing.T) {
 	s, d := fakeServer(t)
 	// A clone of another repository is refused on every clone route.
-	for _, path := range []string{"/api/versions", "/api/document", "/api/patch", "/api/commits", "/api/sessions", "/api/sessions/s1", "/api/facts", "/api/facts/patch", "/api/facts/commits", "/api/facts/sessions", "/api/facts/sessions/s1"} {
+	for _, path := range []string{"/api/versions", "/api/document", "/api/tiles", "/api/patch", "/api/commits", "/api/sessions", "/api/sessions/s1", "/api/facts", "/api/facts/patch", "/api/facts/commits", "/api/facts/sessions", "/api/facts/sessions/s1"} {
 		for clone, allowed := range map[string]bool{"c-web": true, "c-evil": false, "nope": false} {
 			reader := s.reader.within([]string{"/api"}, "acme/web")
 			d.reset()
@@ -544,12 +544,19 @@ func TestToolsReadOnlyKnownRoutes(t *testing.T) {
 		}
 	}
 	// Only the propose_* tools propose; they read nothing and an action
-	// never sees them.
+	// never sees them, except that propose_tile_type reads the open pull
+	// request's diff, as the diff tool does, to check a sample against it.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, tool := range s.tools {
 		if tool.Proposes != strings.HasPrefix(tool.Name, "propose_") {
 			t.Errorf("%s: proposes %v", tool.Name, tool.Proposes)
+		}
+		if tool.Name == "propose_tile_type" {
+			if !slices.Equal(tool.Reads, []string{"/api/index", "/api/facts", "/api/document", "/api/patch"}) || tool.Scope != ScopeGlobal {
+				t.Errorf("propose_tile_type reads %v in scope %v", tool.Reads, tool.Scope)
+			}
+			continue
 		}
 		if tool.Proposes && (len(tool.Reads) > 0 || len(tool.Projected) > 0 || tool.Scope != ScopeGlobal) {
 			t.Errorf("%s proposes and reads %v %v, or is not global", tool.Name, tool.Reads, tool.Projected)

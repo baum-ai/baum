@@ -10,7 +10,7 @@ A hidden window or closed tray panel makes no requests and repaints nothing,
 daemon events included: they only mark what is stale until the window shows
 (`createEventGate` in `src/reload-events.ts`).
 Every timer that refreshes data or relative times (`useNow`, the plan usage,
-review, repository, updater, chat, transcript and GitHub connection polls and
+review, repository, updater, transcript and GitHub connection polls and
 the tray panel's refresh) runs through `useVisibleInterval` in
 `src/visible-interval.ts`: it pauses while `document.hidden` and runs once when
 the page becomes visible again. The polls that schedule each read after the last
@@ -26,18 +26,48 @@ unchanged snapshot sets no new state. Every daemon answer the app polls is
 `no-store`, so none goes through the webview's HTTP cache: WebKitGTK 2.50's
 cache path leaks memory in its network process.
 
+`pnpm build:profile` builds the same pages for profiling: with
+source maps, React's profiling build, and a collector, `window.__baumPerf`
+(`src/perf.ts`, `src/perf-collector.ts`). `__baumPerf.snapshot()` returns, as
+JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
+
+- each navigation, with `content` (the first frame after React committed with
+  no `LoadingStatus` on screen) and `settled` (as content, with no request in
+  flight). Only the latest navigation completes: one left before it settled
+  is marked `superseded`, and a redirect (a replaced history entry) continues
+  the navigation on its way;
+- each key press and click, with `duration` from the input to the frame drawn
+  after it, `delay` before the first listener ran and `processing` until the
+  window's own listeners ran after React's;
+- the gaps between animation frames, bucketed, and those over 50 ms;
+- commits per `<Profiled>` region (`app`, `sidebar`, `main`, `session-panel`),
+  each tagged with the page shown;
+- requests made with `fetch`, to their headers, without the secret namespace;
+- the scenario's own `__baumPerf.mark(name)` markers, the DOM's element count
+  and, where the engine has it, the JS heap size.
+
+`__baumPerf.progress()` returns just the latest navigation and how many
+interactions were recorded, without copying the rest, for a scenario to
+wait on (`just desktop::profile`, [desktop](../desktop/README.md#profiling)).
+
+It measures by hand rather than with the Event Timing or Long Tasks APIs,
+which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
+things. Every other build leaves it out, and fails if `__baumPerf` reaches a
+chunk.
+
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
-connecting and tray screens use the viewer palette that the local app uses,
-following the system's light or dark appearance.
+connecting and tray screens use the viewer palette that the local app uses and
+follow the active colour theme (`src/desktop/follow-theme.ts`, below).
 Setup has a decorative leaf banner just above its step label, using the
 transparent Discord artwork in both themes. Its width is capped so leaves stay
 visible on large screens, and it follows the form on tall windows. It is static,
-fades into the page and leaves the step controls in place.
+fades into the page and leaves the step controls in place. On short windows the
+setup form scrolls above the Back and Continue controls, which stay visible.
 
 Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
-walkthrough, sessions, settings and charts reuse its semantic tokens, in
+sessions, settings and charts reuse its semantic tokens, in
 markup through the palette utilities in `../viewer/src/palette-utilities.css`
 (`text-secondary`, `bg-surface-card`, `border-subtle`). Stumpy's
 fixed illustration colors live with the component in
@@ -48,13 +78,28 @@ and Tailwind color utilities outside the UI palette,
 `../viewer/src/themes/*.css` and those two artwork modules.
 The default UI palette has nineteen explicit base colors shared by light and dark mode;
 its neutral ramps, status backgrounds and interaction shades are derived mixes.
-Custom colors go in `../viewer/src/themes/custom.css`, loaded by every desktop
-screen after the default palette in a higher-priority cascade layer. Override
-bases to recalculate shades, or any semantic token to replace a derived color.
-Put overrides on `:root`, with optional `:root[data-theme="dark"]` exceptions;
-components consume those values without redefining them. See
-[custom color themes](../viewer/README.md#custom-color-themes) for examples and
-named theme selection separate from the light/dark appearance preference.
+A custom colour theme is a base (`light` or `dark`) and overrides of the
+palette tokens in the allowlist in `src/theme.ts` (the same list as
+`themes.Tokens` in `internal/themes`; seeds such as `--color-paper` recalculate
+the shades built on them, roles such as `--surface-page` replace one result).
+The light and dark slots each name a theme (the built-in default when none is
+chosen) and the `theme` setting picks the slot in use, System following the
+operating system. `src/theme.ts` applies the active theme to the document root:
+`data-theme` and `color-scheme` follow the theme's base (so a dark theme in the
+light slot gives `data-theme="dark"`), and its tokens are set inline, which beats
+the palette layers and `style.css`; tokens the previous theme set are removed.
+A theme the agent proposes is previewed the same way, and `tileThemeMessage`
+builds the tile protocol's `theme` message for a theme. `../viewer/src/themes/custom.css`
+stays empty for a build that wants fixed overrides; see
+[custom color themes](../viewer/README.md#custom-color-themes).
+The desktop app's native screens (setup, connecting, tray panel) cannot ask the
+daemon, so in the desktop app `PreferencesProvider` reports the saved theme (the
+mode and the theme in each slot, with its base and allowlisted tokens) to the
+app with `save_theme` whenever it changes, never for a preview. The screens call
+`followTheme()`, which reads it with `theme_state`, applies it through
+`applyTheme`, follows the system's appearance in system mode, and reads again
+when the window gets the focus or becomes visible (the tray panel is one window
+that stays open). Without the state it follows the system's light or dark.
 
 `pnpm lint:palette` runs the color rule by itself; `pnpm lint` and `pnpm check`
 include it, so the normal CI app check enforces it. It scans app sources, shared
@@ -76,11 +121,12 @@ one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
 lives only in `src/nine-dots.css`. A page that reads something says which of four things it is
 (`src/page-state.tsx`): waiting for its first read, that read failed (`Couldn't load jobs`,
 with the daemon's message and one Retry, never an empty page or an endless wait), empty, or its
-content. A failed later read keeps the content shown and says so in a banner. Native dialogs
+content. Retry starts a new read rather than waiting on one still under way, which
+may never answer. A failed later read keeps the content shown and says so in a banner. Native dialogs
 open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them.
 Dialog and panel dismissals use the viewer's `CloseButton`; confirmation actions
 keep their Cancel buttons until finished. The keyboard shortcuts dialog keeps
-its title and close control visible while the list scrolls.
+its title, search field and close control visible while the list scrolls.
 Every screen uses baum's bundled type from the
 viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope for
 headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
@@ -112,8 +158,8 @@ name. A reference or before-state image is not evidence that the finished
 change passed a test. Images are copied into the saved review version, so
 history keeps them after a native transcript is removed. Entire checkpoint
 images and image paths or URLs merely mentioned in a transcript are excluded.
-The full review's Images part opens each copy at full size and retains its
-provenance; the walkthrough's Full review action opens that view.
+The review's Images part opens each copy at full size and retains its
+provenance.
 
 Setup and the app's Add repositories use the same repository picker and daemon
 search. They first fetch eight top repositories, matching the visible rows, then
@@ -229,7 +275,11 @@ that one.
 
 Buttons the tour's copy names, such as **Ask** or **Focus session**, are drawn
 as those buttons but are not controls: the pointer neither hovers nor presses
-them.
+them. The welcome fits the viewport and makes room for its controls in short
+windows by shrinking the illustration. The review step keeps the action bar
+clear by using the space below or above it. If a card's copy needs more
+space, it scrolls between the heading and the navigation buttons and can take
+keyboard focus.
 
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
@@ -251,7 +301,7 @@ opens it, its short id, author and time, and the session linked to it (which
 opens in Sessions), how it was matched and how confident; `j`/`k` move a row
 mark through them. A commit opened alone lists its changed files as blocks
 `j`/`k` move through, `Space` opening a file's diff. Hosted discussion and approvals are absent. Merging, updating a branch, re-running checks,
-submitting a review from the walkthrough, a fix the person starts (with its
+submitting a review, a fix the person starts (with its
 replies on the review threads it addressed), and resolving a review thread the
 person chose are the app's only GitHub writes (see below).
 
@@ -278,25 +328,12 @@ and patches come from `api/facts/sessions`, `api/facts/commits`,
 `api/facts/commit`, `api/facts/commit-patch` and `api/facts/patch`, read
 against the facts the page was shown (each names their head, and a newer build
 answers 404). Facts are no
-version: they are never in the version menu and there is no **Ask** or
-walkthrough for them. A rate limit or a failed read says so above the page,
+version: they are never in the version menu (**Ask** is about the pull
+request, so it stays). A rate limit or a failed read says so above the page,
 with **Retry**; a daemon that serves no facts shows the page as before. Once a
 review is saved the page shows it instead, as before.
 
-A pull request opens on the full review. The PR page has no **Walk through**
-button for now, while the walkthrough is unfinished; its overview still opens
-from its address (`src/walkthrough.tsx`, `?…&walk=landing`) and from an Ask
-answer's **Open the draft**: what matters about it on one page, with no list beside
-it. It shows only what says something: the GitHub states that ask for something
-(as the inbox draws them, plus failing checks behind a conflict), unresolved
-threads, lines and files changed, the review time, the summary, the review's
-attention and breaking change, the risk with its reasons, and the chapters with
-their lines. Its actions are **Start the review**, the page's own fix, merge,
-update and re-run (and regenerate when the review is outdated), **Full review**
-(v) and GitHub; agents on the branch, a regeneration and a review that could not
-be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
-(or the retired `walk=all`), so a reload stays there. **Full review** (v)
-clears `walk`; the retired `walk=full` also opens the full review.
+A pull request opens on the review page described under [Review page](#review-page).
 
 Up next's list shows a review group or stack (`api/groups`) with a shown member
 as one row (`withGroups` in `src/up-next.tsx`). A stack takes the section and
@@ -314,9 +351,15 @@ it: it waits, as "Waiting on #N", on the lowest of them, which merges first,
 and stays out of Ready to merge and Merge all. A stack's members stay out of **Merge all**, as a stack merges from its
 base up. The group's panel is laid out as a pull request's: the branch it
 merges into ("Stacked on main"), its members' lines, files and review times
-summed, a line when its review is missing or outdated, **Open the stack** (or group) as the default, the
+summed, a line when a group's review is missing or outdated, **Open the stack** (or group) as the default, the
 same risk card with the group review's main reason, What changed from the group
 review (`api/groups/<id>/document`: its summary and sections), and its members.
+A stack has no group review: its panel is its overview (`StackOverview`, the
+stack's page shows the same), whose risk card names the riskiest pull request
+(`overview.riskiest`, with its review's score and main reason, its title
+linking to its page) and whose What changed is the stack summary
+(`overview.summary`), or "Summary appears once two pull requests are
+reviewed." until two are, with no sections.
 Their list opens and closes from its head, which counts them, landed ones
 included ("7 pull requests"), and those merged (`landed`); it starts open. A
 stack's members run from its base up, its landed ones first, joined by a line,
@@ -386,9 +429,11 @@ checks, failing and running first" with a **See all on GitHub** link.
 The same bordered rows align the icon, name and status, and actions in the
 review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
-red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
-else green "9/9 passing", with the count by state (`checksSummary`) as its
-tooltip. A failing check with a
+red "1/9 failing" while any fails, else red "1/9 cancelled" while any was
+cancelled (GitHub counts it as failing), else amber "2/9 running" while any
+runs, else green "9/9 passing", with the count by state (`checksSummary`) as its
+tooltip. Cancelled checks list right after the failing ones and stay unfolded
+with them. A failing or cancelled check with a
 `job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
 then shows "Re-running on GitHub"; a refusal is shown under the check. The
@@ -407,8 +452,8 @@ line saying "The end of the log" when it is longer. A check with no log, one
 still running, one GitHub has no log for (it may not have run, or its log is older than the repository keeps) or one too long to show the end of shows that sentence
 instead; a failed read shows its reason with an **Open on GitHub** link. A
 commit status or another app's check has no **Show log** (its **Details** link
-goes to the app's own page). The Ask chat's `check_log` tool returns the same
-tail.
+goes to the app's own page). The MCP server's `check_log` tool, which the
+session panel's agent reads, returns the same tail.
 
 The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
 with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
@@ -443,52 +488,15 @@ to show" for a null content, a "Truncated" note past 512 KiB, a failure with
 Retry, and a "View on GitHub" link. The group page opens its context chips'
 files the same way, from `GET api/groups/<id>/file?version=<n>&path=<path>`,
 read at the review's head (its top member's), with the same guard: a path the
-group's document does not cite is 404 (`locallink.CitedFiles`). A draft shown
+group's document does not cite is 404 (`locallink.CitedFiles`, which reads a
+baum.review/1 `summary.context` and a baum.review/2 `context.<part>.files`).
+A draft shown
 before the first version keeps the chips' former behaviour: a changed file
 opens the Files pane, others GitHub. A
 commit chip selects the commit in the Commits group when the pull request lists
 it. Comment chips and the group page's chips still go to GitHub. The route is
 registered in `LocalAPI` next to the other `api/prs/` reads, and
 `TestLocalAPIRoutesPullRequestDetailsToUpdate` covers it.
-
-The walkthrough's overview is `?…&walk=landing` (`src/walkthrough.tsx`), and
-`walk=tour` (`walk=all`) the tour, so a reload stays there; **Full review**
-returns to the viewer. The PR page offers no button for it for now.
-`buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
-logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
-sections are left out), and behaviours, one per behaviour step: its `title` (schema revision 2026-10-27.1), its
-`text`, the evidence it cites and its `question`, offered as the comment box's
-prompt. A review written before titles takes the text's first sentence, cut at
-the first semicolon; a section without steps is one behaviour, its summary. A
-chapter carries its section's summary, its `intent` block (what the pull request
-and its sessions say the change is for), its risk reason and its open risks. A behaviour's code is the viewer's
-`HunkEvidence` for the step's hunk anchors, reading omitted excerpts through the
-page's patch source. The walkthrough and inbox use the shared palette (`src/walkthrough.css`). It is one guided tour, a
-page per chapter, in the overview's column: a row of steps under the header
-leads back to the overview, names each chapter (shortened to fit, with a dot per
-behaviour: looked at, commented or not yet) and ends at the wrap-up. A
-chapter's page states its summary, intent and risk once, then lists its
-behaviours as the full review does (title, statement, evidence badges, code);
-one is picked, and only the picked one offers Something looks off. The
-wrap-up lists the behaviours not looked at and sends the review. j and k move
-the pick behaviour by behaviour, across chapters; → and ← move a chapter.
-Moving the pick off a behaviour, leaving its chapter or commenting on it marks it
-looked at; seen marks and
-drafts are kept by the daemon in `app.sqlite` per repository, pull
-request and review version, the 40 most recently saved. They survive browser
-storage clearing, a fresh window and a daemon restart. The app loads saved
-progress before writing; queued changes preserve unrelated concurrent edits.
-A failed read or save leaves drafts in the window and shows a retry action.
-Submitting posts
-`POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
-`head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
-body}` sits on the step's anchored lines (or the hunk's first added line), and
-a behaviour without a place goes into the body under the overall comment. The
-daemon sends it once and maps refusals to `{code, message}` (`forbidden` 403,
-`not_found` 404, `own_pull_request` and `invalid_line` 422, `failed` 502); on
-`invalid_line` the panel offers to resend with every comment in the body. A
-sent review clears the drafts and links to it on GitHub. The tour's keys (j/k,
-→/←, o, c) are listed in the shortcuts sheet.
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request
@@ -521,15 +529,12 @@ outcome with the agent's summary (`FixDetails`). `reviewJob` ignores fix jobs an
 never shows as a review being generated. The daemon polls discovery after a
 push, so the new head appears without a manual refresh.
 
-A fix can also be made from a conversation with the review’s agent.
-`startFix` sends `fix_chat: {conversation_id, turn}` with the fix item to
-`POST api/jobs`: only ids, never the question or answer. The daemon reads
-that conversation up to the selected answer from the clone’s store. It starts
-at once, like other fixes, and is named “Fix from this answer”. It is offered
-where `fixEligible` permits a fix, even when nothing is broken, and is never
-combined with conflicts, CI or review comments. Refusals such as
-`chat_unavailable`, `chat_changed` and `chat_outdated` appear beside the pull
-request. The job’s `fix.chat` is the conversation’s id.
+A fix used to be made from an answer of the earlier Ask (**Fix this**, the
+fix item's `fix_chat: {conversation_id, turn}`). The app no longer offers it:
+the session panel's agent changes the pull request's checkout itself.
+`startFix` sends no `fix_chat`. A job made so keeps its name, “Fix from this
+answer” (its `fix.chat` is the conversation's id), and its refusals
+(`chat_unavailable`, `chat_changed`, `chat_outdated`) still read in words.
 
 The Jobs page lists a repository's first feature build (`kind:
 "feature_build"`, `pr` 0) tagged "Feature build" beside its repository, with no link; it
@@ -573,115 +578,54 @@ notice and Up next link to it: **Watch** while the fix runs, **Transcript**
 after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
 
-Questions to the review agent (chat). The daemon
-serves a pull request's conversations with the agent that wrote a saved review,
-by registered clone ID and pull request as for `api/versions`:
+Earlier questions to the review's agent. Before the session panel, **Ask**
+asked the agent that wrote a saved review questions in a conversation of its
+own (`internal/chat`). No new question is asked; the daemon keeps serving what
+was asked, by registered clone ID and pull request as for `api/versions`:
 
 - `GET api/prs/chat?clone=<id>&pr=<n>` returns `{conversations: [{id, version,
   backend, model, seeded, created, updated, turns: [{seq, question, focus,
   answer?, job_id, state, reason?, note?, cost_usd?, cost_reason?, created,
   finished?}]}]}`, newest first. `answer` is `{answer_markdown, citations:
   [{path, start_line, end_line}], suggests_fix: {summary} | null}`, masked for
-  secrets, its citations checked against the head. `question` is the
-  reviewer's own text as typed, not masked (it is masked only when sent to the
-  agent). A turn whose `note` says the agent kept no session answered, but the
-  next question starts without the conversation's context. `state` is `queued`,
-  `running`, `completed`, `failed`, `cancelled` or `interrupted` (a turn whose
-  job a stopped daemon left behind). A conversation whose `version` is not the
-  latest review is about an older one. `seeded` with a turn's `note` means the
-  conversation started without the review's own context.
-- `POST api/prs/chat` with `{clone, pr, version, conversation_id?, question,
-  focus?}` (question 1–4000 characters; `focus` `{kind: "section" | "stop" |
-  "overview", id?, title?, anchors?: [{path, start_line?, end_line?}]}`, at
-  most 20 anchors) starts a conversation, or asks the next question of one,
-  and answers 202 `{conversation_id, turn, job}`. Refusals are `{code,
-  message}`: `invalid_request` 400 (unknown fields included), `not_found` 404
-  (an unregistered clone or an unknown conversation), `no_review` 404 (no
-  saved review at that version), `needs_clone` 409, `busy` 409 (the
-  conversation's last question is still queued or running),
-  `unsupported_backend` 422 (the review was not written by Claude Code or
-  Codex on this computer), `restarting` 503. Without the capability both
-  answer 503 `{code: "chat_unavailable"}`.
+  secrets. `state` is `completed`, `failed`, `cancelled` or `interrupted` (a
+  turn left `queued` or `running` reads as its job ended, interrupted when
+  nothing ran it). `seeded` with a turn's `note` means the conversation started
+  without the review's own context. Without the capability it answers 503
+  `{code: "chat_unavailable"}`. There is no `POST api/prs/chat` any more.
 
-Each question is a job of `kind: "chat"` (`chat: {conversation, turn,
-version}`, the pull request in `pr`), queued at once without an estimate, which
-the app can label "Question on #<pr>". It runs beside reviews, not behind
-them, keeps a transcript (`has_transcript`, `GET api/jobs/{id}/transcript`),
-reports its phase and cost, and can be cancelled, which settles the turn as
-cancelled. A `chat` event `{conversation, repository, pr, turn, state}` goes
-out on the SSE stream when a question is queued and when it settles; the
-answer itself is read with `GET api/prs/chat`.
+Their jobs (`kind: "chat"`) stay in the Jobs list and history, called
+"Question on #<pr>" with their transcripts; `reviewJob` and `fixJob` ignore
+them.
 
-The **Ask** panel (`AskPanel` in `src/chat.tsx`) is how the app asks them. A
-boxed **Ask** button in the PR page's header and in the
-walkthrough's header, or the key `a` (ignored while typing in a text field;
-inside the panel's own box it types an a), opens it; Escape with focus in the
-panel, its **Close** button or **Ask** again closes it. It is kept in the URL
-as `ask=1`, like the walkthrough's `walk=`, so a reload keeps it. `LocalReview`
-renders it beside the review (`.ask-layout`): a 22rem right-hand column from
-72rem, where the review takes the rest and nothing is covered (under 104rem the viewer folds its side pane to its strip meanwhile, `foldSidePane`), and below that
-a modal overlay from the right edge with a backdrop (a click on it closes the
-panel) and the review inert behind it. Closing returns the keyboard to the Ask
-button. The button needs a loaded review. The PR page's sections have no Ask
-button of their own; in the walkthrough, **Ask about this** on a tour stop and
-**Ask** on an Everything row set the question's focus: a removable chip above the
-box, sent as the API's `focus`, which also opens the panel (`sectionFocus` and
-`stopFocus` turn the section's or the stop's hunks into `{path, start_line,
-end_line}` anchors, at most 20). The pull request's overview has no button of
-its own; a question without a focus is about the pull request as a whole.
+`LocalReview` reads the conversations once per pull request
+(`useEarlierQuestions` in `src/chat.tsx`) and, only when there are some, shows a
+boxed **Earlier questions** button in the PR page's header. It opens
+`EarlierQuestions`, kept in the URL as `questions=1` (an old `ask=1` is
+ignored), beside the review (`.ask-layout`): a 22rem right-hand column from
+72rem, where the review takes the rest and nothing is covered (under 104rem
+the viewer folds its side pane to its strip meanwhile, `foldSidePane`), and
+below that a modal overlay from the right edge with a backdrop (a click on it
+closes it) and the review inert behind it. Escape inside it, its **Close**
+button or the header button again closes it and returns the keyboard to the
+button. It lists the conversations by the review version they were about
+("About this review v<N>" for the version on screen, else "About review
+v<M>"), the newest first, named by their first question, and shows one
+read-only: no box, no actions. An answered turn draws `answer_markdown` with
+the viewer's `Markdown` component (raw HTML stays text), its suggested change,
+and the citations as `path:start–end` buttons. A citation inside one of the
+hunks of the review on screen opens that hunk's cited lines with
+`HunkEvidence`; any other shows its path and lines with a link to the file at
+the review's head on GitHub. A turn that was not answered says why in words
+(`turnReasonText`). **Ask in the session panel** at its foot asks about the
+pull request there.
 
-The panel lists the pull request's conversations (`GET api/prs/chat`, read
-when one of the pull request's chat jobs changes state, through the app's own
-event stream, and every 4 s while a question is being answered), named by their
-first question. Conversations belong to a review version, and the panel follows
-the version on screen: reading an older version in the viewer makes the
-questions go to that version. The version on screen is first, under "Review
-v<N>"; the others are read-only, under "Outdated: asked about review v<M>" when
-M is older than the latest review and "Asked about review v<M>" when it is newer
-than the one on screen. A read-only conversation has no box, a note, and **New
-conversation**, which starts one on the version on screen (also offered beside
-the list). A conversation
-with `seeded` shows "Started without the review's own context.", and a turn's
-`note` shows under it. The box takes Enter to send and Shift+Enter for a new
-line; **Send** reads "Sending…" at once and is disabled while a question of the
-conversation is queued or running, which the daemon also refuses as `busy`. A
-refusal's `message` shows beside the box as the daemon wrote it, and the
-question stays for another try.
-
-A queued or running turn shows its question, its status and the agent's live
-transcript (`useJobTranscript` and `EntryView` of `src/job-transcript.tsx`, tool
-calls collapsed) with **Cancel** (`POST api/jobs/{id}/cancel`). An answered turn
-draws `answer_markdown` with the viewer's `Markdown` component (raw HTML stays
-text) and the citations as `path:start–end`
-buttons. A citation inside one of the review's hunks opens that hunk's cited
-lines with `HunkEvidence` (an omitted excerpt is read through the page's patch
-source, `api/patch`); one outside the review's changes shows its path and lines
-with a link to the file at the review's head on GitHub, because the daemon
-serves no file text other than patches. A turn that failed, was cancelled or was
-interrupted says why in words (`turnReasonText`: `validation`, `budget`,
-`backend`, `input`, `internal`, `needs_clone`, `unsupported_backend`,
-`cancelled`, `interrupted`). The chat does not display costs. Each answer has a
-`data-answer-actions` slot (`AskPanel`'s `answerActions` prop) for the actions
-that follow an answer: `AnswerActions` (`src/answer-actions.tsx`), drawn only
-under answers of the newest review version. **Fix this** (boxed, emphasised
-and with the answer's `suggests_fix.summary` above it when there is one) starts
-a fix with the conversation's id and the answer's turn; it is offered
-where a fix is (`fixEligible` and a local clone) and disabled while a fix of the
-pull request runs. **Add as comment** writes the answer's markdown and one
-`path:start–end` line per citation into the walkthrough draft through
-`walkthrough-model.ts` (`appendToDraft`): after the comment of the stop the
-question's focus names (`draftTarget`), else after the review's overall comment
-(`Progress.note`). It only writes the draft, kept per review version in the
-application database, and calls no GitHub API: the draft is sent only with the
-review. The
-confirmation, "Added to your review draft", offers **Undo** (`removeFromDraft`,
-which takes back what was added while it is still at the end of the draft) and
-**Open the draft**, which opens the walkthrough's Everything view and its Submit
-panel. An open walkthrough shares the same hydrated draft record. Chat jobs
-are not reviews or fixes: `reviewJob` and
-`fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
-transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
-sheet for the pull request page and the walkthrough.
+**Ask** is the session panel's (see [Session panel](#session-panel)): the
+boxed **Ask** button in the PR page's header and the key `a` (ignored while
+typing in a text field) call `sessionPanel.ask` with the pull request;
+`sectionFocus` builds the focus of one section, the hunks turned into at most
+20 `{path, start_line, end_line}` anchors. The key `a` is in the shortcuts
+sheet for the pull request page.
 `t` opens a pull request's fix transcript wherever the pull request is in hand:
 the PR page, the focused row in Pull requests, the selected one in Up next and
 the focused job in Jobs. It opens the running fix's transcript (Watch), else
@@ -698,7 +642,8 @@ beside its Transcript): the notice goes and the run joins the fix runs below,
 remembered in this browser (`useDismissedFixes`, the 50 latest). A running
 fix's notice cannot be dismissed.
 
-Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
+Merging: when GitHub reports read-only access to the base repository, baum leaves merging to its maintainers. Otherwise an open pull request, not a draft, that GitHub can merge (Merge state
+Ready or Blocked, that is without a conflict) shows a
 Merge button in the PR page header, **Merge…** in its Pull requests row's
 menu, and the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
@@ -715,8 +660,8 @@ in the background and the lists reload again when that read lands.
 
 Refreshing a page: the Inbox, Pull requests, Timeline, Sessions, Analytics,
 Repositories, Jobs, and a pull request's or review group's page end their bar
-(the Inbox its list's head; a pull request its walkthrough's head, or the full
-review's title row through the viewer's `actions` header slot) with a
+(the Inbox its list's head; a pull request the review's title row through the
+viewer's `actions` header slot) with a
 circular-arrow button (`RefreshButton` in `src/shell.tsx`). It reads what the
 page shows again: the pages of pull requests (the Inbox, Pull requests, a pull
 request or group) ask GitHub at once for their repositories' pull requests
@@ -736,12 +681,11 @@ from GitHub drops every other one under way (on any page, as one that never
 answers holds the queue and the lists' loader) and goes first, and the daemon
 read starts afresh, so a read that never answers can always be retried. The
 app keeps the page's refresh above the page (`usePageRefresh`, keyed by the
-page shown), so a refresh under way survives a pull request switching between
-its walkthrough and full review, and each page's refresh runs and shows on its
+page shown), so a refresh under way survives the page redrawing its button, and each page's refresh runs and shows on its
 own: leaving a page and coming back while its refresh runs shows it running. A
 page registers its refresh also where it draws no button
-(`usePageRefreshAction`), as a pull request or group while its review loads,
-or a walkthrough with nothing to walk through; the key and the button press
+(`usePageRefreshAction`), as a pull request or group while its review loads;
+the key and the button press
 the latest registered, so the open Repositories picker's refresh takes the
 page's. `⌘R` (Ctrl+R elsewhere) is one of the app-wide keys and presses it, in
 text fields too; under a dialog it does nothing. It never reloads the app: a
@@ -755,7 +699,8 @@ the sheet read). Every page is reached from the keyboard. With the command key
 (their modifier can be changed in Settings › General: Command, Control or
 Option on a Mac, Ctrl or Alt elsewhere; the sidebar, its tooltips and the sheet
 show the chosen one, and the other app-wide keys keep the command key)
-(Inbox, which opens the first saved inbox, Sessions, Timeline, Pull requests,
+(Inbox, which opens the saved inbox last shown in this browser while it
+exists, else the first one, Sessions, Timeline, Pull requests,
 Analytics, Repositories, Jobs, Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
 `,` opens Settings, `K` opens **Go to** (`src/go-to.tsx`) and `R` refreshes
@@ -771,9 +716,11 @@ number, author or branch; what waits in an inbox first), the review groups and
 the agent sessions, and, with a daemon that has inboxes, each saved inbox by its
 name (opening its queue) with **New inbox** and **Manage inboxes**. There is no
 Inbox page to go to, as no page shows the whole queue: every word typed must match, a label that starts with the
-query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
+query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes; it also
+offers **Open the session panel** and **Keyboard shortcuts**. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
-`aria-keyshortcuts`.
+`aria-keyshortcuts`. Ctrl with the backtick (`` Ctrl+` ``) shows the session
+panel, or hides it from its composer, anywhere (see "Session panel").
 
 Tab (`useTabStops`) reaches every control without leaving the keys' model
 behind. On a page it moves by place: the sidebar is one stop, on the current
@@ -800,16 +747,15 @@ rows, tabs, menus, dialogs and Settings keep a click's focus, being where the
 keys act. Rings show only for the keyboard (`:focus-visible`). `Esc` in a text
 field gives it up, as before. On a pull request, a group, a job's
 transcript or a session, `Esc` and `u` go back to the page it was opened from
-(an inbox, Pull requests, a group), past moves within it (a
-walkthrough step, the Ask panel): each history entry the app adds records its
+(an inbox, Pull requests, a group), past moves within it (the earlier
+questions): each history entry the app adds records its
 place and the entry it was opened from (`writeHistory`, `backToOpener`). A window
 opened on the page itself goes to its list.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
-are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
-where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
+are skipped), `g`/`Home` and `G`/`End` move it to the first and last row, `Enter` or `o` opens the focused pull request or group, `x` toggles
+its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them, `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
 and `Esc` clears the focus. On a pull request's or group's page, `Shift+K`
 (`Shift+↑`, `←`) and `Shift+J` (`Shift+↓`, `→`) move to the previous and next
@@ -818,20 +764,31 @@ them: Summary, Changes and, while it is open, each change, Files changed,
 Decisions, and Sessions and Commits with theirs while open (the viewer's
 `ReviewSteps` `rail`); a folded group is one place. `Space` on a selected group
 (Changes, Files changed, Sessions, Commits) opens or closes it in the rail
-(`toggleGroup`). `j`/`↓` and `k`/`↑` move through
+(`toggleGroup`). On Files changed `j`/`↓` and `k`/`↑` open the next and
+previous file of the list in its order and stop at the ends. Elsewhere they
+move through
 the blocks of the one read (its attention, each behavior, risk or finding, a
 commit's or session's card, each file of a commit opened alone, a decision,
+on the Overview its summary, risk, clips, screenshots, diagram, added tiles
+and each ask, in a section's Code, Tests and Docs each file and the folded
+generated files,
 or, in a session's transcript, each prompt and agent reply as the transcript
 page moves through them: the viewer's `data-review-block`; a
 block holding blocks, such as a session's card of decisions, is passed over for
 what it holds), bringing it into
 view, marking it and giving it the focus; a new section starts from its first.
+A marked block taller than the pane, such as a long file's diff, is read
+through first: the keys scroll it on by part of the pane until its end is in
+view, then move on (`readThrough` in the viewer).
+The first block, like a step back to the first place, scrolls the page to its
+top, so the review's header shows again (`scrollToTop` in the viewer).
 `Space` opens or closes the marked block's first fold (a behavior's excerpts, a
 risk's details, a decision; `toggleActiveBlock`), and still presses a focused
 button or link. `Enter` opens the marked block where it opens somewhere (its
 `data-block-open` control, as a commit row's subject; `openActiveBlock`). The
 arrows then no longer scroll the review. Sessions, Jobs, Repositories and the Timeline share the list keys
-(`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
+(`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `g`/`Home` and
+`G`/`End` go to the first and last row, `Enter` or `o` opens
 the row (a session's transcript, a job's page, a repository's
 settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
@@ -856,7 +813,10 @@ page, `?` (or the `?` button in Pull
 requests' page bar) shows the sheet of every key, grouped by where it works
 (anywhere, the Inbox, Pull requests, a pull request or group, Sessions, Jobs,
 Repositories, a session or job transcript), with the current page's group
-first; `?` or `Esc` closes it. Key hints drawn
+first; `?` or `Esc` closes it. It opens on the list, which the arrow and page
+keys scroll; typing searches it by what a key does or by the key (`/` only
+moves to the search field), and `↓` from the field returns to the list. A key
+typed there never reaches the page behind the sheet. Key hints drawn
 on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 `useKeyHints` marks the document root then and clears it on release or when
 the window loses focus. Every page also shows its own keys then, in one line
@@ -882,11 +842,13 @@ is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
 returns to the page it was opened from (the inbox it was opened in, whose
 address the pull request or group keeps as `inbox=<id>`, or Pull requests with
 the filter kept; a link with no inbox goes to the first one); on a session's or job's transcript the same keys return to
-Sessions or Jobs. Analytics has no keys of its own beyond Tab: its controls
-are native buttons (its window, chart and breakdown toggles are pressed
-buttons in a group), and its charts' bars take the focus for their tooltips.
+Sessions or Jobs. Use Tab to reach the Analytics controls and chart bars, which
+show tooltips on focus. Its window, chart and breakdown toggles are groups of
+native buttons with pressed states. The Breakdown table takes focus when it overflows,
+and the left and right arrow keys scroll it horizontally.
 
-The PR page header keeps buttons at its end: **Ask**, **Approve** for an open
+The PR page header keeps buttons at its end: **Earlier questions** when the
+pull request has some, **Ask**, **Approve** for an open
 pull request (see [Your review](#your-review)) and, when it can merge,
 **Merge…**. The pull request's GitHub state beside the version is a
 menu (`StatusMenu` in `src/review.tsx`) holding what can be done about it: the
@@ -894,7 +856,8 @@ fix (as `fixLabel` names it), **Re-run checks** and **Update branch**; with
 none to offer it is the state alone, and while a fix starts or runs a live dot
 says so beside it. **Regenerate review** is at the end of the version menu
 (the viewer's `header.versionActions`), read "Generating review…" or "Review
-queued" while one runs. Earlier versions are read once per pull request or group
+queued" while one runs. It works on a merged or closed pull request too: the
+daemon reviews it from its last head, though it never does so on its own. Earlier versions are read once per pull request or group
 (`useVersionLoader` in `src/version-cache.ts`): the viewer's version menu,
 section panes and hunk evidence share one cache, a failed read is retried on
 the next call, and the latest version is never kept because the daemon
@@ -924,7 +887,10 @@ repository's pull requests.
 An inbox's queue (`?inbox=<id>` on the app root, `src/up-next.tsx`) is a split view: a list of
 what waits on the person, grouped by what they do about it, beside the panel
 of the selected pull request. The page uses the shared palette in both themes; its list and
-panel scroll on their own, and below 760px the list stacks above the panel.
+panel scroll on their own. The queue takes less width below 760px so the
+selected pull request remains beside it at the smallest desktop window.
+Selecting a different pull request starts its panel at the top. Below
+560px of available space the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
 flags only: **Review** (their review is requested, or someone else's pull
 request is assigned to them), **Clone** (such a pull request whose repository
@@ -938,7 +904,13 @@ an agent** (Fix, Update, then the person's pull requests a fix agent is working
 on, each with the loader and the fix's phase). Within Review a saved review
 ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
-clones hold it. After the groups, their own pull requests with nothing to do
+clones hold it. Every row, a review group's too (a stack's has none), has
+the dot for how baum's review stands, as Pull requests draws it
+(`src/review-dot.tsx`) but smaller, at the start of the line under the title;
+a row without a review has no dot and no empty slot. Its label is read after
+the title. Here, unlike Pull
+requests, a current review over pull request data too old to trust
+(`metadataStale`) reads outdated, as a review row's panel says. After the groups, their own pull requests with nothing to do
 (drafts, and those waiting on reviewers, checks or another GitHub blocker) are
 listed under **Waiting**, and every other open pull request (`others`: someone
 else's that neither asks for their review nor is assigned to them), oldest
@@ -956,14 +928,30 @@ GitHub** without guessing the cause. Older snapshots without the review
 requirement keep that neutral explanation. An otherwise unexplained GitHub
 merge blocker adds **Merge blocked by GitHub** under **On GitHub**, saying when
 GitHub has not supplied the reason. Known blockers keep their existing rows and
-chips. **Open on GitHub** is offered beside Open for waiting pull requests.
+chips. **Merge** is offered beside Open, and `m` opens it, for any pull request
+GitHub can merge, failing checks or missing reviews
+included; only a Ready one joins Ready to merge.
 
 The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
 done today, and draws a bar of cleared against cleared plus remaining. A row
 shows the title, then the kind, repository and reading estimate (or the
-agent's phase, "last fix failed" or "last fix changed nothing"), and a red dot at risk 5. With two or more
-Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
+agent's phase, "last fix failed" or "last fix changed nothing"), and a red dot at risk 5.
+A row's top right corner counts what happened on its pull request since its
+page was last open, as a messaging app counts unread messages
+(`src/pr-activity.ts`), and its tooltip says what: pushes, new review versions,
+more unresolved threads, a reviewer's approval, change request or comment on
+GitHub, finished turns of a session panel conversation about it, and any other
+update GitHub reports (`updated_at`) that none of those explains. The app counts
+each change between two reads of the index while its window is shown, so pushes
+made while it is hidden count once. Only a pull request whose page has been open
+counts, so the list does not light up for every pull request it holds: opening
+its page in either list, or its group's page, clears it and reads what happens
+while it stays open; opened before the panel's conversations and GitHub's
+details are read, it is taken as it is once they are. A group's row adds up its
+members'. The record, the latest 500 opened pull requests changed or opened, is
+the `activity` ui-state; records saved before this rule are let go. With two or
+more Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
 each pull request's merge options, merges each with GitHub's default method for
 the person at the head commit shown, one after another, and names any GitHub
 refused with the reason; leaving the page stops the merges not yet sent. Below
@@ -1001,18 +989,31 @@ nothing (`no_changes`, which is the agent's judgement, not a failure) says so
 in a neutral notice with the first paragraph of what the agent said, which
 says why, and **Read what the agent said**; its row says "last fix changed
 nothing". The PR page's fix notice and the job page say it the same way,
-without the failure icon. Agent sessions working on its
+without the failure icon. A review job that completed with
+`no_significant_change` (On change found nothing in the new commits that would
+alter the saved review) is neutral too: the Jobs list says "Review still
+applies" with the first paragraph of the agent's one-line reason, and the job
+page says "Review still applies" without a check or a cross; no new review is
+shown. The index lists such a review as `current` at the new head with its
+`kept` head and reason, so the PR page does not mark it outdated and says
+"Still applies to the newer commits" under the title, the agent's reason in
+its tooltip. Agent sessions working on its
 branch are counted at the foot of the panel, as a link to Sessions
 (`?page=sessions&peek=<agent:id>`) that opens that session's card there, its
 peek and its reply where it takes one, as a click on it does (with several,
 each by its agent's name).
 
-Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
-away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
-request until its head moves. A snooze selects the next pull request and shows
+The panel's Snooze menu stays within the window, opening above its button
+when there is too little room below. Snooze offers 1 hour, this afternoon
+(3 PM, while that is more than an hour away), tomorrow morning (9 AM) and
+**Until it changes**, which hides the pull request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
-member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+member of their stack, offer Snooze too. A stack's or group's row offers
+Snooze in its panel, on `s` and in its menu: it snoozes every member the row
+shows, together, with one **Undo**; each is then listed under Snoozed and
+brought back on its own (one snoozed until it changes comes back when it is
+pushed to). Snoozed waiting PRs keep their
 waiting classification, so the same inbox filters apply before and after
 snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
@@ -1121,7 +1122,12 @@ right of its baum title, after Help, folds it to a rail of glyphs (56px) so
 the page gets the width, and pins it open again (`Sidebar` in
 `src/shell.tsx`). Folded, resting the mouse on the rail for a moment opens it
 over the page, which does not move, and it folds again shortly after the
-pointer leaves or when a link in it is chosen; keyboard focus in the rail
+pointer leaves or when a link in it is chosen. It folds at once when the
+pointer leaves the window or the window loses focus, since a pointer that
+leaves straight off the rail at the window's edge may never send the rail
+its own leave event. On Linux under Wayland, WebKitGTK may send the page no
+leave at all, so the desktop app announces it with a `baum:pointer-left`
+event; keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
@@ -1134,7 +1140,10 @@ A Help button at the right of the sidebar's baum title opens a help menu
 Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
 what happened, what to attach with a preview, then **Open issue**, which opens
 a new issue in baum-ai/baum on GitHub; see the
-[desktop README](../desktop/README.md#report-a-problem)), and **Open the docs** opens https://docs.usebaum.com/ in a new
+[desktop README](../desktop/README.md#report-a-problem)). The report form scrolls
+above its actions in short windows. Opening it from Diagnostics temporarily
+replaces that dialog and returns focus to its **Report a problem** button when
+the form closes. **Open the docs** opens https://docs.usebaum.com/ in a new
 window (the desktop app hands it to the browser). The `?` key opens the same
 menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
 the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
@@ -1267,6 +1276,32 @@ goes, and what the removal does not touch keeps its text. The box lies
 under the tokens: a click anywhere but a × focuses it with the caret at the
 end, and the text shows until the focus leaves.
 
+**The sort** (`SortButton`, `src/sort-menu.tsx`; `src/pr-sort.ts`) sits
+right of the filter icon in an inbox's head and on Pull requests' tab bar,
+lit with a dot while a sort is in force. ⇧S opens or closes its menu from
+anywhere on the page. The menu lists the fields with a digit each: 1 Opened,
+2 Last activity, 3 Risk, 4 Review time, 5 Size (lines added and deleted),
+6 Repository, 7 Author and 8 Reviewed (when the latest review was written).
+A digit or a click adds the field as the next key, or turns it round if the
+sort has it already. Backspace drops the last key, Delete or the row's ×
+drops that field, j/k or the arrows with Enter
+or Space pick a field, and Esc or ⇧S closes the menu. A field is added in the
+direction most often wanted: Opened oldest first, Last activity and Reviewed
+newest first, Risk highest first, Review time and Size smallest first, and
+Repository and Author A to Z. A pull request without a value for a key (no
+score, no estimate, or an older daemon that sends no `created_at`) goes last
+whichever way the key runs. The sort orders rows **within** each section,
+and the sections stay: an inbox's Needs your eyes, Ready to merge, Hand to
+an agent, Waiting and Not waiting on you, and Pull requests' buckets.
+With no key each section keeps its own order, which also settles every tie. A
+review group or stack follows its first-ranked member. Snoozed and Done today
+keep their own order. The sort is written `opened,-risk` (`-` turns a key
+round; unknown keys are skipped). An inbox's sort is saved with the inbox
+(`sort`, see the [inboxes README](../internal/inboxes/README.md)) as it
+changes, with no draft. Pull requests' Open and Closed share one sort, and a
+saved tab has its own (`sort`), both in `ui/filters`. A tab saved from the
+page takes the page's sort.
+
 There is no whole-queue filter: the filter is always an inbox's own. **Create
 inbox** (below, and Command+Enter) is not offered at 20 inboxes or with an
 older daemon. In a saved inbox the menu starts from the
@@ -1285,14 +1320,14 @@ across windows and restarts; a failed save says so with **Retry**.
 
 Inboxes are made and changed on three pages that sit under Inbox in the sidebar
 but are not sidebar pages of their own, so they have no number key, and ⌘1 opens
-the first saved inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
+the inbox last shown, or the first saved inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
 right click on the Inbox heading in the sidebar offers **New inbox…** and **Manage
 inboxes…**; a right click on an inbox's row, like its ⋯, offers **Edit inbox**
 and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull request in
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
 agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
 verdicts, **Snooze…** (which picks the row and opens its snooze choices), **Archive** and
-**Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
+**Open on GitHub**; on a group's row, **Open**, Show or Hide its pull requests and **Snooze…**; on a
 row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
@@ -1345,7 +1380,10 @@ They are pressed while every part of their query must already hold as written
 syntax** link beside the "What it catches" heading opens the docs' Inbox page
 at "Filter what you see" (`DOCS_URL` + `inbox/#filter-what-you-see`). A
 switch shows or hides the inbox's count in the sidebar; its pull requests still
-count in the Inbox total. **Delete inbox** asks, then
+count in the Inbox total. **Review automatically** (`auto_review`, on by
+default and for inboxes saved before it) has baum review the inbox's pull
+requests on its own while Settings › Reviews follows the inboxes; while it
+does not, the switch's sentence says so and links there. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the
 sidebar; with only one inbox it is disabled and the page says "Keep at least one
 inbox".
@@ -1366,6 +1404,10 @@ the page and empty otherwise, the removed rows struck through and fading out
   list in its new order. It has no delete: an inbox is deleted from its row in the
   sidebar or its edit page, neither of which deletes the last one.
 
+Inbox and Pull requests list 30 items per page. A review group or stack counts
+as one item and keeps its members with it. Filters apply before pagination,
+and changing the filter or tab returns to the first page.
+
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a
@@ -1382,7 +1424,15 @@ then passing checks; its tooltip names both. GitHub state and unresolved
 thread counts also appear for pull requests without saved reviews. Normal or
 unknown states (no score, no estimate, no GitHub review, no unresolved
 threads, nothing reported) leave the cell empty and are read only by screen
-readers. A review being generated shows the nine-dots loader under the title.
+readers. A dot before the title says how baum's review stands
+(`src/review-dot.tsx`, as in Inbox): the live dot while its review job is
+queued or running, a green dot when it is ready (it covers the
+head), an amber ring when it is outdated and a red warning sign when it
+failed, so ready, outdated and failed differ by shape as well as colour. A pull request
+without a saved review, or one whose state is unknown, keeps an empty slot so
+titles line up. The dot is not a button, since a list row carries none: its
+label is read with the row, and its meaning (and why a review failed) opens
+in a note while the mouse is over it.
 Discovery fetches
 open pull requests with paginated GraphQL queries per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
@@ -1404,13 +1454,13 @@ and removed, and **Open the review**. Without a saved review it says why (no
 clone, being written, failed, none yet) and offers **Generate the review**
 where it can run. A row whose state (review, checks, merge state, threads,
 score, estimate or version) changed in the latest read flashes once. The keys that work on the list are
-in the shortcuts sheet (`?`). Generating and failed reviews remain visible under the
-title, with agent sessions in progress beside them. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
+in the shortcuts sheet (`?`). How baum's review stands is a
+dot before the title (see above), with agent sessions in progress under it. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
 colour. Collapsible groups say who acts next, with each row in one group:
 Review requested; the person's own pull requests as Needs changes (changes
 requested, failing checks or a conflict), Ready to merge (GitHub's merge state
-is ready) and Your pull requests (the rest); Other pull requests; and Saved
+is ready and the person can act on it) and Your pull requests (the rest); Other pull requests; and Saved
 history. Its tabs are **Open**, every open pull request, then the saved tabs,
 then **Closed** (`filter=history`), the saved reviews of pull requests closed,
 merged or no longer listed, always last; a tab with nothing in it is dimmed,
@@ -1437,7 +1487,8 @@ Cached discovery keeps the inbox readable when refresh fails;
 one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
-is old. Refresh asks
+is old, and one pull request's details failing to read
+(`metadata_unavailable`) does not count as its repository failing to refresh. Refresh asks
 GitHub through the local server, which gives up on a repository once GitHub
 has not answered for 45 s and answers it as not refreshed (stale, with
 the error, and with whatever it read before), which the app names in the
@@ -1477,7 +1528,7 @@ global jobs are `GET api/jobs` without parameters, the current jobs (every runni
 unseen failed job, and the latest of each kind for each pull request, group or repository), which
 is all `reviewJob`, `detailsJob`, `fixJob`, `groupJob`, `buildJobOf`, Up next and the tray need. The PR
 page reads its own pull request's jobs (`GET api/jobs?repository=&pr=`, again whenever the app
-reads its jobs) for `fixJobs` and `chatJobs`; Inbox and Up next find `t`'s fix transcript among the
+reads its jobs) for `fixJobs`; Inbox and Up next find `t`'s fix transcript among the
 current jobs, so there it is the latest fix's. The Jobs page lists the running jobs from the current
 jobs and finished ones a page of 50 at a time (`GET api/jobs?limit=&before=`, **Load older jobs**),
 starting again from the newest page when the jobs change more than a page since; a transcript page
@@ -1495,7 +1546,7 @@ saved version shows the draft in the viewer as soon as there is one, with
 sections still being written reading "Writing details…" and a notice that it
 is a draft; before that it keeps the facts view. A page with a saved version
 keeps showing it until the new one is saved; it offers no view of the draft.
-A draft is never a version: no version menu, Ask or
+A draft is never a version: no version menu or
 retry, and nothing is read or written under its number. A version published
 without some sections' details or without its context says so in a notice
 ("2 sections couldn't be written.", "The codebase context couldn't be
@@ -1524,12 +1575,19 @@ historical). Its shown members leave the loose rows and nest under the group
 row, which is collapsed by default; members the current filter hides are not
 shown, bucket counts count the group once, and Select all covers loose rows and
 the members of expanded groups. The group row shows the group's risk, its name
-with a "Group of N" badge, "repository · #n, …" and, when it applies,
-"Generating group review", "Group review outdated" or "No group review yet". A
-stack group, which baum made for stacked pull requests, shows the hosted
-list's stack icon and member count before its name instead of the badge, and
-"Stack" instead of "Review group" on its page.
-The group page (`?group=<id>`) is the shared viewer with the group's name as
+with a "Group of N" badge, "repository · #n, …", the group review's dot before
+its name (as a pull request row's: generating, ready or outdated) and "No
+group review yet" when there is none. A stack group, which baum made for
+stacked pull requests, shows the hosted list's stack icon and member count
+before its name instead of the badge, its riskiest pull request's risk, and
+neither the dot nor that line.
+A stack's page (`?group=<id>` of a stack group) is its overview, under a bar
+with its name, the way back and Refresh: the Stack chip, repository and count,
+"Stacked on", the size and review time summed, Risk, What changed and the
+pull requests, landed ones first, each with its review status and risk and
+linking to its own review page. It has no combined review, Generate, Rename
+or Delete; a stack of any size has one.
+The page of a group a person made (`?group=<id>`) is the shared viewer with the group's name as
 heading, member labels on sections, and, folded to a line under the title ("7
 pull requests · 4 merged", landed members counted), the members (state and
 their own review status, each linking to its page) with Rename, Add pull
@@ -1695,7 +1753,9 @@ stacked by harness or by model (each session under its main model; the top
 four named, the rest as Other), with a legend that shows each harness's or
 model maker's logo and a table behind "Show as a table"; a breakdown
 by agent, model or repository (sessions, prompts, tool calls, failed share, active
-time, tokens, cost at API prices); pull requests, yours or the team's (one
+time, tokens, cost at API prices), with a visible scrollbar when its columns
+overflow. Tab to the overflowing table and use the arrow keys to reach its
+hidden columns. Other cards cover pull requests, yours or the team's (one
 switch), created and shipped as bars side by side, then the merge rate and the
 median time to merge as lines on their own axes (left and right) beneath, by day over 7 days and by week otherwise, read
 from the pull requests the Timeline's feature log keeps (a repository it does
@@ -1712,18 +1772,112 @@ viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, then any
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
+Settings › Connections lists the daemon's integration providers. Connect
+opens the provider in the system browser. A connected Linear workspace adds
+links below the pull request title for issues explicitly linked in the PR
+description, with each issue's identifier, title and workflow state. The page
+loads independently of these lookups. See the [Linear daemon
+provider](../internal/integrations/linear/README.md) for registration and
+credential storage.
+
 Settings (`?page=settings&section=…`, `SettingsPage` in `src/settings.tsx`)
 shows one section at a time, listed on the left with a line on where each
-stands and a dot when it needs attention; at narrow widths the list becomes
-a scrolling strip above the section. The section is in the address, so a
-reload or Back keeps it, and the GitHub notice's **Open settings** goes
-straight to Connections. **General**, the default, offers System, Light and Dark
-themes, the modifier held with `1` to `8` for the sidebar's pages, and whether
-holding Option (Alt elsewhere) shows keyboard shortcut hints; each names only
-the platform's key. Preferences
+stands and a dot when it needs attention. At narrow widths the list wraps
+above the section so every section stays visible. The address includes the
+section, so a reload or Back keeps it, and the GitHub notice's **Open settings**
+goes straight to Connections. **General**, the default, offers the modifier
+held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
+elsewhere) shows keyboard shortcut hints; each names only the platform's key. **Appearance**
+(next, `src/settings-appearance.tsx`) has the **Theme mode** segmented control
+(System, Light or Dark, with a hint: System follows the operating system,
+otherwise the mode names which slot is used), then a row for each slot, **Light
+theme** and **Dark theme**. The row of the slot in use, by the mode and the
+operating system's mode and ignoring any proposal preview, says "· in use" after
+its heading. A row is a wrapping strip of thumbnails, one per theme (the
+six built-ins, then the person's own), each a small sketch of baum's own layout
+(the sidebar on the canvas, the page's panel with its header line and primary
+action, text bars and a diff with an added and a removed line) with the theme's
+name under it. The thumbnail is the choice: the row is a radio group labelled
+with the slot's title, each thumbnail a visually hidden native radio, so the
+arrow keys move within a row (Settings' own keys leave the arrows alone there),
+and the chosen one has a check mark and an outline in the page's text colour. The outline and the focus ring are drawn on a frame outside the thumbnail's theme scope, so they take the page's colours, not the theme's. A choice applies
+at once and saves like any preference, through the same update path. Each
+thumbnail is a `data-theme-scope` element with `data-theme` set to the theme's
+base and its allowlisted tokens inline (`themeScope` in `src/theme.ts`), so it
+shows its own theme whatever the page's mode is (see
+[custom color themes](../viewer/README.md#custom-color-themes)); it is drawn
+with palette roles only and hidden from assistive technology. A custom theme's
+thumbnail has a ⋯ menu in its corner, outside the radio's label, to rename it
+(typed in a row below the strips) or delete it (a delete asks first and resets a
+slot that used it). It follows the row-menu pattern: the option is a
+`data-list-row`, so the ⋯ shows on hover, focus within or an open menu and
+always on touch, as a chip in the page's colours; a right click on the thumbnail
+and ⌘. (Ctrl+.) with the radio focused open the same menu
+(`data-actions-target` makes `useActionsKey` count the radio's focus). Built-ins
+have no menu. The six built-ins fit one row at the usual desktop width.
+Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
-`key_hints`, `page_modifier`, and the sidebar's `sidebar`), in the daemon’s SQLite registry, so they survive daemon restarts
-and loopback port changes. **Plan usage** below them has a switch per plan
+`key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
+`full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
+and loopback port changes. The same document carries the custom colour themes:
+`light_theme` and `dark_theme` are the ids of the themes the Light and Dark
+slots use (`theme` still picks which slot is active; any theme may sit in
+either, and an empty or vanished id is `default-light` or `default-dark`), and
+`themes` lists the built-ins first (`builtin: true`, with their tokens) and then the
+person's own (`{id, name, base, tokens}`, at most 32; a token is one of the
+palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
+`light_theme` and `dark_theme` (set by the thumbnails) and refuses an unknown id.
+`POST api/settings/appearance/themes` (`{name, base, tokens, slot}`; `slot` is
+`light`, `dark` or empty) creates a theme under a new `c-` id and may put it in
+a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`, or `{base, tokens}` with or
+without a `name`, which replaces them in place and keeps the id and slots) changes it, and
+`DELETE` removes it and resets a slot that used it; all answer with the
+appearance document, and the built-ins can be neither changed nor deleted.
+The built-ins are, in order, **Default light** and **Default dark** (`default-light`
+and `default-dark`: the palette as it ships, no tokens), **Birch** (`birch`,
+light: cool blue-grey with teal), **Parchment** (`parchment`, light: warm cream
+with terracotta), **Pine** (`pine`, dark: green-black with a mint accent) and
+**Ember** (`ember`, dark: neutral charcoal with an orange accent). They are
+defined once, in `themes.Builtins` (`internal/themes`), with tokens that pass
+`themes.Validate` and raise no contrast warning (a test checks each); the daemon
+sends them with the list and the app keeps no copy of their tokens, only the two
+token-less defaults it shows before the daemon answers. Either slot takes any of
+them, and the desktop app's cached screens get a built-in's tokens from the app
+like any other theme's.
+The app sends a rename or delete in turn with its settings saves (after any
+`PUT` in flight), so an older answer never brings a deleted theme back.
+The agent's `propose_theme_choice` proposal (page `app` too: valid from any page,
+not only Appearance) switches to an existing theme and/or the theme mode. Its
+`after` is `{theme_id, slot, theme}` with `slot` `in_use` when the agent named
+none. The app resolves `in_use` with `activeSlot` (`choiceSlot` in `src/theme.ts`,
+using the proposal's mode when it has one, else the saved mode, and the desktop's
+dark mode for System), for the preview and on save, and always sends an explicit
+`{theme: {slot}}` (nothing for a mode alone). The preview (`choicePreview`) shows
+the chosen theme only when its slot is the one in use, or the saved theme of the slot
+a mode change brings; for the other slot nothing changes on screen, and the card says
+which slot it is for. The card reads "Use <theme> for the light/dark theme (in use)",
+shows the theme's thumbnail (`ThemeMiniature`, shared with Appearance) and has Save and
+Dismiss; a mode shows as "Switch the theme mode to ...". A newer theme or choice proposal
+replaces it (the daemon drops the older). The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
+is previewed on the whole app while it is open in the session panel (the
+daemon drops the conversation's earlier theme proposals when a new one is
+recorded, so there is one); the console proposals listing adds
+`contrast_warnings` to the proposal's `after` (the stored proposal is
+unchanged), and the card shows swatches of its colours, those warnings, a name
+field and a Light or Dark select (always sent on save, defaulting to the
+theme's base). A proposal that names a custom theme the person has (`theme_id`:
+the agent is tweaking it) shows **Update <name>** as its primary action and
+**Save as new theme** as the secondary one, with the name prefilled and the slot
+select, which is for Save as new (the note names the slots the theme is in;
+Update keeps them, and the copy goes in the slot picked, by default the slot the
+edited theme holds that is in use, else one it holds, else the base's). Update
+sets the theme's name to the name field, and reads **Update and rename to <new>**
+when the field differs from the stored name. They send `{theme: {name, mode: "update"}}`
+and `{theme: {name, slot, mode: "new"}}`; if the theme was deleted meanwhile
+the update's error shows and Save as new theme stays. The preview ends on dismiss, when the conversation closes
+or the panel goes away, and on save once the preferences hold the saved theme
+(a refresh asked during a settings save waits for the save, then fetches). A
+slot naming a theme the list lacks shows the slot's built-in. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
 reviews', the fixes' and decision capture's (Auto counts the first plan it can
@@ -1738,8 +1892,9 @@ returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
-for which pull requests (a select of authored, requested, both, or all open
-pull requests in the repository), the **Agent** (Claude Code or Codex) and the
+for which pull requests (a select of authored, requested, both, all open
+pull requests in the repository, or "In my inboxes": those held by an inbox
+whose own **Review automatically** switch is on), the **Agent** (Claude Code or Codex) and the
 **Model**, a select of the agent's models with a custom name (saved when its
 field is left or Enter is pressed) beside the reasoning effort ("Default
 effort", which leaves it to the agent, then Low, Medium or High; a higher level
@@ -1761,9 +1916,20 @@ and puts the control back. **Fixes** chooses the agent that fixes: "Same as
 reviews (agent · model)" (the default) or Claude Code or Codex, then a model
 and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
 (`""` returns to the reviews', effort included) and reported by `GET
-api/settings`. A chosen fix agent applies in every repository. **Data
+api/settings`. A chosen fix agent applies in every repository. A
+**Network access** switch (on by default) is sent alone as `fix_network` and
+reported as a plain boolean; it applies with or without a chosen fix agent and
+is kept when the agent returns to the reviews'. On, the fix agent's commands
+can install dependencies and fetch what builds and tests need; off, its
+sandbox allows no connection, so it can't install dependencies. **Data
 extraction** has the same Agent and Model rows, its agent "Same as reviews
 (agent)" by default.
+
+Reviews ends with **Generate reviews as tiles (experimental)** (`TileReviewsRow`),
+off by default: read with `GET api/settings/labs` and saved with `PUT
+api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
+and says why. It applies to reviews that start after the change. A pull
+request's page is the same whether it is on or off.
 
 While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
 or Codex, a closed **Advanced** disclosure at the end of the section
@@ -1815,11 +1981,22 @@ object clears the app's value). `GET api/settings` returns `agent_env` and
 `agent_env_source` (`app`, or `file` while the config file's `[agent_env]`
 applies, which the section notes). `~` and `$VARS` are expanded; the values
 are stored on this computer, so no secrets belong there.
-Automatic reviews are on by default. The global switch is a master switch (the
-desktop tray's pause sets it): off stops automatic generation everywhere. Each
+Automatic reviews are on by default. "Review pull requests automatically" is a
+choice of four: Never, On open, On change and Always (default). Never is the
+master switch (the desktop tray's pause sets it): it stops automatic generation
+everywhere, and a paused state reads as Never. The others set `enabled` and
+`updates` through `PUT api/automatic`: On open reviews a pull request once on
+its own and gives later pushes no new automatic review; On change reviews once,
+then on each push has the agent read what changed since the saved review and
+write a new one only if the change would make a difference; Always writes a new
+review on every push. The row's detail says what the selected choice does, and
+"Which pull requests" shows whenever the choice is not Never. A daemon that
+sends no `updates` reads as Always. The desktop setup step offers the same four
+as a segmented choice. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
-`true`, `false`); only "Off" differs while the global switch is on, and while
-it is off a repository set to "On" is shown as paused by the global switch.
+`true`, `false`); only "Off" differs while the global choice is not Never, and
+while it is Never a repository set to "On" is shown as paused by the global
+switch.
 Repositories lists picked GitHub repositories and their clones. Add repositories
 opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any
@@ -1848,9 +2025,9 @@ The jobs list and the PR page mark an automatic job "Started
 automatically because new commits were pushed" (or "because your review was
 requested", "because the pull request was marked ready for review", or
 "Started automatically again" for the one retry of a run a daemon stop or
-restart interrupted); it is cancelled like any other. A stack group's review,
-which the daemon generates with its members' automatic reviews, carries no
-such note, like a group review generated by hand. Drafts get no automatic
+restart interrupted); it is cancelled like any other. A stack gets no
+automatic group review: its page's summary follows its members' reviews.
+Drafts get no automatic
 review, but Generate works on them as usual. `automatic` SSE events (a notice,
 and every repository's status after a settings change in any window) reread
 the automatic state, settings, clones and pull requests.
@@ -1865,8 +2042,15 @@ while one runs (amber while one waits on the person; the list slot's
 `indicator`, and the same dot on that session's own row). The Sessions pane is
 one list: the listed sessions first, each as a card (agent, working, waiting
 or ended, title, branch, last activity or end, Open transcript and its
-decisions) that opens the session alone with its transcript read live, then
-the linked ones (`pullRequestSessions` in `src/review.tsx`). A listed
+decisions), then the linked ones (`pullRequestSessions` in `src/review.tsx`).
+Opening a session there, from its row, a quote of its prompt or any other link
+to it, opens its transcript on the Sessions page (below) instead, at the prompt
+a link named (`&turn=<n>`), in the review's place in the history so Back and
+Escape return to the review. A linked session the daemon does not list goes
+there once the daemon answers that its transcript is on this computer (read
+from its agent's own store by its id), shown in the pane while it is asked;
+one from another computer, or of an agent the Sessions page does not know,
+stays in the pane. A listed
 session that is also linked shows as the listed one until it ends, and then
 as its linked row. "No agent sessions" shows only when there are none of
 either kind. The Summary keeps a "Sessions in progress" panel of the running
@@ -1877,7 +2061,7 @@ its agent showed, repository, branch, PR number, the session's title and its
 activity (latest tool calls with masked targets, files written, latest assistant
 message; see "Live sessions" in ARCHITECTURE.md) reach the app in the list,
 never a path; a session's transcript comes only when the Sessions page opens it
-(below), or the PR page's Sessions pane opens it. When a session ends the page
+(below). When a session ends the page
 reads its sessions from disk again, where the full session is. A daemon without the record serves
 none.
 The PR page keeps its linked sessions and commits visible during background
@@ -1906,17 +2090,14 @@ relevance have their own status text, distinct from no relevant decisions.
 The page sends its current head with the read, so cached decisions from an
 older head are withheld. Live session disclosures on a PR reuse this filtered
 answer, with no additional full-session decision requests. Session-only views
-and Timeline retain the full history. The walkthrough reuses the page's read;
-stack panes union the member PRs' relevant decisions by ID and keep their
+and Timeline retain the full history. Stack panes union the member PRs' relevant decisions by ID and keep their
 filtering status counts.
 Each decision is one row to scan: its title, its
 category as a pill and the time it was made, with its summary cut to a line
 under it; the row opens to the whole summary, **Why** (its rationale) and its
 files as code chips, code spans rendered as code. Who decided is the group it
 is under; the alternative it rejected is not shown. The row is not drawn while no session has
-decisions, a capture state or a capture in flight. The walkthrough, which has
-no rail, keeps them above it behind a closed "Decisions from sessions"
-disclosure. Both read again on the `decisions`
+decisions, a capture state or a capture in flight. It reads again on the `decisions`
 event, which carries no data (events within 250 ms make one read), and when
 the event stream opens or resets or the automatic switch changes. Settings' **Data extraction** section, in
 Reviews, holds the switch for decision capture and the feature log, the agent
@@ -2000,6 +2181,62 @@ leaving the page or the Settings section discards it, which the repository page 
 with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
 when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.
+
+**Settings › Tile library** (`TileLibrarySection`, `src/settings-tiles.tsx`;
+`?page=settings&section=tiles`, with `&type=<name>` while a type is open) lists
+the person's saved tile types (`GET api/tile-types`) as list rows: the title
+(which opens the type), a **Custom** pill, the use-when line, where it came
+from (Made in chat or Imported), where it is pinned, and when a review last
+used it and in how many repositories (`used_at`, `used_in`, recorded when a
+generated version is stored with a ready tile of the type; "Not used in a
+review yet" until then). A row's menu has Open, Edit in chat, Export… and Delete. An empty library
+says how to make a type: ask the session panel on a review for a tile, then to
+save it. The section list's line counts the saved types. A type's pane (`GET
+api/tile-types/{name}`, which never carries the HTML) shows its title with
+**Rename** in place (`PUT api/tile-types/{name}/title`; Enter saves, Escape
+puts it back; a rename is a new version), **Edit in chat**, **Delete**, the
+use-when, glance and paths, the fill instructions and review checks behind a
+disclosure, a preview of each sample (a segmented switch between samples): a
+glance in a card at each declared size (third 344px, half 522px and full
+width) and the detail, each in its sandboxed frame
+(`PreviewFrame`, `src/tiles/custom/tile-frame.tsx`, fed by `GET
+api/tile-types/{name}/preview?sample=`, which registers the frame document;
+nothing in a preview jumps or asks), switches to pin the type to each picked
+repository (`PUT api/tile-types/{name}/pins {repositories}`, written into each
+repository's `settings.tiles.types`, at most 8 a repository; a repository
+settings `PUT` without a `tiles` member keeps them), and its versions, newest
+first, each earlier one with **Restore** (`POST
+api/tile-types/{name}/restore {digest}`). Delete (`DELETE api/tile-types/{name}`)
+goes back to the list with a toast whose **Undo** brings the type back pinned
+where it was (`POST api/tile-types/{name}/undelete`). Edit in chat opens the
+type's pane and the session panel: the page context is `{page: "settings",
+section: "tiles", focus: {type}}`, its bar reads "Settings · Tile library ·
+<name>", and the agent reads the type with `tile_type` and proposes a change
+with `propose_tile_type`. A desktop shell that mounts no tile frames (Windows)
+shows "Custom tiles aren't available in this version of the desktop app yet"
+in place of the previews; everything else works.
+
+**Export…** (the row's menu and the pane) reads `GET
+api/tile-types/{name}/export`, the type's current version as a
+`<name>.baumtile.json` file (`schema/tile-type-1.json`: the definition without
+its digest, glance, review checks, `applies_with`, paths, the synthetic samples
+and `exported {at, baum}`), and saves it through the desktop app's save dialog
+(the `save_tile_type` command, `desktop/src/tile_files.rs`, which writes only
+where the person chose, a file of at most 3 MiB under a tile type's name), or
+as a download in a browser. **Import…** (the section's heading, and the empty
+library) opens a file picker; the file's text goes to `POST
+api/tile-type-files/check {file}`, which runs every import check without
+saving, and a dialog shows the name it would get (saying so when its own is
+taken and it gets a numeric suffix), the title, use-when line, glance, paths,
+the fill instructions ("Given to the review agent when this type is filled"),
+the review checks ("Instructions given to the review agent") and its
+first sample as a glance and a detail in their frames. **Import** sends `POST
+api/tile-type-files {file}`, opens the new type and says so in a toast. A
+refused file names the reason under the heading. An imported version shows a
+**Not checked yet** pill when no render check ran on it (`checked: false` in
+the list and the pane): an import runs the render check on its samples when
+the app can draw them and refuses a type that fails, and with no runner
+available saves it unchecked until its first preview with one.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
@@ -2210,7 +2447,8 @@ with it as thumbnails that open full size; the agent named once per turn; its
 messages on the way to its reply folded under "N progress updates"; its reply
 in full, set as long text (headings, quieter code, spaced lists and tables). j
 and k move a message at a time (prompts and replies, passing over the progress
-updates), Space shows all of the marked one or less again, and Enter opens it
+updates; pressed again before the page has scrolled to the marked one, they
+go on from it, as Space and Enter act on it), Space shows all of the marked one or less again, and Enter opens it
 on its own, nearly the window's size, where j and k scroll it and Escape closes
 it. It reads
 `GET api/live-sessions/{agent}/{id}/transcript` (see "Live sessions" in
@@ -2221,7 +2459,9 @@ events. Each read names the version shown, so an unchanged transcript costs a
 few bytes and draws nothing again; a new version keeps the turns the reader
 opened (the card's source carries the version as its `revision`, so an opened
 turn's activity is read again) and, when the reader is at the end of the page,
-keeps them there; every session opens at its end, on its latest turn. A transcript the daemon
+keeps them there, and so does what grows on its own after it is shown (a reply
+measured and folded) until the reader clicks or
+types; every session opens at its end, on its latest turn. A transcript the daemon
 does not serve says why (the agent named no transcript, it is outside the
 agent's session folder, the file is gone), and a failed read keeps what is
 shown. The back chevron, `u` or Esc returns to the list. A reply bar stays at
@@ -2303,7 +2543,7 @@ Before the browser suite build its Linux test helper in `oss-test`:
 The suite keeps browser/daemon integration for credential bootstrap in a fresh
 window, namespaced requests, saved review versions, automatic generation after
 a head push and its persisted settings, a live redacted transcript without a
-reload, merging a ready pull request, a walkthrough comment surviving reload and
+reload, merging a ready pull request, a review comment surviving reload and
 submission, agent questions with citations and saved answers, inbox edits and
 Undo through the real store, and a local feature's source transcript. Shared
 viewer behavior is covered by the standalone viewer and hosted UI suites;
@@ -2313,6 +2553,147 @@ repeating them for themes or collecting screenshots on passing runs. The inbox
 fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 `e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
 only with `INBOX_SCREENSHOTS=1`.
+
+Screenshots for a pull request: `just local_app::shot '<route>' ['<selector>']
+['<name>']` builds the app, rebuilds the fixture (it embeds the build) and runs
+`e2e/shot.spec.ts` against the browser fixture, which writes
+`oss/app/screenshots/<name>-light.png` and `-dark.png` (default name `shot`).
+The route is the part after the launch URL, such as
+`'?page=settings&section=reviews'`; a selector narrows the picture to that
+element. `SHOT_WAIT` (a selector to wait for), `SHOT_WIDTH` and `SHOT_HEIGHT`
+pass through. `screenshots/` is ignored by git and, unlike `test-results/`,
+not emptied by the next Playwright run. The spec skips without `SHOT_ROUTE`, so
+the e2e suites never take these pictures. The fixture holds demo data, not the
+person's own.
+
+Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
+`../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
+`pnpm test:unit` runs them again against the compacted script the daemon inlines
+(`KIT_SCRIPT=inlined`, `../tiles/kit/testdata/v1.inlined.js`).
+The overview page: `e2e/review-view.spec.ts` serves acme/demo#7's tile route
+with the `baum.review/2` document of `src/review-view/fixture-1303.ts` and
+checks the rail, the address, the file grouping and that no place scrolls
+sideways at 390, 900 and
+1440px; `REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each place, light and
+dark. It also removes an added tile and undoes it, shows pending cards on
+their sections (both against routes it answers itself), checks that every
+pull request, arranged or not, opens on the rail with no setting to choose a
+page, and that a `baum.review/1` version draws the viewer's own Summary and
+sections.
+Custom tiles on the review page: `pnpm test:custom-tiles`
+(`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
+the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
+each opening a tile's place (`pane=tile&tile=<id>`, the rail's row of the
+How it works section the tile stands on). With that variable the fixture
+stores acme/demo#7's versions and #13 as `baum.review/2` documents with
+their tiles (`browserV2`): #7's with the synthetic custom tiles on the
+section of its first hunk, #13's with its composition's library and
+authored tiles. The well-behaved tile at 1440, 900 and
+390px in light and dark (pictures into `test-results/custom-tiles` with
+`CUSTOM_TILE_SHOTS=1`), a review generated with library and authored tiles
+(`library-tiles.spec.ts`, acme/demo#13, with the same widths, themes and
+pictures), and the escape probes on the real frame route
+(`tile-frames.spec.ts`), with a server on port 4170 that must hear nothing.
+The synthetic tiles share a section, so each test serves the document with
+only the ones it drives (`showOnly`, which drops the others' tiles and tile
+blocks). `just local_app::e2e-webkit`
+runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
+macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
+The main suite starts the fixture without custom tiles.
+`e2e/tile-check.spec.ts` (main suite) submits candidates through a route
+only the fixture has (`POST api/tile-checks/submit`) and lets the page's own
+runner draw them: one tile per problem in `e2e/tile-check/`, the built-in
+library types and the starter, which pass, and a busy tile that a runner
+claims and never answers, which hangs. `just local_app::e2e-webkit` runs it
+in WebKit too.
+`just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
+(synthetic data) with the Go kit and takes pictures of them in sandboxed
+frames under the frame route's headers, glance at each card size and detail at
+720 and 360px, light and dark, into `test-results/tile-kit`
+(`e2e/tile-kit-screens.spec.ts`, only with `TILE_KIT_SCREENSHOTS=1`); it also
+checks that a throwing, network-using, failing and height-looping tile is
+reported from a real frame. `pnpm tile-kit` regenerates the kit's tokens.
+`just local_app::tile-type-screens [dirs]` checks tile type directories (the
+tile library's by default; see `../tiles/kit/GUIDE.md`) with the Go library
+check, then draws every sample and the schema's minimal and maximal samples:
+glances at each declared size and on a phone, details at 720 and 360px, light
+and dark, into `test-results/tile-types` with a glance contact sheet per type
+(`e2e/tile-type-screens.spec.ts`, only with `TILE_TYPE_SCREENSHOTS=1`). It
+fails on a script error, sideways overflow, an unresolved citation or a glance
+that overflows its box (the maximal sample only warns).
+
+Real reviews: a review page is designed against real data with pictures of
+saved reviews from a dataset the person supplies, which is a directory of
+review stores (`reviews/<machine>/<repo>.versions.sqlite`), bare mirrors of the
+repositories (`repos/<repo>.git`), the app's database per machine
+(`state/<machine>/app.sqlite`) and an index (`index/pulls.jsonl`,
+`index/cases.jsonl`). Nothing from it is committed, and its path appears in no
+file. From the repository root:
+
+```sh
+just real-review-screens /path/to/dataset [full|tiles] [owner/repo#12,owner/repo#40@2]
+```
+
+The recipe builds the app and the fixture, then mounts the dataset read-only
+into the `ui-test` service, which runs the fixture and the script
+(`playwright.real-reviews.config.ts`). It does not cut the container off from
+the network (`docker compose run` has no option for it); the fixture itself
+reaches nothing, since GitHub and model calls are refused.
+
+`TestLocalAppRealReviews`
+(`../internal/uiserver/real_reviews_fixture_test.go`, skipped without
+`BAUM_APP_REAL_REVIEWS`) runs the real daemon on a temporary state directory,
+with no model and no GitHub: it clones each repository from its mirror with
+shared objects, so a hunk's excerpt is read from Git at the version's own
+commits, puts every saved version of each picked pull request and its images
+through the store's own `Put`, and answers discovery with pull request facts
+read from the dataset's app database (the saved review's header where it has
+no row). The reviewed head is reported as the pull request's head, so the page
+shows the review as current; checks, merge state and conversations are not live.
+Sessions, decisions and the Timeline are not served.
+
+The pick is a list of `repo#number[@version]`, which opens that version (the
+latest by default); the history lists every saved version. Without a list the
+fixture chooses from the calibration split of the repository with the most
+saved reviews (`BAUM_APP_REAL_REPOS` names others). `BAUM_APP_REAL_COUNT`, 14
+by default, is the most it chooses. In priority order it takes the review with
+the most sections, the highest risk, the most unassigned hunks, the most images
+and the most threads, one with sessions of each agent, one of each size bucket
+(xl, xs, m, s, l), one without images and one without threads, then spreads the
+rest over the numbers, stopping at the count. A pull request named twice is
+read once. It logs the chosen identifiers with
+their tags and writes `picks.json` for the script.
+
+`e2e/real-review-screens.spec.ts`, taken only with `REAL_REVIEW_SCREENSHOTS=1`,
+opens each review with `?view=<view>` at 1440×900, 900×900 and 390×844, in the
+light and dark schemes (the app follows the system's), waits for fonts, images
+and spinners to settle, and writes
+`test-results/real-reviews/<repo>-<number>-v<version>/<view>-<state>-<width>-<theme>.png`,
+with a `-full.png` beside it that is as tall as the page's scrolling content,
+and an `index.html` contact sheet in the directory. The sheet is built from the
+run's own manifest (`run.json`), so it lists only this run's reviews; the
+folders of earlier runs stay in place and are not listed. It lists what a
+picture does not show clearly: a notice, an unavailable excerpt, an image that
+failed, sideways scrolling, a full-page picture that is truncated, a detail
+that was skipped for want of a document, and a review left unfinished after
+`REAL_REVIEW_MINUTES` (8 by default). Expected 404, 502 and 503 console errors
+from the refusing backends stay in `console-errors.txt` and out of the sheet's
+error count. States are the `STATES` list at the top of the
+spec: the page as it opens (`landing`, the Overview), a
+detail (the first section) and its first hunk excerpt opened, and
+"Where this fits" (`context`), the section's Code and Tests views,
+Files changed grouped by type, folder and feature (`code`, `code-folder`,
+`code-feature`), and the rail's Sessions and Commits pages and the first
+session (`sessions`, `session`, `commits`).
+`BAUM_APP_REAL_COMPOSITIONS` names a directory of presentations to serve in
+place of the saved ones, each `<number>@<version>.json` (a replay run's
+`composition.json`), with `<number>@<version>.document.json` replacing that
+version's review too, so a replay run can be seen on the page.
+A new page adds a state by adding an entry with the steps that open it.
+`REAL_REVIEW_ONLY` limits the run to reviews whose `repo#number` contains the
+text, and `REAL_REVIEW_FULL=0` skips the full-page pictures. The pictures hold
+private content: keep them out of commits and shared services. The waiting and
+capturing steps are in `e2e/review-screens.ts`.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
@@ -2377,9 +2758,647 @@ links, even when transcript parsing misses the commit. Pushes alone remain
 context. Existing saved hook records are backfilled on startup; failed writes
 are retried without discarding the observations.
 
+## Session panel
+
+The session panel (`src/session-panel.tsx`) is a real Claude Code or Codex
+session the person opens from any page, drawn as a drop-down terminal over the
+page's panel: it slides in from the foot of the window (or its top, in
+Settings), as wide as the page, and is resized by dragging its grip or with
+`↑` and `↓` on it. Opened from the left or the right of the window instead
+(also in Settings), it is as tall as the window and sits beside the page's
+panel, which narrows to make room; its grip is its edge towards the page,
+dragged or moved with `←` and `→`, and it never leaves the page less than
+320 px; a window too narrow for both at their narrowest (320 px each) opens it
+from the foot until it is wide enough again. Its width is kept apart from its
+height. It stays open across
+navigation; whether it is open, its height, its width and the conversation it
+shows are kept in this window's storage
+(`baum.session-panel.v1`, `src/session-panel-state.ts`, which any page can
+open it through), as the sidebar's fold is. The sidebar's **Session** button
+and **Open the session panel** in Go to (⌘K) show or hide it. Its key
+(`PANEL_KEY` in `src/shortcuts.tsx`: `` Ctrl+` ``, Ctrl on a Mac too, or Ctrl
+with the key in the backtick's place on a layout where it is a dead key) works
+anywhere, a text field included, but not under a dialog: with the panel
+hidden it shows it, with the panel open and the keys elsewhere it puts them
+in the composer, and from the composer it hides the panel. Escape in a field
+of the panel, the composer included, empty or not, gives the keys to the
+panel, and Escape anywhere else in the panel gives them back to the page (to
+what had them before the panel took them), the panel staying open; the page
+under it never gets either (a pull request's page would go back to its list). While
+the panel has the keys and none of its fields does, which its edge shows in
+the focus colour, the keys read its session and the page under it gets no
+key that types a character, but for `?`: `j` and `k` go a message at a time,
+marking it as the transcript page marks its own, `g` and `G` go to the
+session's start and end, `↑`, `↓`, Page Up and Page Down scroll it, `Space`
+shows all of the marked message or less again, `a` opens or closes its
+turn's agent activity, `i` or `Enter` go back to the composer, and `q` hides
+the panel. Page Up
+and Page Down scroll the session from the composer too. A click in the page
+gives the page its keys back. Going back to the app from another window
+leaves the keys where they were: the panel takes them only if it had them
+when the window lost them, until a click or key in the window says
+otherwise, so a webview that restores its focus elsewhere cannot hand them
+to it. The sheet lists them under "Session panel",
+and while Alt is held (with the app's other hints) a line at the panel's foot
+names the ones that work where the keys are: the reading keys, or in a field
+`Esc`, Page Up and Down and the panel's key; the page's own key bar gives way
+while the keys are the panel's. The composer reads as the session's last
+line: taking the keys, the panel marks the latest message in view; `↑` with
+the caret at the composer's very start leaves it for the session as `Esc`
+does, and `j` past the last message, or `↓` at the session's end, goes back
+to it.
+The composer grows with its text, re-measured as the panel's width changes,
+up to a quarter of the window (12rem at most), then scrolls. Opened, its
+composer takes the keys; hidden, they go back to what had them before. The daemon's
+routes are under `/api/console/` (see "Session panel conversations" in
+`oss/ARCHITECTURE.md`; `src/console-api.ts`).
+
+The page under it stays reachable: while it is open, the page's frame carries
+`--session-panel-inset`, how much of it the panel covers. From the foot the
+panel stays over the page, and the page (`.local-main`) and the review's own
+scrolling panes end that much further down, so all of them scroll clear of it;
+from the top, where the page's bars stick to its top, the page starts below
+the panel instead.
+
+Its bar names the conversation (its first message, else "New session"),
+**Working** with the live dot while a turn runs, and **Sessions**, a menu of
+the conversations, newest first, with **New session**, **Close this session**
+and **Archive this session** (each asked first while a turn runs, since it
+stops it); a closed one can be reopened and read, not written to. A right
+click on any conversation in the menu (or the Menu key, Shift+F10 or ⌘. while
+it has the keys: a `MenuItem`'s `actions` in `src/context-menu.tsx`) replaces
+the menu with **Close session**, while it is open, and **Archive session**.
+Archiving takes it out of the menu and removes the empty folder or the
+worktree baum made for it, and the branch baum created (see "Session panel
+conversations" in `oss/ARCHITECTURE.md`); the agent's own session stays. When
+that would lose work (`409 unclean_directory`: changes, files or commits no
+remote has), a dialog says what, naming a few paths, and **Discard and
+archive** archives it anyway. Archiving the conversation shown goes to New
+session. The menu stays open while the transcript under it scrolls. Under it, on one line in small print:
+**Looking at**, the page the agent sees (the page context below, named by
+`pageLabel`, with a pull request's or group's own name); **Directory**, where
+the agent works (before it starts, a checkout of the pull request on a pull
+request's page, else a new empty folder), with `directory_note` in the
+caution tone when a pull request's conversation fell back to an empty folder;
+**Agent**, its agent and model (the model the transcript names, once it does,
+when none was chosen); **Mode**, Auto, Full access or Workspace, chosen before the
+first message (the setting's default) and shown afterwards; and its cost once
+a turn was priced (`≥` while part of it could not be). The page and the
+directory give way first, cut with an ellipsis and whole in their tooltips.
+
+The body is the session's transcript, read with `useLiveTranscript` through
+the conversation (`GET api/console/conversations/{id}/transcript`), which
+serves its session's transcript whether or not the Sessions page still lists
+it, so an older conversation reopens with its transcript, and drawn by
+`TranscriptReader` (the viewer's `SessionTranscript` in its `log` layout, as
+the Sessions page draws a transcript), following the end while the reader is
+there. What the transcript does not have yet shows under it in the same
+style: the prompt just sent (at once, in the frame the message is sent), and
+while the agent works its answer from the conversation's `progress` (read on
+the `console` events) and the tool it runs, so feedback comes before the
+transcript catches up. Until the transcript holds the prompt the whole answer
+so far shows; after, only the turn's latest message (`progress.message`),
+until the transcript holds that too, so each message of a turn of several
+shows once. A transcript that cannot be read says so and why (its file gone,
+or no session started yet), with the last answer when there is one. Before
+the first message the body is an empty state saying what the agent will do
+and where. The composer sends with Enter (Shift+Enter for a line break) with
+the page context the person has open, starting the conversation first when
+there is none; while a turn runs, **Stop** cancels it, and Enter (or
+**Queue**) queues what is typed for when the turn ends. The queued messages
+list above the composer, oldest first, each with **Remove**; once the turn
+answers they go together, a blank line between them, as the next turn. A turn
+that was stopped or failed leaves them there, saying they were not sent yet,
+with **Send now**; the next message sent goes after them in the same turn. Closing
+the session drops them. Undo in it is the app's, as in every field
+(`src/text-history.ts`). A refused message comes back into the composer with
+why (`closed`, `shutting_down`, or the queue's limits).
+
+The agent's proposals (`GET .../proposals`, read again on the conversation's
+`proposals` events) are cards under the transcript. A change (`diff`) shows
+what it saves against what is saved now (`Diff`, as a prompt's) as text: a
+prompt's `{text}` as its own lines, against the text that runs now (the
+scope's own text, else the before's `inherited_text`: a repository's global
+prompt, else baum's default), saying when it gives a repository its own
+prompt, replaces baum's default or resets to the inherited text; other plain
+fields as one line each; with **Save** and
+**Dismiss**, and a field for the value the person types when the change needs
+one (an agent environment variable's), which never goes to the agent. An
+operation shows baum's summary: its action, its details, its model and effort,
+and **Costs money** and **Can't be undone** where they apply, with **Confirm**
+and **Dismiss**. A detail marked `quoted` is set apart as quoted data, never
+as baum's words; one marked `by_agent` or `multiline` is shown whole,
+scrolling in its box (which the keys reach) rather than cut. Confirm sends the summary's revision on
+screen; a `409 operation_changed` replaces it with the new summary, says
+nothing ran and asks again. A proposal made on another page says so and links
+to it, and a `not_current_page` refusal says which page to open; a proposal
+under the `app` page (a colour theme, a theme choice or a prompt,
+`proposedPrompt`) is saved wherever the person is. A prompt's card is headed
+with its scope and id ("acme/web's prompt · review", "Global prompt · review")
+rather than the page it was proposed on. A comment
+for the pending review (`propose_review_comment`, a `…:review_comment` change,
+which replaces the earlier Ask's Add as comment) reads the pull request's
+pending review again once saved, so it shows in the review at once.
+
+**Ask** on a pull request's page is the panel's: the PR page's
+**Ask** button and the key `a` call `sessionPanel.ask` with the pull request,
+and an Ask about part of the review adds it as the focus (`{kind, id, title,
+anchors}`, `sectionFocus` in `src/chat.tsx`). The panel's host then opens the panel on that pull request's conversation
+(`conversationFor`, once the conversations are read): the one it shows when it
+is that pull request's and not closed, else the pull request's most recent
+open one, else a new session, which the first message starts on the pull
+request's page in its checkout. A conversation of another page or pull request
+is never reused for it. Reusing the pull request's own keeps one session per
+pull request working in its checkout, with what its agent already read, as the
+earlier Ask opened the review's latest conversation. Nothing is typed into the
+composer, which takes the keys. The Ask stays in the panel's state (not kept
+across reloads) while the pull request's page is open, and `withPicked` adds
+its focus to the page context's (beside the address's `anchor`), so
+the page reported and each message carry it; the agent reads it with the MCP
+server's `focus` tool. Above the composer, "About <title>" names it with
+**Remove** (`sessionPanel.clearFocus`); leaving the page forgets the Ask.
+
+The app reports the page the person has open (`PUT api/console/page`,
+`usePageReport`) a moment after each navigation settles and again once the
+event stream reconnects, whether or not the panel is open, so a conversation's
+agent always knows the current page. The page context (`src/page-context.ts`,
+`pageContextOf`) is derived from the address in one place, mirroring
+`agentcontext.PageContext`: the sidebar's lists with their filters (the
+address's other parameters, as the MCP server's links take them), a pull
+request (repository and whole number, from its clone when the address names
+one, with its anchor as the focus), a group, a session, a
+job, a feature, Settings with its section and a repository's page with its
+section (an unknown one is General, or Reviews, as the pages open it). A
+subject longer than the MCP server takes (1 KiB) is left out. `hrefOf` is its
+inverse, the MCP server's `link`.
+`oss/internal/agentcontext/testdata/page-contexts.json` holds the addresses
+and their contexts, which both
+`page-context.test.ts` and the MCP server's own test (`PageContext.Validate`
+and `link`) check.
+
+When the daemon runs no session panel (`GET api/console/conversations`
+answers `available: false`), the button carries a `!` and says so, the panel
+explains that baum could not open its sessions, and no page is reported.
+
+Settings › Session panel (`section=panel`) holds the panel's setting
+(`api/settings/panel`): its agent (**Same as fixes** follows the fix agent and
+its model), the model of an agent chosen there, the access of a new session
+and the edge it opens from (**Opens from**). On the Sessions page a panel's session carries a
+**Panel** tag, a session in its own empty folder is named "Session panel" and
+placed in "Own folder", and its menu offers **Open in panel** instead of
+reply, focus and end (a running one says so under its card). A finished turn
+waits on the panel, not on the person: the daemon lists no waiting reason for
+a panel session, so it is never under Waiting for you or counted in the
+sidebar's badge, and `needsYou` leaves panel sessions out too. Its transcript
+page offers **Open in panel** instead of Focus and has no reply bar, and a
+pull request's sessions tag it **Panel** with **Open in panel** beside Open
+transcript. The transcript page of a Claude Code or Codex session that ended,
+or that the daemon no longer lists (such as a pull request's session opened
+from its review), offers **Continue in panel**: it opens a panel conversation
+that resumes that session in the directory it worked in
+(`POST api/console/conversations` with `agent` and `resume`), or the one
+already continuing it, and opens the panel on it, with the panel's model and
+access. Why it cannot (it is still running, its transcript or its directory
+is gone) shows as a toast. A session counts as running while the daemon
+lists it as not ended, or, for Claude Code, while a process registered under
+`~/.claude/sessions` runs it (including one that switched to it with
+`/resume`), whether or not its hooks reached the daemon. Codex ends a
+terminal's session within a minute of the terminal exiting, when its app
+server lets it go.
+Closing that conversation gives the session back: it is no longer marked as
+the panel's. A message to a panel conversation whose session a terminal runs
+again (`claude --resume`, `codex resume`) is not sent, and the panel says the
+session is running in a terminal, until that terminal exits it.
+
+## Review page
+
+Every single pull request's review opens on the viewer's rail
+(`src/review-view/`, drawn through the viewer's places seam by `useViewPlaces`,
+with the viewer's `flatRail` and `ownFiles`) in every state; there is no other
+layout, and no setting for it (the stored `review_page` and `arranged_tiles`
+appearance values are ignored). The page always passes its places, with or
+without a document:
+
+- **No review yet** (none asked for, queued, being written with no draft
+  yet, failed, needing a clone, or still loading): the rail has Overview, How
+  it works greyed with "No sections yet." under it, and Files changed with the
+  pull request's file count when its facts are read (left out when the facts
+  are unavailable), then Decisions, Sessions and Commits from the facts. The
+  Overview is current and its pane is the page's placeholder: "Review
+  queued", "Generating the review" (with Cancel), the failed job's outcome
+  with Try again, "No review yet" with Generate review, "Needs a local
+  clone", or "Loading review…". Files changed opens the viewer's own files
+  pane on the facts (`pane=files`, `pane=file`); once a review lands, that
+  address becomes the review's Files changed (`pane=tile&tile=code`, with the
+  open file), replacing the history entry. The side pane starts folded.
+- **A draft** and **every saved version** are drawn in the same rail, side
+  pane and keys. Only the content of the Overview and of a section depends
+  on the version shown: a `baum.review/2` version (and a draft) draws the
+  Overview and section bodies below, and a `baum.review/1` version draws the
+  viewer's own Summary and section pages (every block they show: behaviour
+  steps, evidence, images, intent, entities, risks, agent findings,
+  attention, and so on) in the pane, through the viewer's
+  `ReviewPlaceContext.builtInPane`. The rail's How it works rows come from
+  the version's own sections ("Where this fits" only for a version that has
+  one: a `baum.review/1` context is part of its Summary), and Files changed,
+  Decisions, Sessions and Commits are the same for both. `shellRequest`
+  reads a version from `GET api/document` and, when it is `baum.review/2`,
+  again from `api/tiles`; a `baum.review/1` version is kept as stored.
+- **An earlier version** read alone or compared is drawn the same way, each
+  by its own version's pages.
+
+A group's or a stack's page (`src/group.tsx`) keeps the viewer's own places. The
+head, the version menu, history, Compare, the side pane, the Decisions,
+Sessions and Commits panes and the review dialog are the viewer's own. The rail
+lists, in order:
+
+- **Overview**, then **How it works** with "Where this fits" and each section
+  nested under it (the group's own row opens the first real section; an
+  obsolete section is muted), then **Files changed** with the number of changed
+  files. These are the page's places; the rail's other rows are the viewer's.
+- **Decisions**, **Sessions** and **Commits** are plain rows, with no
+  disclosure and nothing nested under them (`flatRail`; the group page keeps
+  the viewer's disclosures). Each has its count and a live or waiting dot, and opens a
+  page listing the pull request's items; a session, a commit or a decision
+  opened from there shows in the review pane and leaves its group's row marked.
+  Files changed is the app's own place (`ownFiles`), so the viewer's Files row
+  and its file tree are not drawn.
+- The side pane has its usual tabs (Details, Activity, Comments, and the
+  conversation) and starts folded on the page's own places, then stays as the
+  reader leaves it. Where the panes stack, the rail is a sheet opened from the
+  navigator bar, which also steps through the places.
+
+The page reads each `baum.review/2` version from `GET api/tiles` (a draft's
+from `api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
+`baum.review/2` document (`oss/reviewv2/document.go`; `review-view/document.ts`
+has its types): the summary with its `verdict` and `risk_why`, the
+`overview` (`screenshots`, `diagram`, `intent`), the `context`, the sections
+with their `gist`, `body` (blocks: `prose`, `points`, `note`, or a `tile` naming a tile the section owns), `risks` and `details`, and every tile
+placed by its `owner` (`overview`, `context` or a section). `parseReviewV2`
+reads it, dropping a malformed item (a section, step, risk, tile or intent row)
+rather than the page. Tiles a section's body does not place (a person's own
+among them) follow it, and a tile block naming a missing or another section's
+tile is ignored. The daemon completes every served document (the stats, each
+section's `derived`, a code tile's `text`), so the page reads them as served;
+a `baum.review/1` version's summary and steps become a prose and a points
+block in `review-view/from-v1.ts`. The page reads only this document. The review viewer
+around them (the head, history, side pane, comments, selection and keys) and
+the viewer's parts they draw (citation chips, images, diffs) read a
+`baum.review/1` review, which `chromeOf` makes from the document: what
+`baum.review/2` has no field for (the author, agent reviews, evidence) is
+empty there. A `baum.review/1` version is read as stored. It has no tiles:
+it shows the viewer's Summary and sections, and `review-view/from-v1.ts` only
+builds the rail's model (the sections and the file list) from it.
+
+- **Where the reader is** stays in the address, so a reload, Back and a link
+  land there: the Overview is the Summary (no `pane`), How it works is
+  `pane=section&section=<id>` (`context` is "Where this fits"; a risk's
+  `pane=risk` opens its section at the risk, and the Changes its first
+  section), and Files changed is `pane=tile&tile=code&tile_item=<path>` (the
+  address keeps `code`). A link to a tile opens the section it is placed on.
+  The Files changed row opens the first file that is not generated.
+- **Overview**, always in this order: the summary (`summary.text`), the risk
+  (score, level and why: `risk_why`, or else the score's first reason) with
+  the verdict inside its card when it has points (each linking to its
+  section), the description's clips of the change (`overview.videos`, under
+  Video), what it looks like (`overview.screenshots`), the main diagram
+  (`overview.diagram`) under its title, the tiles the person added to the
+  Overview (owner `overview`, with their pending cards), and what was asked (`overview.intent`,
+  else each linked session's first prompt), each linking to the prompt in its
+  session.
+- **How it works** lists "Where this fits" first in the rail (the review's
+  context, its files as chips, and the tiles `context` owns) and opens on the
+  first real section. A file chip there opens the whole file at the review's
+  head, never its diff, even for a changed file: the page and the group page
+  give the route through `RepositoryFileSourceContext`, for the version each
+  pane shows (two compared versions read their own), and `RepositoryFileView`
+  reads it. When the section is wide enough for two columns (as a section's
+  views), the file shows in a column beside the context, sharing the section
+  column's width and fold (`]`, folded at first; a chip unfolds it and marks
+  itself pressed); otherwise it opens in `RepositoryFileDialog`. A directory
+  still opens GitHub, and a draft keeps the chips' former behaviour. The sections are the rail's rows, not a list in the page. A section shows its
+  title, then a row of views, each with its count and disabled (never hidden)
+  when the section has nothing for it: **Overview** (its gist, then its body block by
+  block, then its risks: prose at reading width, points as hairline lines that
+  open to a detail and the files they cite (in a block where some point has a
+  `tone`, every line leads with a mark in its tone's colour: a dot for `new`,
+  `good` and `muted`, a filled square for `bad`, a hollow one for `missing`
+  and a grey ring for plain), a note with a left
+  rule (a note's `kind` puts its icon and word before the text: a caveat in
+  the caution colour, a decision, unchanged or a follow-up), and tile
+  blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
+  label; a table cell `{text, was}` strikes the old value and marks its row
+  Changed, and a flow whose
+  steps have `more` shows a step's detail below while the mouse is over it
+  and makes them buttons that keep it open, the space below as tall as its
+  longest detail so nothing moves as the mouse passes; "Writing
+  details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
+  migration hunks, file by file, drawn as Files changed draws them, and its
+  generated or vendored files folded at the end), **Tests** (its test hunks,
+  under a line counting the tests by change, each file's diff headed, above
+  its code and still shown when the code is folded, once the hunks the review
+  left out are loaded, by New file or Deleted file and the tests it adds,
+  renames, changes or removes by name, read from the lines (Go's
+  `func TestX(` and its benchmarks, fuzz tests and examples, JavaScript's
+  `it("…"` and `test("…"`), then under Helpers and setup the functions,
+  types, variables and imports it changes by name and its Other lines. A test
+  removed with another added in its place, or beside one with a like name, is
+  renamed; like-named tests in different `describe` groups stay separate
+  rows, and a group's lines between its tests count as its Other lines. A file whose tests can't be read with confidence (another
+  language, a name built at run time, a change inside a block that opens
+  above its hunk) says so. A row marks its change unless the file's New or
+  Deleted already says it, gives line counts only for a changed or renamed
+  test, and sets a sentence name as prose and an identifier as code; a list
+  longer than eight shows its first five until asked for the rest. A row
+  brings the line its test or helper starts at into view, unfolding the code
+  if needed, and flashes it), **Session** (the prompts and session events its
+  summary, steps, risks and tiles cite, quoted with when and who, each linking
+  to its turn of the transcript) and **Docs** (its docs hunks). Code, Tests and
+  Docs count files, Session quotes. The view is `section_view=<view>` beside
+  `section=`, and opening another section opens its Overview. From 64rem of
+  section width the Overview stands in a left column and the other views sit
+  beside it in a right column with their own row (no Overview tab), showing
+  the view asked for, else the first that has something; that column sticks
+  under the bar and scrolls on its own while the Overview scrolls. Its divider
+  resizes it (dragged, or with the arrow keys; the width is remembered, and
+  the Overview keeps at least 360px), and its chevron or `]` collapses it
+  to a strip so the Overview takes the section, until expanded again. `h`
+  and `l` step through the section's views that have something (with the
+  Overview too while it is a tab), wrapping as the row's arrows do; in the
+  wide layout they unfold the column first if it was collapsed. While the
+  right-hand sidebar has the keys it keeps `h` and `l` for its own tabs.
+  With two versions compared, the version that has the focus takes them,
+  and a section with no other view leaves them to the other. It
+  starts collapsed until the reader first opens it, then stays as they left
+  it (`section-split.tsx`). Its code is drawn a frame after the section, as
+  work React can drop, so a big diff never holds the Overview back. An excerpt of code in the Overview (a
+  step's or a risk's file chip) opens in that column, expanding it if
+  collapsed, in the view that draws the file, scrolled to the first line
+  from the one it names, and the Overview stays where it was; a file the
+  section doesn't draw opens in Files changed as before. Opening a point's
+  row does the same for the first file it cites that the section draws,
+  while the column is open (`side-reveal.ts`); a collapsed column stays
+  collapsed. The keys (`j` and `k`) go through a points block row by row,
+  and `Enter` or `Space` opens the row they are on. A section with nothing but its
+  Overview keeps one column. The full review's check
+  callouts and line counts are not shown.
+- **Files changed** (`code-tab.tsx`) lists every changed file beside the open
+  file, or above it when the review pane is narrow. The list scrolls on its own
+  in smaller panes so opening a file keeps its diff in view. **Group files by**
+  has three modes. **Type**
+  groups them as code, tests, docs, config and generated (folded, and a
+  generated file's diff waits for Show the diff). **Folder** groups them by
+  directory, a directory with no file of its own and one directory joined to it
+  (`oss/internal/jobs`), files by name under their folder. **Feature** groups
+  them by the sections that explain them (`ViewFile.sections`), in the
+  sections' order; a file explained by several sections is listed under each
+  (and marked in each), and the files no section explains come last under "Not
+  in a section". A row shows the file's name (and its folder, where the heading
+  does not) and its added and removed lines. The mode is kept in the
+  browser (`localStorage` `baum.review.fileGrouping`; when storage is refused it
+  holds for the page). The open file shows its hunks under a header that
+  names the sections explaining it, each a link; nothing is pinned under a
+  hunk, since a section's steps and risks are read in its Overview. A code
+  chip anywhere on the page opens its file here.
+- **Tiles** always show their title. Flows, columns, sequences and tables are
+  drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
+  caption and citations, and lay themselves out by the room they have: lanes
+  wrap and then stack, columns stack, and a sequence becomes a list. A
+  column's label carries its item count and its tone, which tints the items
+  while their titles stay in the primary ink; an item whose title another
+  column lists too is drawn dashed and quieter, with a legend saying so, and
+  an arrow runs from a `muted` column to a `new` or `good` one after it
+  (down while they stack). Columns with `rows` compare states of one thing
+  item by item, as the model paired them: each row lines its items up with
+  arrows between, an item that differs from the one before it has its words
+  that differ highlighted (only where the two are mostly alike) and, when
+  some rows stayed the same, a Changed pill. An item the column before lacks
+  has a New pill. An item the next column lacks has a Removed pill, unless it
+  is already marked. A row the same in every
+  column is drawn quieter, and arrows join only two items.
+  Every row shows; "Show only changes" hides the unchanged ones. While a
+  flow's lanes are rows, lines join its steps, a branch drops from the step
+  it leaves after into its first step (or, when that line would cross
+  another lane or the branch sits left of its step, its label names the
+  step), and a dashed rule sets off a later
+  lane that is a path of its own. A step in the `new` tone has the
+  sequence's New pill and bar, and a legend under the flow explains only the
+  other marks it uses. A wide
+  sequence draws each actor as a lifeline under its name and each message,
+  numbered, as an arrow between two lifelines: dashed for a reply, ending in
+  a cross when it is `bad`; a message an actor sends itself is a loop on its
+  lifeline. A message the pull request adds or changes (`change`, or the
+  `new` tone) has a New or Changed pill and a bar at its row's edge, with a
+  changed message's earlier text (`was`) struck through. A legend under the
+  sequence explains only the marks it uses, apart from the pills, which say
+  what they mean, and when some messages changed
+  and some did not, a "Show only changes" switch fades the rest. A table
+  sets its bold uppercase headers over its first column as row labels;
+  a column whose every cell is a number (`65,535 bytes`, `$2.00`) is
+  right-aligned in tabular figures (a dash or "n/a" among them is allowed),
+  and a column of two to four short values that repeat tints each value
+  with its own data colour (caramel and sage among them on dark paper). A
+  row with a changed cell has the Changed pill and bar on its first cell,
+  with the same "Show only changes" switch, which also unfolds a long
+  table. A code
+  tile (`{hunk, lines, focus}`) draws its excerpt as Files changed draws a
+  hunk (`CodeDiff`): under its file's path, which opens the file in Files
+  changed, with old and new line numbers and the lines it removed among and
+  just before its range. The `focus` lines carry a bar and the
+  rest are dimmed. An excerpt over 14 lines shows 12 (from just above its
+  first focus line, moved down to take in its last when they fit) until
+  "Show all N lines" opens it; the `@@` header gives the ranges drawn. When the index holds
+  no diff for the hunk, the text the host filled stands as unchanged lines.
+  Exhibits draw as the generic tiles do, and library and
+  chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that
+  failed and one that cannot be read say so in its place.
+- **Comments and keys.** `c` comments on the section read (in any of its
+  views), the file open in Code, or the pull request on the Overview; on a tile the keys are on
+  (`j`/`k`), on that tile, placed on the code it cites. `a` asks the session
+  panel about the tile the keys are on, else the pull request. `←`/`→`
+  (and `Shift+J`/`Shift+K`) step through the rail's rows: the
+  Overview, each section, then Files changed, where `→` goes on from file to
+  file, then the viewer's Decisions, Sessions and Commits. On Files changed `j`/`k` (`↓`/`↑`)
+  open the next and previous file in the list as it is grouped (Type, Folder or
+  Feature, following a switch made on the page; a file under several sections
+  is taken at its first place) and do nothing at the first and last file
+  (`ReviewPlaceSteps.item`, `listedFiles` in `places.tsx`); the grouping is one
+  shared choice (`useFileGrouping`, `readFileGrouping` in `file-grouping.ts`).
+  Elsewhere they mark blocks as above. Ctrl+]
+  opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request. The session
+  panel's focus names the tab: on the
+  Overview `tab: overview`; on How it works `tab: sections` and the `section`
+  read (`context` for Where this fits; a risk adds its `item`; a link to a
+  tile names the `tile`), so a tile made or added from chat stands there; on
+  Code `tab: code` and the `file`.
+
+## Tiles on the review page
+
+Tiles are what the model and the person customise on the overview tabs
+(`src/tiles/`, drawn by `ViewTileCard` in `src/review-view/view-tile.tsx`):
+the document's native diagrams and tables, exhibits (code, prose, table and
+diagram source, `src/tiles/builtins/generic.tsx`), library tiles and tiles
+made in chat. Each stands on a section of How it works (or on Where this
+fits), or on the Overview (its main diagram, and the tiles the person added
+there, which is where an added tile citing no section's code goes), and is
+as wide as its section.
+A prose exhibit's text stands on a faint wash behind a left rule, in a card
+or bare in a section's body, so it reads as an exhibit set apart from the
+section's own text (a note block has the rule but no wash); its lists keep
+their bullets and numbers.
+
+- **Custom tiles** (`src/tiles/custom/`) draw in sandboxed frames from the
+  daemon's frame route: the title is the page's, the body is the tile's. A
+  tile is as tall as it draws, inside a faint edge under a "Custom tile"
+  caption, and Tab reaches it. A tile of a built-in library type, whose
+  served definition the daemon marks `builtin: true`, is baum's own: it has
+  no caption or edge, though it draws in the same frame. Its frame is told
+  the size `full`, or the largest its type declares. A citation the tile's
+  reader clicks opens the cited code in Files changed, a risk or section in
+  How it works, or the tile cited where it stands. Citations resolve against
+  the shown version's review (its index, its sections, their risks and
+  evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),
+  never by fetching. Frames follow the app's theme. Until its frame draws,
+  a tile's box shows three faint lines with a passing light band (still
+  under reduced motion) at the height the tile last drew at on that pull
+  request in this browser, else 240px (a tile's first show still moves to
+  its own height once it draws). The last heights of the latest 200 tiles
+  are kept (`baum.tileFrame.heights` in local storage), so a review opened
+  again starts at the right height. A frame that doesn't
+  start, draw or behave says "This tile couldn't load" with Retry; a tile
+  made with a newer kit says so; a desktop shell that has not declared
+  `window.__BAUM_DESKTOP__ = { tileFrames: true }` shows custom tiles as not
+  available yet. These notes have the dashed box a native tile's
+  notes have (`Note`, `src/tiles/parts.tsx`). The protocol, its checks and the states are in
+  `ARCHITECTURE.md` ("The app's host"); what a frame cannot reach is in
+  `SECURITY.md` ("Custom tiles").
+- **Render check** (`src/tiles/custom/check-runner.tsx`). The daemon's render
+  check has the app draw a candidate tile type: the runner claims a job from
+  `api/tile-checks/next`, draws it in invisible sandboxed frames (each
+  sample as a glance at each declared size and a detail at 720 and 360px,
+  the pull request's data in dark too, 8 at a time) and reports what it saw
+  to `api/tile-checks/{id}/result`. The pull request's data has its
+  citations resolved against that version's review and view (`GET
+  api/tiles`). It reads sizes from the layout and from the frame's messages
+  only, never animation frames, ResizeObserver or tight timers, so it works
+  in a hidden window, and tells the daemon it is alive every 2 seconds while
+  it draws (reporting the job abandoned if its page goes away). A frame
+  with no `hello` after 5 seconds is sent a `ping`: one that neither answers
+  within 2 seconds nor finished loading is stuck in its script and is
+  reported as `hang` (Chromium runs the frame apart from the page, so the
+  page's heartbeat would not stop), after which the job draws no more
+  frames; one that answers is `no_hello`. Where the
+  desktop shell declares `window.__BAUM_DESKTOP__.checkWindow`, the main
+  page opens the shell's check window (`open_check_window`, which loads
+  `?page=tile-check`, the runner alone) on a `tile_check` event and closes it
+  (`close_check_window`) when a check hangs or after 2 minutes without one.
+  In a browser and on macOS the runner draws inside the page; a desktop shell
+  without frames draws nothing.
+- **First-show preflight** (`src/tiles/custom/preflight.ts`). Where the check
+  window exists, a custom tile that is not of a built-in type waits (its
+  box's `data-frame-state` reads `checking`) while the daemon draws its data
+  once in that window, unless it already has. A tile that hung there says
+  "This tile stopped responding when it was checked." instead of mounting;
+  every other answer mounts it.
+- **Stored images** (`src/tiles/custom/images.ts`). A tile made in chat
+  holds each image the host stored for it as `baum-image:att_<id>` in its
+  data. Before the frame's `init`, the page reads each from `api/attachments/{id}`
+  (the review page's attachment address) and gives the frame the data with
+  the image as a `data:` URL in its place, the only image a frame's policy
+  admits; the box reads `loading` meanwhile, and an image that cannot be read
+  becomes an empty string. The render check's runner gets its job's data
+  with the images already inlined by the daemon.
+- **A tile's menu** (⋯, or a right click) offers Comment, Ask about this tile,
+  **Save to library…** on a custom tile that is not baum's own (it opens the
+  panel on the pull request about that tile with "Save this tile to my
+  library" typed; the agent proposes the type with `propose_tile_type`), and
+  **Remove** on a tile the person added. An earlier version's tiles and a
+  draft's offer only Ask.
+- **Added tiles.** The panel can add a library tile the review does not show
+  ("add the API changes tile") or make one no library type gives. A view tile
+  the person added carries `added: true`; one whose data is from an earlier
+  version says "From version N" under its title (`from`), with "; filling for
+  this version" while it is filled (`filling`), and one without data yet says
+  "Filling this tile…". Remove sends `POST api/tiles/added {clone, pr, tile,
+  action: "remove"}`, which takes it off every version of the pull request,
+  and shows a toast "Removed <title>" whose **Undo** sends `action:
+  "restore"`, putting it back on the section it stood on. A refusal is a
+  toast saying why.
+- **Tiles made in chat.** The panel's agent starts a pending card
+  (`start_tile`), checks the type it wrote with this pull request's data in
+  the render check (`check_tile`, drawn by this page's runner or the check
+  window) and adds the check that passed (`add_custom_tile`), on the section
+  the person is reading. The tile route's `drafts` (`[{tile, title, section,
+  phase, round?, reason?}]`, the latest version only, read with the document
+  by `parseReviewV2`) are the pending cards, which `src/tiles/pending-card.tsx`
+  draws after the tiles of their section (`context` is Where this fits, which
+  is then listed; a card naming no section, or `overview`, stands on the
+  Overview; a card naming a section the page does not list stands on the
+  first listed): the title, the live dot and a line saying how far it got
+  ("Being made in the session panel · Writing the component", "… · Checking
+  (round 2)", the host's reason after a check that could not run, "Not
+  finished" once the turn ended without the tile), with Remove (`DELETE
+  api/tiles/drafts/{tile}?clone=&pr=`). A desktop shell that mounts no
+  frames adds `frames: "off"` to the pull request page's focus, and the tile
+  making tools refuse there.
+- **Events.** The daemon publishes `added_tiles` (`{pr}`, the pull request's
+  key, `owner/repo#123` lowercased) when the tiles the person added or the
+  pending cards change; the app passes it to the open review page
+  (`src/tiles/added-events.ts`), which reads the versions on screen (and a
+  draft) again, as it does after the event stream reconnects.
+
+### Native diagram gallery
+
+A dev page (`gallery/`, served by `vite.gallery.config.ts`, never part of the
+app's build) draws the review page's native diagrams (flow, columns, sequence,
+table) and code tiles with its own `ViewTileCard`, without opening the app: in a card on the
+overview and in "Where this fits", bare in a section, and a failed, pending or
+unreadable tile as the page shows it. Editing `native-tiles.tsx`, `flow.css`,
+the palette or a sample redraws it in place. From the repository root:
+
+```sh
+just local_app::diagram-gallery [stores-dir]
+```
+
+It serves `http://127.0.0.1:5181` from the `ui-test` service.
+`DIAGRAM_GALLERY_PORT` changes the port and `DIAGRAM_GALLERY_POLLING=1` watches files by polling,
+for a mount that misses file events. The recipe publishes the port on
+127.0.0.1 only; `pnpm gallery` run elsewhere listens on `DIAGRAM_GALLERY_HOST`
+(127.0.0.1 by default). Each diagram shows its title, type,
+origin, placement and the page's verdict (`NATIVE[type].valid`, or the code face's check), with a
+one-line reason when the page cannot draw it. Controls, kept in the address:
+type, source, the section's width at a 1440 window, a 900 window and a 390
+phone (the overview's column is as wide), and light, dark or both side by side.
+The diagrams come from:
+
+- the fixture `src/review-view/fixture-1303.ts` (acme/demo#7) and
+  `gallery/samples.ts`: per type the smallest and the largest the schemas
+  allow, realistic ones and one the page cannot read
+  (`gallery/gallery.test.tsx` checks each against the page's check,
+  composition-2.json and review-2.json), and code tiles on the fixture's
+  hunks (with and without focus lines, a folded one, one the host didn't
+  fill);
+- replay runs under `$BAUM_REPLAY_OUT` or `~/.cache/baum/replay-runs`: each
+  case's `document.json` and `composition.json`;
+- the desktop app's review stores (`<clone>/.git/baum/reviews/versions.sqlite`,
+  or any `versions.sqlite` such as the app's fallback under
+  `~/.local/share/baum/reviews/`) found under the optional `stores-dir`: each
+  pull request's latest version only, its baum.review/2 document or, for an
+  older review, its composition;
+- loose JSON in `oss/app/gallery-data/` (a review, a composition, one diagram
+  or an array of them), which git ignores.
+
+A baum.review/2 document is read with the page's own `parseReviewV2` and cited
+against itself; a composition's or a sample's diagram is drawn without its
+citations, which name another review's hunks. The page asks the server
+(`GET /api/diagrams`) again every two seconds, so a new run or review version
+appears without a reload; a document it cannot parse is listed as a problem,
+and when the server does not answer, it says so and still draws the built-in
+diagrams.
+
 ## Your review
 
-Without the walkthrough, a reader reviews from the PR page and Up next
+A reader reviews from the PR page and Up next
 (`src/pending-review.tsx`, `src/pending-review-model.ts`). **Approve** is one
 button with an arrow, as Snooze is (`ReviewButton`; `v` presses it): it opens
 a menu of Approve, Comment and Request changes, and each opens `ReviewDialog`
@@ -2396,7 +3415,10 @@ draft and the page reloads.
 On the PR page, `c` comments on the item being read (`commentTarget`): the
 selected section or risk, placed on the first line its anchors cite (else the
 section's first hunk), a changed file, on its first hunk, or else the pull
-request as a whole. It opens the side pane's **Comments** tab (the viewer's
+request as a whole. On the overview tabs a comment on a tile (the keys on it,
+or its menu's Comment) is a `tile` target, placed on the first line it cites
+(a custom tile's hunk citations, else its data's `source`) or, citing no
+code, put in the review's body under its title. It opens the side pane's **Comments** tab (the viewer's
 `comments` slot) with a box for the comment, saved with ⌘↵ and put away with
 Esc. The tab lists the comments in the order written, each with its item and
 place; its ⋯ (or a right click) edits or deletes one, and the tab ends with
@@ -2411,23 +3433,30 @@ pull request's current head: a comment goes on its line only when it was
 placed on that head; the others, and general comments, go in the body under
 the summary with their item's title and place.
 
+Sending posts `POST api/prs/review` with `{repository, pr, head_sha, event,
+body, comments}`: `head_sha` is the head the review is sent on and each comment
+`{path, line, side, start_line?, body}` sits on its line. The daemon sends it
+once and maps refusals to `{code, message}` (`forbidden` 403, `not_found` 404,
+`own_pull_request` and `invalid_line` 422, `failed` 502); on `invalid_line` the
+dialog offers to resend with every comment in the body. A sent review clears
+the draft and links to it on GitHub.
+
 ## Durable reading state
 
 `GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared
 record, time snoozes and head-based snoozes. `GET` and
-`PUT api/ui-state/walkthrough?key=<repository>#<PR>@v<version>` store seen stops,
-per-stop draft comments and the overall comment, and
-`api/ui-state/review?key=<repository>#<PR>` the comments and summary of the
-reader's review until it is sent. The key is URL encoded;
+`PUT api/ui-state/review?key=<repository>#<PR>` store the comments and summary
+of the reader's review until it is sent. The key is URL encoded;
 `src/api.ts` keeps these routes under the authenticated session namespace.
 The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
 
 Each record has its own revision. The window shares a hydrated record across
-the walkthrough and Ask panel, queues changes while a read or save is in
-flight, and rebases semantic changes on a conflict. A stable client/sequence
-mutation ID makes a retry safe even when a save committed but its response was lost. An Ask
-answer appends to the current draft; Undo removes only its suffix while no
-later text follows it. Neither operation sends the draft to GitHub.
+its views, queues changes while a read or save is in flight, and
+rebases semantic changes on a conflict. A stable client/sequence mutation ID
+makes a retry safe even when a save committed but its response was lost. A
+comment the session panel's agent proposes for the pending review is added by
+the daemon when the person saves the proposal, and the panel reads the record
+again. Neither sends anything to GitHub.
 
 Sidebar folding and viewer panel/tab layout remain presentation preferences
 in browser storage. Durable inbox records and review drafts do not use or
@@ -2500,9 +3529,11 @@ sidebar order, stopping at the first and the last. Typing fields and dialogs kee
 Ctrl+K always opens Go to.
 Enter is drawn as ↵ in button shortcut hints.
 
-On PR and stack review pages, `]` toggles the right-hand Details/Activity
-sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
-Opening it with `]` gives it the keys: `h` and `l` then step through Details,
+On PR and group review pages, Ctrl+] (`sidePaneKey`) toggles the right-hand
+Details/Activity sidebar, or its sheet on narrow windows; `]` by itself folds
+and opens the code beside a wide section's Overview, and `[` folds and opens
+the rail of sections on the left (its sheet on narrow windows). All are
+listed in the review shortcut hints. Opening the sidebar with Ctrl+] gives it the keys: `h` and `l` then step through Details,
 Activity and Comments, until Esc (or a click in the review) gives them back.
 
 The page shortcut bar labels Shift+J/K as sections and lists only page actions;

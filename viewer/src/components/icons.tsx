@@ -51,6 +51,15 @@ export function FilterIcon(props: IconProps) {
   );
 }
 
+/** Lines shortening beside a down arrow, for a sort. */
+export function SortIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 4h6.5M2.5 8h4.5M2.5 12h2.5M12 3v10M9.75 10.75 12 13l2.25-2.25" />
+    </Icon>
+  );
+}
+
 export function ChevronDownIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -136,6 +145,15 @@ export function ExternalLinkIcon(props: IconProps) {
       <path d="M8.5 3.5H3.5v9h9v-5" />
       <path d="M10 2.5h3.5V6" />
       <path d="M13.5 2.5 8 8" />
+    </Icon>
+  );
+}
+
+/** Four corners pointing out: fit to the screen. */
+export function FitScreenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
     </Icon>
   );
 }

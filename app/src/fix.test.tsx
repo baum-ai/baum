@@ -289,31 +289,15 @@ it("says why a fix changed nothing, in the agent's words, not as a failure", asy
   expect(node.querySelector(".local-fix-details p")!.textContent).toBe("Nothing to fix.");
 });
 
-it("starts a fix made from a conversation, sending only its ids", async () => {
-  await startFix("clone", 8, undefined, { conversation_id: "c1", turn: 2 });
+it("starts a fix of the pull request alone, never from a conversation", async () => {
+  await startFix("clone", 8);
   expect(requests[0]).toEqual({
     path: "/s/test-ns/api/jobs",
-    body: {
-      items: [{ clone: "clone", pr: 8, kind: "fix", fix_chat: { conversation_id: "c1", turn: 2 } }],
-      mode: "single",
-    },
+    body: { items: [{ clone: "clone", pr: 8, kind: "fix" }], mode: "single" },
   });
 });
 
-it("reports why a conversation cannot be fixed from", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify({ blocked_reason: "chat_unavailable" }), { status: 409 }),
-    ),
-  );
-  await expect(
-    startFix("clone", 8, undefined, { conversation_id: "c1", turn: 1 }),
-  ).rejects.toMatchObject({ code: "chat_unavailable" });
-});
-
-it("names a fix from a conversation and offers it whenever a fix may run", () => {
+it("names an earlier fix from a conversation and offers a fix whenever one may run", () => {
   expect(fixName({ chat: "c1" })).toBe("Fix from this answer");
   // It is never combined with the other fixes.
   expect(fixName({ checks: true, chat: "c1" })).toBe("Fix from this answer");

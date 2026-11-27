@@ -168,6 +168,14 @@ func TestUnpackAttachmentsRejectsAnythingButTheListedImages(t *testing.T) {
 	if err := UnpackAttachments(context.Background(), "", t.TempDir(), nil, 1024); err != nil {
 		t.Fatalf("a run without images failed: %v", err)
 	}
+	// A listed clip may exceed the image byte limit.
+	clip, clipListed := attachmentArchive(t, map[string][]byte{strings.TrimSuffix(testAttachmentA, ".png") + ".mp4": []byte("a clip over the image limit")})
+	clipListed[0].ContentType = "video/mp4"
+	clipDir := t.TempDir()
+	t.Cleanup(func() { removeTree(clipDir) })
+	if err := UnpackAttachments(context.Background(), write(t, clip), clipDir, clipListed, 4); err != nil {
+		t.Fatalf("listed clip refused: %v", err)
+	}
 	// entry archives one header per content, in order.
 	entry := func(header tar.Header, contents ...string) []byte {
 		var out bytes.Buffer
@@ -207,5 +215,117 @@ func TestUnpackAttachmentsRejectsAnythingButTheListedImages(t *testing.T) {
 				t.Fatal("accepted an archive that does not hold exactly the listed images")
 			}
 		})
+	}
+}
+
+// The fixtures are tiny ffmpeg clips; the MP4's movie box follows its data.
+func TestSniffMediaReadsClipSizes(t *testing.T) {
+	read := func(name string) []byte {
+		content, err := os.ReadFile(filepath.Join("testdata", "video", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return content
+	}
+	for name, tc := range map[string]struct {
+		content       []byte
+		video         bool
+		contentType   string
+		width, height int
+	}{
+		"mp4":              {read("clip.mp4"), true, "video/mp4", 32, 18},
+		"webm":             {read("clip.webm"), true, "video/webm", 40, 24},
+		"mp4 as image":     {read("clip.mp4"), false, "", 0, 0},
+		"mp4 with no moov": {read("clip.mp4")[:32], true, "video/mp4", 0, 0},
+	} {
+		contentType, width, height, ok := SniffMedia(tc.content, tc.video)
+		if contentType != tc.contentType || width != tc.width || height != tc.height || ok != (tc.width > 0) {
+			t.Errorf("%s: sniffed %q %dx%d %v, want %q %dx%d", name, contentType, width, height, ok, tc.contentType, tc.width, tc.height)
+		}
+	}
+}
+
+// GitHub renders an uploaded clip as a video element; only RenderedMedia
+// lists it.
+func TestRenderedMediaListsUploadedClips(t *testing.T) {
+	uploads := MarkdownUploads(markdownAsset(uploadBefore))
+	body := `<video src="` + signedSource(uploadBefore) + `" data-canonical-src="` + signedSource(uploadBefore) + `" controls></video>`
+	if images := RenderedImages(body, uploads); len(images) != 0 {
+		t.Fatalf("RenderedImages listed clips: %+v", images)
+	}
+	clips := RenderedMedia(body, uploads)
+	if len(clips) != 1 || !clips[0].Video || clips[0].SourceURL != markdownAsset(uploadBefore) || clips[0].FetchURL != signedSource(uploadBefore) || clips[0].State != "" {
+		t.Fatalf("clips = %+v", clips)
+	}
+}
+
+// Sniffing walks a clip's elements without collecting them, so a clip made
+// of many empty track entries costs no memory in proportion.
+func TestSniffMediaDoesNotCollectElements(t *testing.T) {
+	webm := append([]byte{0x1a, 0x45, 0xdf, 0xa3, 0x87, 0x42, 0x82, 0x84}, "webm"...)
+	webm = append(webm, 0x18, 0x53, 0x80, 0x67, 0xff, 0x16, 0x54, 0xae, 0x6b, 0xff)
+	webm = append(webm, bytes.Repeat([]byte{0xae, 0x80}, 1<<20)...)
+	if allocs := testing.AllocsPerRun(1, func() { SniffMedia(webm, true) }); allocs > 20 {
+		t.Fatalf("%v allocations sniffing empty track entries", allocs)
+	}
+}
+
+func TestContextAroundKeepsTheCaptionsAroundMedia(t *testing.T) {
+	light, dark := markdownAsset(uploadBefore), markdownAsset(uploadAfter)
+	body := "## Tests\nAll green.\n\n### Video\n<!-- template -->\nFocus lines in a folded excerpt (light, dark):\n\nLight:\n\n" + light +
+		"\n\nDark:\n\n" + dark + "\n\n```\n" + "not prose\n```\nSee above.\n## Notes\nunrelated"
+	if got, want := contextAround(body, light), "Focus lines in a folded excerpt (light, dark):\nLight:\n[this]\nDark:\n[media]\nSee above."; got != want {
+		t.Errorf("light context = %q, want %q", got, want)
+	}
+	if got, want := contextAround(body, dark), "Focus lines in a folded excerpt (light, dark):\nLight:\n[media]\nDark:\n[this]\nSee above."; got != want {
+		t.Errorf("dark context = %q, want %q", got, want)
+	}
+	table := "| Before | After |\n| --- | --- |\n| ![old](" + light + ") | <img alt=\"new\" src=\"" + dark + "\"> |"
+	if got, want := contextAround(table, dark), "| Before | After |\n| --- | --- |\n| [media] | [this] |"; got != want {
+		t.Errorf("table context = %q, want %q", got, want)
+	}
+	long := strings.Repeat("word ", 100) + "\n" + light
+	if got := contextAround(long, light); len(got) > contextSideBytes+len("…\n[this]") || !strings.HasPrefix(got, "…") {
+		t.Errorf("long context = %q", got)
+	}
+	if got := contextAround("<!-- "+light+" -->", light); got != "" {
+		t.Errorf("commented-out context = %q, want empty", got)
+	}
+}
+
+func TestContextAroundKeepsTagsAndTokensWhole(t *testing.T) {
+	clip := markdownAsset(uploadBefore)
+	body := "Demo:\n<video controls>\n  <source src=\"" + clip + "\" type=\"video/mp4\">\n</video>\nIt retries."
+	if got, want := contextAround(body, clip), "Demo:\n[this]\nIt retries."; got != want {
+		t.Errorf("source tag context = %q, want %q", got, want)
+	}
+	token := "ghp_" + strings.Repeat("a", 36)
+	long := token + " " + strings.Repeat("x", 150) + "\n" + clip
+	if got := contextAround(long, clip); strings.Contains(got, "aaaa") {
+		t.Errorf("a cut token reached the context: %q", got)
+	}
+	line := strings.Repeat("lead ", 40) + "![x](" + clip + ") " + strings.Repeat("tail ", 40)
+	if got := contextAround(line, clip); !strings.Contains(got, "[this]") || len(got) > 2*contextLineBytes+len("…[this]…") {
+		t.Errorf("own line context = %q", got)
+	}
+	linked := "See [this](https://example.com) first, " + strings.Repeat("pad ", 30) + "<a href=\"" + clip + "\"><img src=\"" + clip + "\"></a><br>done"
+	if got := contextAround(linked, clip); strings.Count(got, "[this]") != 1 || !strings.HasSuffix(got, "pad [this] done") {
+		t.Errorf("linked image context = %q", got)
+	}
+}
+
+func TestRedactBuildsContextFromTheMaskedBody(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := markdownAsset(uploadBefore)
+	token := "ghp_" + strings.Repeat("Ab1", 12)
+	b := &Bundle{PullRequest: PullRequest{Body: "Token: " + token + " pad ![x](" + source + ")"}, Attachments: []Attachment{{ID: "att_a", SourceURL: source}}}
+	if err := Redact(context.Background(), b, redactor); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Attachments[0].Context; !strings.Contains(got, "[this]") || strings.Contains(got, "Ab1") {
+		t.Errorf("context = %q, want the masked body around [this]", got)
 	}
 }

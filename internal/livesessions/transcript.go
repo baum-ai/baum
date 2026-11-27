@@ -670,3 +670,82 @@ func cursorRevision(store, id string, recordOnly bool) (string, error) {
 	}
 	return db.Revision(id)
 }
+
+// resumeQuiet is how long a session's transcript must have gone unwritten
+// before a session the tracker does not list as running can be resumed.
+const resumeQuiet = time.Minute
+
+// SessionDirectory is the directory the agent's session id worked in, as its
+// transcript recorded it near its start, so the session can be resumed
+// there. Only Claude Code and Codex sessions can be. An error is an
+// *Unavailable.
+func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
+	path := ""
+	if t.Tracker != nil {
+		if session, tracked, ok := t.Tracker.Lookup(agent, id); ok {
+			if session.State != StateEnded {
+				return "", unavailable("The session is still running. Continue it where it runs.")
+			}
+			path = tracked
+		}
+	}
+	if agent != AgentClaudeCode && agent != AgentCodex {
+		return "", unavailable("Only Claude Code and Codex sessions can be continued.")
+	}
+	loc, err := Locate(t.home(), "", agent, id, path)
+	if err != nil {
+		return "", err
+	}
+	if t.claudeRunning(agent, id) {
+		return "", unavailable(RunningElsewhere)
+	}
+	// One the tracker missed may still be running: its agent is writing it.
+	if info, err := os.Stat(loc.main); err == nil && t.now().Sub(info.ModTime()) < resumeQuiet {
+		return "", unavailable("The session was active moments ago. Continue it where it runs, or try again once it has ended.")
+	}
+	var dir string
+	if agent == AgentClaudeCode {
+		dir, err = claudecode.SessionWorkingDir(loc.main)
+	} else {
+		dir, _, err = codex.SessionWorkingDir(loc.main)
+	}
+	if err != nil || dir == "" {
+		return "", unavailable("The session's transcript does not say where it worked.")
+	}
+	return dir, nil
+}
+
+// RunningElsewhere is why a session a process runs, such as one in the
+// person's terminal, is not continued in the panel.
+const RunningElsewhere = "The session is running in a terminal. Continue it there, or exit it and try again in a minute."
+
+// Running is whether something other than a finished panel turn runs the
+// agent's session id now: the tracker lists it as not ended with activity
+// after since (when the panel's last turn ended; a turn's own events come
+// before), or, for Claude Code, a process is registered with its id
+// (FindClaude), whether or not its hooks reached the tracker. Claude Code
+// keeps that entry current when a session switches with /resume. Codex ends
+// a terminal's session (its SessionEnd hook) once its app server unloads it,
+// within a minute of the terminal exiting, and a `codex exec` turn's as it
+// finishes.
+func (t *Transcripts) Running(agent, id string, since time.Time) bool {
+	if t.Tracker != nil {
+		// To the millisecond, as since is stored: a turn's last event falls
+		// in the millisecond it ended in.
+		if session, _, ok := t.Tracker.Lookup(agent, id); ok && session.State != StateEnded &&
+			session.LastActivityAt.Truncate(time.Millisecond).After(since) {
+			return true
+		}
+	}
+	return t.claudeRunning(agent, id)
+}
+
+// claudeRunning is whether a Claude Code process is registered with the
+// session id.
+func (t *Transcripts) claudeRunning(agent, id string) bool {
+	if agent != AgentClaudeCode {
+		return false
+	}
+	_, err := FindClaude(t.home(), id)
+	return err == nil
+}

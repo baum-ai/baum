@@ -232,6 +232,10 @@ it("moves through the features with the list keys and opens one", async () => {
   expect(focusedFeature()).toBe("F0");
   await key("k");
   expect(focusedFeature()).toBe("F1");
+  await key("G");
+  expect(focusedFeature()).toBe("F0");
+  await key("g");
+  expect(focusedFeature()).toBe("F1");
   expect(node.querySelector("[data-focused]")?.getAttribute("data-row-id")).toBe("F1");
   await key("o");
   await act(async () => {});
@@ -979,6 +983,11 @@ it("names a feature build's reasons in its own words, and others' as before", ()
   );
   expect(jobReasonText("interrupted")).toBe("The run stopped before it finished.");
   expect(jobReasonText("daily_cap")).toBe("It stopped before it started.");
+});
+
+it("tells how to allow workflow changes, and what a refused workflow push needs", () => {
+  expect(jobReasonText("workflow_changed")).toContain("Reconnect with workflow access in Settings");
+  expect(jobReasonText("workflow_scope")).toContain("gh auth refresh -s workflow");
 });
 
 it("keeps the build state shown when a read of it fails", async () => {

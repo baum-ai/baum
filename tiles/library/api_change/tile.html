@@ -1,0 +1,365 @@
+<style>
+  /* A list row of two lines: its lines take the row's width, so a long
+     name or chip wraps or truncates within it. */
+  .kit-list > li.kit-stack {
+    align-items: stretch;
+  }
+  .glance-rows {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .glance-rows > li {
+    align-items: center;
+  }
+  .glance-rows.across {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-8);
+  }
+  /* The glance's pills share one width, so the kinds after them line up. */
+  .lead {
+    flex: none;
+    width: 5.5rem;
+  }
+  .kind {
+    flex: none;
+    min-width: 3.75rem;
+    justify-content: center;
+  }
+  /* A path keeps its end, where paths differ: cut from the start. */
+  .tail {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+    min-width: 0;
+  }
+  .tail > span {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+  /* A tag whose text comes from data keeps to the width it has. */
+  .clip {
+    display: inline-block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .kit-table .ident {
+    white-space: nowrap;
+  }
+  .pills {
+    display: flex;
+    margin-bottom: var(--space-1);
+  }
+  .required {
+    display: block;
+  }
+  .kit-table .code {
+    min-width: 9rem;
+    overflow-wrap: break-word;
+  }
+  /* With "Show only changes" on, the last row left shown ends the table. */
+  .kit-table tbody tr:not([hidden]):not(:has(~ tr:not([hidden]))) > td {
+    border-bottom: 0;
+  }
+  /* On a phone the columns share what there is and wrap, and the glance
+     lists its rows in one column so a name keeps its room. */
+  @media (max-width: 480px) {
+    .glance-rows.across {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .kit-table .code {
+      min-width: 0;
+    }
+  }
+</style>
+<script>
+  // What a change is, as the review's diagrams mark it: a pill's words and tone.
+  const PILL = {
+    added: ["New", "info"],
+    changed: ["Changed", "caution"],
+    deprecated: ["Deprecated", "caution"],
+    removed: ["Removed", "critical"],
+  };
+  const BREAKING = ["Breaking", "critical"];
+  const pill = ([label, tone]) => baum.html`<span class="kit-pill" data-tone=${tone}>${label}</span>`;
+  const ORDER = { removed: 0, changed: 1, deprecated: 2, added: 3 };
+  const SURFACE = {
+    http: "HTTP",
+    rpc: "RPC",
+    graphql: "GraphQL",
+    tool: "Tool",
+    cli: "CLI",
+    library: "Export",
+    event: "Event",
+    schema: "Schema",
+    other: "Other",
+  };
+  const NOUN = {
+    http: ["route", "routes"],
+    rpc: ["method", "methods"],
+    graphql: ["field", "fields"],
+    tool: ["tool", "tools"],
+    cli: ["command", "commands"],
+    library: ["export", "exports"],
+    event: ["event", "events"],
+    schema: ["schema", "schemas"],
+    other: ["entry point", "entry points"],
+  };
+
+  const plural = (count, one, many) => `${count} ${count === 1 ? one : many || `${one}s`}`;
+
+  function sorted(endpoints) {
+    return [...endpoints].sort(
+      (a, b) => Number(b.breaking) - Number(a.breaking) || ORDER[a.change] - ORDER[b.change] || a.name.localeCompare(b.name),
+    );
+  }
+
+  /** "3 routes · 2 tools" when the kinds differ, else one noun. */
+  function noun(endpoints) {
+    const kinds = [...new Set(endpoints.map((e) => e.surface))];
+    if (kinds.length === 1) {
+      const [one, many] = NOUN[kinds[0]];
+      return plural(endpoints.length, one, many);
+    }
+    return plural(endpoints.length, "entry point");
+  }
+
+  function changes(endpoints) {
+    const parts = [];
+    for (const change of ["added", "changed", "deprecated", "removed"]) {
+      const count = endpoints.filter((e) => e.change === change).length;
+      if (count) parts.push(`${count} ${change}`);
+    }
+    return parts.join(" · ");
+  }
+
+  /** The lead: the count in bold, the kinds of change after it. */
+  function lede(endpoints) {
+    return baum.html`<span class="kit-clamp-2 kit-grow">
+      <span class="kit-lede">${noun(endpoints)}</span>
+      <span class="kit-muted"> · ${changes(endpoints)}</span>
+    </span>`;
+  }
+
+  const kind = (e) => e.method ?? SURFACE[e.surface];
+
+  function path(name) {
+    return baum.html`<span class="kit-mono tail kit-grow" title=${name}><span>${name}</span></span>`;
+  }
+
+  function glanceRow(e) {
+    return baum.html`<li>
+      <span class="lead">${pill(e.breaking ? BREAKING : PILL[e.change])}</span>
+      <span class="kit-tag kit-mono kind">${kind(e)}</span>
+      ${path(e.name)}
+    </li>`;
+  }
+
+  function callers(data) {
+    const facts = [];
+    const stale = data.consumers.filter((c) => c.updated === false).length;
+    const updated = data.consumers.filter((c) => c.updated === true).length;
+    if (stale) facts.push(`${plural(stale, "caller")} not updated`);
+    if (updated) facts.push(`${plural(updated, "caller")} updated`);
+    if (data.docs && data.docs.updated === true) facts.push("docs updated");
+    if (data.docs && data.docs.updated === false) facts.push("docs not updated");
+    return facts;
+  }
+
+
+  /** Takes rows off the end of a glance's list until it fits its box, as
+   *  the lead may wrap to two lines, and says how many are left out. */
+  function fit(list, more, left) {
+    const rows = [...list.children];
+    let cut = left;
+    const show = () => {
+      more.textContent = `${cut} more`;
+      more.hidden = cut === 0;
+    };
+    show();
+    for (let pass = 0; pass < 2; pass++) {
+      while (rows.length > 1 && list.scrollHeight > list.clientHeight + 1) {
+        rows.pop().remove();
+        cut++;
+      }
+      show();
+    }
+  }
+
+  function glance({ data, size }) {
+    if (data.endpoints.length === 0) return baum.empty("No interface changes.");
+    const endpoints = sorted(data.endpoints);
+    const breaking = endpoints.filter((e) => e.breaking).length;
+    // As many rows as could fit; fit takes off what the box cannot hold.
+    const room = size === "third" ? 4 : 6;
+    const rows = endpoints.slice(0, room).map(glanceRow);
+    const node = baum.html`<div class="kit-glance">
+      <div class="kit-row" data-wrap="no" data-align="start">
+        ${lede(endpoints)}
+        ${breaking ? pill([`${breaking} breaking`, "critical"]) : null}
+      </div>
+      <ul class=${["kit-list", "glance-rows", size === "full" ? "across" : null]} data-gap="1">
+        ${rows}
+      </ul>
+      <p class="kit-foot">${callers(data).map((fact) => baum.html`<span>${fact}</span>`)}<span class="more" hidden></span></p>
+    </div>`;
+    const ul = node.querySelector(".glance-rows");
+    const more = node.querySelector(".more");
+    requestAnimationFrame(() => fit(ul, more, endpoints.length - rows.length));
+    return node;
+  }
+
+  function cites(list) {
+    if (!list || list.length === 0) return null;
+    return baum.html`<span class="kit-row" data-gap="1">${list.map((citation) => baum.cite(citation))}</span>`;
+  }
+
+  const REQUIRED = { true: "required", false: "optional" };
+
+  /** A field's row: what changed on a pill over its name, its type before
+   *  and after with the words that differ marked. A field listed only
+   *  beside the changes, with its type as it was, is drawn quieter and
+   *  marked so "Show only changes" can hide it. */
+  function fieldRow(row, added) {
+    const required = REQUIRED[row.required] ? baum.html`<span class="kit-small kit-subtle required">${REQUIRED[row.required]}</span>` : null;
+    if (added) {
+      return baum.html`<tr>
+        <td class="ident"><span class="kit-mono">${row.field}</span>${required}</td>
+        <td class="kit-mono code">${row.after ?? row.before ?? "—"}</td>
+      </tr>`;
+    }
+    const words = baum.compare(row.before ?? "", row.after ?? "");
+    // Only a field listed as unchanged is drawn quieter, and only when its
+    // type is: one marked changed may have changed what the type does not
+    // show (whether it is required). One listed as unchanged whose type
+    // differs is drawn as the change it is.
+    const same = row.change === "unchanged" && row.before !== null && row.after !== null && words.same;
+    const change = row.change === "unchanged" ? "changed" : row.change;
+    return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>
+      <td class="ident">
+        ${same ? null : baum.html`<span class="pills">${pill(PILL[change])}</span>`}
+        <span class="kit-mono">${row.field}</span>${required}
+      </td>
+      <td class="kit-mono code">${row.before === null ? "—" : words.was}</td>
+      <td class="kit-mono code">${row.after === null ? "—" : words.now}</td>
+    </tr>`;
+  }
+
+  function fieldTable(title, rows, added) {
+    if (rows.length === 0) return null;
+    return baum.html`<div class="kit-scroll">
+      <table class="kit-table">
+        <thead>
+          <tr>${added ? baum.html`<th>${title}</th><th>Type</th>` : baum.html`<th>${title}</th><th>Before</th><th>After</th>`}</tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => fieldRow(row, added))}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  /** "Show only changes": a switch that hides the rows marked the same,
+   *  and a table of nothing else, offered when some rows are and some are
+   *  not. */
+  function onlyChanges(node) {
+    if (!node.querySelector("tr[data-same]") || !node.querySelector("tbody > tr:not([data-same])")) return;
+    const rows = [...node.querySelectorAll("tr[data-same]")];
+    for (const table of node.querySelectorAll(".kit-scroll")) {
+      if (!table.querySelector("tbody > tr:not([data-same])")) rows.push(table);
+    }
+    const control = baum.html`<label class="kit-switch"><input type="checkbox" role="switch">Show only changes</label>`;
+    const input = control.querySelector("input");
+    input.addEventListener("change", () => {
+      for (const row of rows) row.hidden = input.checked;
+    });
+    node.querySelector(".switch-slot").append(control);
+  }
+
+  function errorList(errors) {
+    if (errors.length === 0) return null;
+    return baum.html`<ul class="kit-list" data-gap="1">
+      ${errors.map(
+        (error) => baum.html`<li>
+          ${pill(PILL[error.change])}
+          <span class="kit-tag kit-mono clip" title=${error.code}>${error.code}</span>
+          <span class="kit-muted kit-grow">${error.meaning ?? ""}</span>
+        </li>`,
+      )}
+    </ul>`;
+  }
+
+  function endpointCard(e) {
+    const added = e.change === "added";
+    return baum.html`<article class="kit-card kit-stack" data-tone=${e.breaking ? "critical" : null}>
+      <div class="kit-row">
+        <span class="kit-tag kit-mono">${kind(e)}</span>
+        <span class="kit-mono kit-strong kit-break kit-grow">${e.name}</span>
+        ${pill(PILL[e.change])}
+        ${e.breaking ? pill(BREAKING) : null}
+      </div>
+      ${e.breaking_reason ? baum.html`<div class="kit-callout" data-tone="critical">${baum.md(e.breaking_reason, { inline: true })}</div>` : null}
+      ${e.auth ? baum.html`<dl class="kit-facts kit-small"><dt>Auth</dt><dd>${e.auth}</dd></dl>` : null}
+      ${fieldTable("Request", e.request, added)}
+      ${fieldTable("Response", e.response, added)}
+      ${errorList(e.errors)}
+      ${cites(e.cites)}
+      <details class="kit-details">
+        <summary>Code</summary>
+        ${baum.diff(e.cites[0], { maxLines: 14 })}
+      </details>
+    </article>`;
+  }
+
+  function section(title, content) {
+    return baum.html`<section class="kit-section"><h2 class="kit-heading">${title}</h2>${content}</section>`;
+  }
+
+  function callerList(data) {
+    const rows = data.consumers.map((c) => ({ label: c.label, updated: c.updated, cites: c.cites, mono: true }));
+    if (data.docs) rows.push({ label: "Documentation", updated: data.docs.updated, cites: data.docs.cites, mono: false });
+    if (rows.length === 0) return null;
+    rows.sort((a, b) => Number(a.updated !== false) - Number(b.updated !== false));
+    return section(
+      "Callers and docs",
+      baum.html`<ul class="kit-list" data-divided>
+        ${rows.map(
+          (row) => baum.html`<li class="kit-stack" data-gap="1">
+            <div class="kit-row" data-wrap="no" data-align="baseline">
+              <span class="kit-dot" data-tone=${row.updated === true ? "positive" : row.updated === false ? "caution" : "neutral"}></span>
+              <span class=${["kit-break", "kit-grow", row.mono ? "kit-mono" : null]}>${row.label}</span>
+              <span class="kit-small kit-subtle kit-natural">${row.updated === true ? "updated" : row.updated === false ? "needs to change" : "unknown"}</span>
+            </div>
+            ${cites(row.cites)}
+          </li>`,
+        )}
+      </ul>`,
+    );
+  }
+
+  function detail({ data }) {
+    if (data.endpoints.length === 0) return baum.empty("No interface changes in this pull request.");
+    const endpoints = sorted(data.endpoints);
+    const breaking = endpoints.filter((e) => e.breaking);
+    const node = baum.html`<div class="kit-stack" data-gap="6">
+      <div class="kit-row">
+        ${lede(endpoints)}
+        ${breaking.length ? pill([`${breaking.length} breaking`, "critical"]) : null}
+        <span class="switch-slot"></span>
+      </div>
+      ${data.related && data.related.length
+        ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
+        : null}
+      ${section("Entry points", baum.html`<div class="kit-stack">${endpoints.map((e) => endpointCard(e))}</div>`)}
+      ${callerList(data)}
+    </div>`;
+    onlyChanges(node);
+    return node;
+  }
+
+  baum.tile({ glance, detail });
+</script>

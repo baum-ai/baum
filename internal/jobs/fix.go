@@ -14,12 +14,14 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 // mergeableRetry is how long prepareFix waits before reading a pull request
@@ -60,7 +62,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	cfg, e := l.resolveFix(ctx)
+	cfg, _, e := l.resolveFix(ctx)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -193,7 +195,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolveFix(ctx)
+	cfg, network, e := l.resolveFix(ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -208,6 +210,11 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		ctx, cancel = manager.IdentityContext(ctx)
 		defer cancel()
 	}
+	var connection connectionStatus
+	if manager != nil {
+		connection = manager
+	}
+	workflows := workflowAccess(ctx, connection)
 	if e := l.confirmed(ctx, p); e != nil {
 		return nil, e
 	}
@@ -292,10 +299,11 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		return nil, fmt.Errorf("resolving the prompts: %w", e)
 	}
 	list := pricing.Active()
-	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
+	fixID := id()
+	out, err := fix.Run(ctx, fix.Options{ID: fixID, Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
 		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: selected.Backend.Name(), Model: selected.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript, Prompts: overrides, Logger: jobLogger(ctx, l.Log, p),
+		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Network: network, AllowWorkflows: workflows, Transcript: transcript, Prompts: overrides, Logger: jobLogger(ctx, l.Log, p),
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
 	var cost *float64
@@ -326,9 +334,60 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	}
 	report.Threads = out.Threads
 	if out.Commit != "" {
+		l.recordFixCommit(repository, out, selected.Backend.Name(), fixID)
 		report.Commit = out.Commit
 		report.CommitURL = "https://" + repository.Host + "/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name) + "/commit/" + out.Commit
 	}
 	progress(report)
 	return cost, err
+}
+
+// fixVendors are the session stores of the backends that fix.
+var fixVendors = map[string]vendors.Slug{agent.BackendClaude: vendors.ClaudeCode, agent.BackendCodex: vendors.Codex}
+
+// recordFixCommit records the commit a fix pushed as made by its agent's
+// session, as a Git hook records an agent's own commit, so the pull request
+// links the session to it (locallink's commit_ref). baum made the commit, so
+// no hook saw the agent among its ancestors. A run that reported no session,
+// or a failed write, leaves the commit unlinked: it is logged, and the fix
+// stands.
+func (l *Local) recordFixCommit(repository github.Repository, out fix.Outcome, backend, fixID string) {
+	vendor, ok := fixVendors[backend]
+	if l.Attributions == nil || out.Agent == nil || out.Agent.SessionID == "" || !ok {
+		return
+	}
+	err := l.Attributions.Record([]commitattribution.Observation{{
+		Repository: repository.String(), CommitSHA: out.Commit, Agent: vendor.String(), SessionID: out.Agent.SessionID,
+		Kind: commitattribution.Commit, EventID: "fix:" + fixID, At: time.Now(),
+	}})
+	if err != nil && l.Log != nil {
+		l.Log.Warn("the fix's commit is not linked to its agent's session", "error", err)
+	}
+}
+
+// connectionStatus is the saved GitHub connection's status
+// (githubauth.Manager).
+type connectionStatus interface {
+	Status(context.Context) (githubauth.Status, error)
+}
+
+// workflowAccess reports whether a fix may push workflow and action changes
+// whatever was in its prompt (fix.Options.AllowWorkflows): unless the saved
+// GitHub connection the fix reads GitHub with is known to lack workflow
+// access. Without a saved connection (an explicit token, whose scopes are
+// unknown) they are allowed; a status it cannot read refuses them.
+func workflowAccess(ctx context.Context, connection connectionStatus) bool {
+	if connection == nil {
+		return true
+	}
+	status, err := connection.Status(ctx)
+	if err != nil {
+		// The saved connection is there but unreadable: refuse rather than
+		// take its access for unknown.
+		return false
+	}
+	if status.State != "connected" {
+		return true
+	}
+	return status.Workflow
 }

@@ -31,7 +31,7 @@ func (s *Server) pullTools() []Tool {
 		Call:        callPullRequest,
 	}, {
 		Name:        "diff",
-		Description: "The pull request's changed files (path, change, lines added and deleted, hunks) and their patches: the patch of the file named by path, or of every file up to a limit. Read from the saved review when there is one, else from the facts the app shows before a review.",
+		Description: "The pull request's changed files (path, change, lines added and deleted, hunks, and each hunk's id with its lines in the new file, which a tile's data cites) and their patches: the patch of the file named by path, or of every file up to a limit. Read from the saved review when there is one, else from the facts the app shows before a review.",
 		InputSchema: targetSchema(`"path":{"type":"string","description":"A changed file's path. Omit for every file's patch."}`),
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/facts", "/api/document", "/api/patch"},
@@ -52,11 +52,11 @@ func (s *Server) pullTools() []Tool {
 		Call:        callChecks,
 	}, {
 		Name:        "review_threads",
-		Description: "The pull request's unresolved review threads with their comments.",
-		InputSchema: targetSchema(""),
+		Description: "The pull request's review threads with their comments and replies: the unresolved ones (default), the resolved ones, or all, each saying whether it is resolved or outdated.",
+		InputSchema: reviewThreadsSchema,
 		Scope:       ScopeRepository,
-		Reads:       []string{index, "/api/prs/review-threads"},
-		Call:        callReviewThreads,
+		Reads:       []string{index, "/api/prs/review-threads", "/api/prs/threads"},
+		Call:        callReviewThreadsState,
 	}, {
 		Name:        "merge_state",
 		Description: "What the app offers to do about the pull request's state: the merge methods and whether it can merge, whether the branch is behind or conflicting and can be updated, the files a conflict is in, and the failed workflow runs that can be re-run. Nothing is changed.",
@@ -87,14 +87,14 @@ func (s *Server) pullTools() []Tool {
 		Call:        callSessions,
 	}, {
 		Name:        "session_transcript",
-		Description: "The redacted transcript of one session linked to the pull request, as the app shows it.",
-		InputSchema: targetSchema(`"id":{"type":"string","description":"The session's id, from sessions."}`, "id"),
+		Description: "The redacted transcript of one session linked to the pull request, as the app shows it: whole, or with from_turn or limit its prompts limit at a time (default 20, at most 100) from turn from_turn, the result naming the next turn. Find turns with transcript_search.",
+		InputSchema: sessionTranscriptSchema,
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/facts", "/api/sessions"},
-		Call:        callSessionTranscript,
+		Call:        callSessionTranscriptPaged,
 	}, {
 		Name:        "focus",
-		Description: "The part of the open page the user picked: a section, a stop, the overview and the anchors, as the page describes it. \"none\" when nothing is picked.",
+		Description: "The part of the open page the user picked: a section, a tile or the overview and the anchors, as the page describes it; on the tiles page, also the view and the tile and item open. \"none\" when nothing is picked.",
 		Scope:       ScopeRepository,
 		Call: func(_ context.Context, c CallContext, _ json.RawMessage) (string, error) {
 			if !c.HasPage || len(c.Page.Focus) == 0 || string(c.Page.Focus) == "null" {
@@ -232,13 +232,22 @@ func (c CallContext) inboxState(ctx context.Context, repository string, number i
 
 // fileChange is one changed file as the diff tool lists it.
 type fileChange struct {
-	Path      string          `json:"path"`
-	OldPath   string          `json:"old_path,omitempty"`
-	Change    string          `json:"change"`
-	Additions int             `json:"additions"`
-	Deletions int             `json:"deletions"`
-	Hunks     int             `json:"hunks"`
-	Patch     json.RawMessage `json:"patch"`
+	Path      string `json:"path"`
+	OldPath   string `json:"old_path,omitempty"`
+	Change    string `json:"change"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Hunks     int    `json:"hunks"`
+	// HunkIDs are the file's hunks as a tile's data cites them: each id
+	// and its first and last line in the new file, when it adds any.
+	HunkIDs []hunkRef       `json:"hunk_ids,omitempty"`
+	Patch   json.RawMessage `json:"patch"`
+}
+
+// hunkRef is a hunk a tile's data may cite.
+type hunkRef struct {
+	ID    string `json:"id"`
+	Lines []int  `json:"lines,omitempty"`
 }
 
 func changedFiles(hunks []sourceHunk) []fileChange {
@@ -254,6 +263,13 @@ func changedFiles(hunks []sourceHunk) []fileChange {
 		files[i].Additions += h.Additions
 		files[i].Deletions += h.Deletions
 		files[i].Hunks++
+		if h.ID != "" {
+			ref := hunkRef{ID: h.ID}
+			if len(h.NewRange) == 2 && h.NewRange[1] > 0 {
+				ref.Lines = []int{h.NewRange[0], h.NewRange[0] + h.NewRange[1] - 1}
+			}
+			files[i].HunkIDs = append(files[i].HunkIDs, ref)
+		}
 	}
 	return files
 }
@@ -389,21 +405,6 @@ func segment(kind, id string) error {
 		return fmt.Errorf("%s is not a %s id", id, kind)
 	}
 	return nil
-}
-
-func callSessionTranscript(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-	var a struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return "", err
-	}
-	if err := segment("session", a.ID); err != nil {
-		return "", err
-	}
-	// The viewer answers only for a session the pull request's commits link.
-	body, err := readSource(ctx, c, args, "sessions/"+url.PathEscape(a.ID))
-	return string(body), err
 }
 
 func callChecks(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {

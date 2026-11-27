@@ -1,0 +1,260 @@
+{
+  "title": "Interface changes",
+  "data": {
+    "summary": "Adds tag routes for widgets and makes the widget list return its tags. Listing widgets now requires the tag scope.",
+    "endpoints": [
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/widgets/{id}/tags",
+        "change": "added",
+        "auth": "session",
+        "request": [],
+        "response": [
+          {
+            "field": "tags",
+            "change": "added",
+            "before": null,
+            "after": "string[]",
+            "required": true
+          }
+        ],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_2222bbbb3333",
+            "lines": [21, 24]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "PUT",
+        "name": "/api/widgets/{id}/tags",
+        "change": "added",
+        "auth": "session",
+        "request": [
+          {
+            "field": "tags",
+            "change": "added",
+            "before": null,
+            "after": "string[] (at most 20)",
+            "required": true
+          }
+        ],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_2222bbbb3333",
+            "lines": [21, 24]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/widgets",
+        "change": "changed",
+        "auth": "session with the tags:read scope",
+        "request": [],
+        "response": [
+          {
+            "field": "widgets[].tags",
+            "change": "added",
+            "before": null,
+            "after": "string[]",
+            "required": true
+          },
+          {
+            "field": "widgets[].labels",
+            "change": "removed",
+            "before": "string",
+            "after": null,
+            "required": false
+          }
+        ],
+        "errors": [],
+        "breaking": true,
+        "breaking_reason": "Removes `labels` from each widget and requires the **tags:read** scope.",
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_2222bbbb3333",
+            "lines": [18, 19]
+          },
+          {
+            "type": "risk",
+            "id": "rsk_scope"
+          }
+        ]
+      },
+      {
+        "surface": "tool",
+        "method": null,
+        "name": "widgets.tag",
+        "change": "added",
+        "auth": null,
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "file",
+            "path": "internal/tools/widgets.go"
+          }
+        ]
+      }
+    ],
+    "consumers": [
+      {
+        "label": "web/src/api/widgets.ts",
+        "updated": true,
+        "cites": [
+          {
+            "type": "file",
+            "path": "web/src/api/widgets.ts"
+          }
+        ]
+      },
+      {
+        "label": "cli/widgets list",
+        "updated": false,
+        "cites": [
+          {
+            "type": "check",
+            "id": "ci",
+            "test": "cli"
+          }
+        ]
+      }
+    ],
+    "docs": {
+      "updated": false,
+      "cites": []
+    },
+    "concerns": []
+  },
+  "refs": {
+    "[\"hunk\",\"h_2222bbbb3333\",[21,24]]": {
+      "status": "ok",
+      "label": "routes.go:21–24",
+      "navigable": true,
+      "path": "internal/server/routes.go",
+      "change": "modified",
+      "role": "code",
+      "range": [14, 30],
+      "additions": 3,
+      "deletions": 0,
+      "excerpt": {
+        "header": "@@ -18,6 +18,9 @@ func (s *Server) routes(mux *http.ServeMux) {",
+        "omitted_before": 0,
+        "omitted_after": 2,
+        "lines": [
+          {
+            "kind": "context",
+            "old": 20,
+            "new": 20,
+            "text": "\tmux.HandleFunc(\"GET /api/widgets\", s.listWidgets)",
+            "tokens": [
+              ["\tmux.", null],
+              ["HandleFunc", "function"],
+              ["(", "punctuation"],
+              ["\"GET /api/widgets\"", "string"],
+              [", s.listWidgets", null],
+              [")", "punctuation"]
+            ]
+          },
+          {
+            "kind": "add",
+            "new": 21,
+            "text": "\tmux.HandleFunc(\"GET /api/widgets/{id}/tags\", s.widgetTags)",
+            "tokens": [
+              ["\tmux.", null],
+              ["HandleFunc", "function"],
+              ["(", "punctuation"],
+              ["\"GET /api/widgets/{id}/tags\"", "string"],
+              [", s.widgetTags", null],
+              [")", "punctuation"]
+            ]
+          },
+          {
+            "kind": "add",
+            "new": 22,
+            "text": "\tmux.HandleFunc(\"PUT /api/widgets/{id}/tags\", s.setWidgetTags)",
+            "tokens": [
+              ["\tmux.", null],
+              ["HandleFunc", "function"],
+              ["(", "punctuation"],
+              ["\"PUT /api/widgets/{id}/tags\"", "string"],
+              [", s.setWidgetTags", null],
+              [")", "punctuation"]
+            ]
+          },
+          {
+            "kind": "add",
+            "new": 23,
+            "text": "\tmux.HandleFunc(\"POST /api/widgets/{id}/archive\", s.archiveWidget)"
+          },
+          {
+            "kind": "context",
+            "old": 21,
+            "new": 24,
+            "text": "\tmux.HandleFunc(\"DELETE /api/widgets/{id}\", s.deleteWidget)"
+          }
+        ]
+      }
+    },
+    "[\"hunk\",\"h_2222bbbb3333\",[18,19]]": {
+      "status": "unavailable",
+      "label": "routes.go:18–19",
+      "why": "comparing"
+    },
+    "[\"risk\",\"rsk_scope\"]": {
+      "status": "ok",
+      "label": "Older clients lose the widget list",
+      "navigable": true,
+      "tier": "critical",
+      "category": "compatibility",
+      "state": "open",
+      "text": "Tokens without the tags:read scope now get 403 from the widget list.",
+      "change": "sec_routes"
+    },
+    "[\"file\",\"internal/tools/widgets.go\"]": {
+      "status": "ok",
+      "label": "widgets.go",
+      "navigable": true,
+      "path": "internal/tools/widgets.go",
+      "change": "added",
+      "additions": 48,
+      "deletions": 0,
+      "hunks": 1
+    },
+    "[\"file\",\"web/src/api/widgets.ts\"]": {
+      "status": "ok",
+      "label": "widgets.ts",
+      "navigable": true,
+      "path": "web/src/api/widgets.ts",
+      "change": "modified",
+      "additions": 6,
+      "deletions": 2,
+      "hunks": 2
+    },
+    "[\"check\",\"ci\",\"cli\"]": {
+      "status": "ok",
+      "label": "ci / cli",
+      "navigable": true,
+      "name": "cli",
+      "conclusion": "failure",
+      "required": true
+    }
+  }
+}

@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,9 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
+	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
+	"github.com/baum-ai/baum/reviewv2"
 )
 
 // draftExecutor reports a draft, then another, then what the review was
@@ -24,12 +28,21 @@ type draftExecutor struct {
 	fakeExecutor
 	step chan struct{}
 	err  error
+	// document is the first draft; the zero value is a stand-in.
+	document []byte
+}
+
+func (d *draftExecutor) first() []byte {
+	if d.document != nil {
+		return d.document
+	}
+	return []byte(`{"draft":1}`)
 }
 
 func (d *draftExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	d.started <- p
 	for _, report := range []Progress{
-		{Phase: "generating", Calls: 1, Draft: []byte(`{"draft":1}`)},
+		{Phase: "generating", Calls: 1, Draft: d.first()},
 		{Phase: "generating", Calls: 2, Draft: []byte(`{"draft":2}`)},
 		{Phase: "publishing", Calls: 3, Gaps: true, FailedSections: []string{"sec_rest"}, ContextFailed: true},
 	} {
@@ -114,6 +127,94 @@ func TestQueueServesTheDraftUntilTheJobEnds(t *testing.T) {
 	}
 }
 
+// With tiles=1 the draft is answered as the tiles route answers a version: the
+// document and its tile document, a context still being written a pending
+// tile. Without it the answer is the draft as it was.
+func TestQueueServesTheDraftAsTiles(t *testing.T) {
+	q, d := draftQueue(t, nil)
+	d.document = tileviewtest.Encode(t, tileviewtest.DraftOutline(t))
+	handler := q.Handler()
+	jobs, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 1}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := jobs[0].ID
+	<-d.started
+	get := func(query string) (int, []byte) {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest("GET", "/api/jobs/"+id+"/draft"+query, nil))
+		return recorder.Code, recorder.Body.Bytes()
+	}
+	var plain []byte
+	for range 3000 {
+		if code, body := get(""); code == 200 {
+			plain = body
+			break
+		}
+		waitState(t, q, id, "running")
+	}
+	if plain == nil {
+		t.Fatal("the draft was never served")
+	}
+	var as struct {
+		Draft    int            `json:"draft"`
+		Document map[string]any `json:"document"`
+	}
+	if err := json.Unmarshal(plain, &as); err != nil || as.Draft != 1 || as.Document["schema"] != "baum.review/1" {
+		t.Fatalf("without tiles=1: %v %+v", err, as)
+	}
+	if bytes.Contains(plain, []byte(`"view"`)) {
+		t.Fatalf("the plain draft has a view member: %.200s", plain)
+	}
+	code, tiled := get("?tiles=1")
+	var withTiles struct {
+		Draft    int               `json:"draft"`
+		Document reviewv2.Document `json:"document"`
+		Problem  string            `json:"problem"`
+	}
+	if err := json.Unmarshal(tiled, &withTiles); err != nil || code != 200 || withTiles.Document.Schema != reviewv2.Name || withTiles.Problem != "" || withTiles.Draft != 1 {
+		t.Fatalf("with tiles=1: %d %v %s", code, err, tiled)
+	}
+	if withTiles.Document.Schema != reviewv2.Name {
+		t.Fatalf("document %v", withTiles.Document.Schema)
+	}
+	if len(withTiles.Document.Sections) == 0 {
+		t.Fatalf("the draft's document lists no sections")
+	}
+	// Only the exact value 1 selects tiles.
+	for _, query := range []string{"?tiles=0", "?tiles=true", "?tiles=", "?tiles=1x"} {
+		if code, body := get(query); code != 200 || !bytes.Equal(body, plain) {
+			t.Fatalf("%s: %d, not the plain draft: %.120s", query, code, body)
+		}
+	}
+	// An unchanged draft is converted once, however often it is polled.
+	built := tileview.Builds.Load()
+	for range 3 {
+		if code, body := get("?tiles=1"); code != 200 || !bytes.Equal(body, tiled) {
+			t.Fatalf("a poll of the same draft: %d", code)
+		}
+	}
+	if tileview.Builds.Load() != built {
+		t.Fatalf("%d conversions of an unchanged draft", tileview.Builds.Load()-built)
+	}
+	d.step <- struct{}{}
+	for range 3000 {
+		if _, body := get(""); bytes.Contains(body, []byte(`"draft":2`)) {
+			break
+		}
+		waitState(t, q, id, "running")
+	}
+	if code, body := get("?tiles=1"); code != 200 || bytes.Equal(body, tiled) || tileview.Builds.Load() != built+1 {
+		t.Fatalf("a new draft: %d, %d conversions", code, tileview.Builds.Load()-built)
+	}
+	d.step <- struct{}{}
+	d.step <- struct{}{}
+	waitState(t, q, id, "completed")
+	if code, _ := get("?tiles=1"); code != 404 {
+		t.Fatalf("an ended job's tiles draft is %d", code)
+	}
+}
+
 // A retry of a version's details takes the version it completes, alone; it
 // stands down, cancelled, when the version changed under it or the pull
 // request moved.
@@ -182,9 +283,7 @@ func detailsFixture(t *testing.T) (generate.Options, *store.Store, store.Key, *f
 		t.Fatal(err)
 	}
 	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
-	local := &Local{ReviewRuns: filepath.Join(t.TempDir(), "review-runs")}
-	t.Cleanup(func() { chmodTree(local.ReviewRuns) })
-	result, err := local.publish(ctx, versions, versions, key, agent.BackendCursorAgent, o, nil)
+	result, err := generate.Publish(ctx, versions, key, o, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

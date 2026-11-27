@@ -512,9 +512,10 @@ func (s Service) FailingChecks(ctx context.Context, repository github.Repository
 	return out, nil
 }
 
-// RerunJob re-runs one failed GitHub Actions job of the head commit the user
-// saw, as GitHub's Re-run job button does. The job must be one of that
-// head's failing checks, read here, so a request cannot name another job.
+// RerunJob re-runs one failed or cancelled GitHub Actions job of the head
+// commit the user saw, as GitHub's Re-run job button does. The job must be one
+// of that head's failing or cancelled checks, read here, so a request cannot
+// name another job.
 func (s Service) RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error {
 	read, err := s.open(ctx, repository, number)
 	if err != nil {
@@ -526,12 +527,13 @@ func (s Service) RerunJob(ctx context.Context, repository github.Repository, num
 	if err := canPush(ctx, read.reader, repository); err != nil {
 		return err
 	}
-	checks, err := fix.FailingChecks(ctx, read.reader, repository, expectedHead)
+	// AllChecks gives a job only to a failing or cancelled GitHub Actions run.
+	checks, _, err := fix.AllChecks(ctx, read.reader, repository, expectedHead)
 	if err != nil {
-		return &Error{Failed, "baum could not read the failing checks from GitHub."}
+		return &Error{Failed, "baum could not read the checks from GitHub."}
 	}
 	if job == 0 || !slices.ContainsFunc(checks, func(c fix.Check) bool { return c.JobID == job }) {
-		return &Error{NotFound, "This check is no longer failing on this commit, or GitHub Actions did not run it."}
+		return &Error{NotFound, "This check is no longer failing or cancelled on this commit, or GitHub Actions did not run it."}
 	}
 	path := fmt.Sprintf("%s/actions/jobs/%d/rerun", repositoryPath(repository), job)
 	status, body, err := read.reader.Write(ctx, http.MethodPost, path, nil)
@@ -582,8 +584,8 @@ type CheckStatus struct {
 	Conclusion string `json:"conclusion"`
 	Title      string `json:"title,omitempty"`
 	URL        string `json:"url,omitempty"`
-	// JobID is the GitHub Actions job behind a failing check run, which
-	// RerunJob re-runs; absent otherwise.
+	// JobID is the GitHub Actions job behind a failing or cancelled check
+	// run, which RerunJob re-runs; absent otherwise.
 	JobID int64 `json:"job_id,omitempty"`
 	// ID is the check run's ID, which check-log takes; absent for a commit
 	// status.
@@ -607,7 +609,8 @@ type CheckList struct {
 	Capped  bool          `json:"capped"`
 }
 
-// failingConclusions are the conclusions that sort a check first.
+// failingConclusions are the conclusions that sort a check first; a
+// cancelled check sorts with the running ones, so a capped list keeps it.
 var failingConclusions = map[string]bool{"failure": true, "timed_out": true, "startup_failure": true, "action_required": true, "error": true}
 
 // AllChecks lists every check run and commit status of head, the pull
@@ -644,7 +647,7 @@ func (s Service) AllChecks(ctx context.Context, repository github.Repository, nu
 		switch {
 		case failingConclusions[c.Conclusion]:
 			return 0
-		case c.Status != "completed":
+		case c.Status != "completed", c.Conclusion == "cancelled":
 			return 1
 		}
 		return 2
@@ -723,6 +726,10 @@ type Description struct {
 // review's citation of it can be read in the app. The body is cut at
 // DescriptionLimit and its invalid UTF-8 dropped.
 func (s Service) Description(ctx context.Context, repository github.Repository, number int) (Description, error) {
+	key, gen := pullKey(repository, number), s.Cache.generation()
+	if d, ok := s.Cache.cachedDescription(key); ok {
+		return d, nil
+	}
 	reader, err := s.Client.REST(ctx, repository)
 	if err != nil {
 		return Description{}, &Error{Failed, unreachable}
@@ -747,7 +754,9 @@ func (s Service) Description(ctx context.Context, repository github.Repository, 
 	if len(body) > DescriptionLimit {
 		body = strings.ToValidUTF8(body[:DescriptionLimit], "") + "…"
 	}
-	return Description{Body: body, URL: pull.HTML}, nil
+	d := Description{Body: body, URL: pull.HTML}
+	s.Cache.storeDescription(key, gen, d)
+	return d, nil
 }
 
 func deref(s *string) string {

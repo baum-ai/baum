@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -120,14 +121,28 @@ func TestSyncStacksFollowsTheStackAndLeavesThePersonsGroups(t *testing.T) {
 	}
 }
 
-func TestSyncStacksLeavesOutStacksPastMaxMembers(t *testing.T) {
+func TestSyncStacksGroupsAStackOfAnySize(t *testing.T) {
+	ctx := context.Background()
 	s := openStore(t)
-	prs := []discovery.PullRequest{open(1, "b1", "main")}
-	for i := 2; i <= MaxMembers+1; i++ {
-		prs = append(prs, open(i, "b"+string(rune('0'+i)), "b"+string(rune('0'+i-1))))
+	branch := func(i int) string { return "b" + strconv.Itoa(i) }
+	prs := []discovery.PullRequest{open(1, branch(1), "main")}
+	for i := 2; i <= 28; i++ {
+		prs = append(prs, open(i, branch(i), branch(i-1)))
 	}
-	if changed, err := s.SyncStacks(context.Background(), "acme/demo", prs, nil); err != nil || changed {
+	if changed, err := s.SyncStacks(ctx, "acme/demo", prs, nil); err != nil || !changed {
 		t.Fatalf("a stack of %d: %v %v", len(prs), changed, err)
+	}
+	list, err := s.List(ctx)
+	if err != nil || len(list) != 1 || len(list[0].Members) != 28 || !list[0].Stack {
+		t.Fatalf("groups %+v %v", list, err)
+	}
+	// It grows past it too, and is not dissolved.
+	prs = append(prs, open(29, branch(29), branch(28)))
+	if _, err := s.SyncStacks(ctx, "acme/demo", prs, nil); err != nil {
+		t.Fatal(err)
+	}
+	if list, err = s.List(ctx); err != nil || len(list) != 1 || len(list[0].Members) != 29 {
+		t.Fatalf("groups %+v %v", list, err)
 	}
 }
 

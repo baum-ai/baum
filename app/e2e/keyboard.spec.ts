@@ -114,7 +114,7 @@ test("Tab on Settings reaches its controls past the sidebar", async ({ page }) =
   const sections = page.getByRole("navigation", { name: "Settings sections" });
   await expect(sections).toBeVisible();
   const seen: Awaited<ReturnType<typeof focused>>[] = [];
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 12; i++) {
     await page.keyboard.press("Tab");
     seen.push(await focused(page));
   }
@@ -127,6 +127,25 @@ test("Tab on Settings reaches its controls past the sidebar", async ({ page }) =
   expect(settings.slice(settings.indexOf("sections"))).toContain("content");
 });
 
+test("all Settings sections remain in view in the smallest desktop window", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto(await launchURL());
+  await expect(page.getByRole("main")).toBeVisible();
+  await page.goto(new URL("?page=settings&section=tiles", page.url()).toString());
+
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  const tiles = sections.getByRole("button", { name: /Tile library/ });
+  await expect(tiles).toHaveAttribute("aria-current", "page");
+  for (const button of await sections.getByRole("button").all()) {
+    await expect(button).toBeInViewport({ ratio: 1 });
+  }
+
+  await page.keyboard.press("Shift+ArrowUp");
+  const prompts = sections.getByRole("button", { name: /^Prompts/ });
+  await expect(prompts).toBeFocused();
+  await expect(prompts).toHaveAttribute("aria-current", "page");
+});
+
 test("Tab stays inside a dialog and goes through its controls", async ({ page }) => {
   await page.goto(await launchURL());
   await expect(page.locator("button.upnext-row").first()).toBeVisible();
@@ -137,19 +156,27 @@ test("Tab stays inside a dialog and goes through its controls", async ({ page })
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(sheet).toBeVisible();
   const close = sheet.getByRole("button", { name: "Close", exact: true });
+  const search = sheet.getByRole("searchbox", { name: "Search the shortcuts" });
   const heading = sheet.getByRole("heading", { name: "Keyboard shortcuts", exact: true });
+  const list = sheet.locator("#shortcuts-list");
   const headingTop = (await heading.boundingBox())!.y;
-  await sheet.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  await expect.poll(() => sheet.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  // It opens on the list, which the arrow and page keys scroll under the
+  // title and the search field.
+  await expect(list).toBeFocused();
+  await page.keyboard.press("End");
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect.poll(async () => (await heading.boundingBox())!.y).toBeCloseTo(headingTop, 0);
   await expect(close).toBeInViewport();
+  await expect(search).toBeInViewport();
+  // Typing searches.
+  await page.keyboard.type("merge");
+  await expect(search).toHaveValue("merge");
+  await expect(sheet.locator("dd").first()).toContainText("Merge");
+  // Its controls: Tab and Shift+Tab go round the close button and the field.
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
-  // Its only control: Tab and Shift+Tab stay on it.
   await page.keyboard.press("Tab");
-  await expect(close).toBeFocused();
+  await expect(search).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(close).toBeFocused();
   await page.keyboard.press("Enter");
@@ -268,3 +295,34 @@ test("j and k move through the review Summary", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/pane=section.*section=/);
 });
+
+/** How far the list's rows are scrolled, by the panel and any scroller
+ *  between: 0 once everything above the first row shows again. */
+const panelTop = (page: Page, rows: string) =>
+  page.evaluate((rows) => {
+    let top = 0;
+    for (let up = document.querySelector(rows)!.parentElement; up; up = up.parentElement)
+      top += up.scrollTop;
+    return top;
+  }, rows);
+
+for (const [name, open, rows] of [
+  ["Pull requests", "Pull requests", '[aria-label="Pull request inbox"] [data-row-id]'],
+  ["the Inbox", null, "button.upnext-row"],
+] as const)
+  test(`g on ${name} goes back to the top, with the page's bar`, async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 360 });
+    await page.goto(await launchURL());
+    if (open) await page.getByRole("link", { name: open, exact: true }).first().click();
+    await expect(page.locator(rows).first()).toBeVisible();
+    await page.keyboard.press("G");
+    await expect.poll(() => panelTop(page, rows)).toBeGreaterThan(0);
+    await page.keyboard.press("g");
+    await expect.poll(() => panelTop(page, rows)).toBe(0);
+    // k up to the first row does the same.
+    await page.keyboard.press("G");
+    await expect.poll(() => panelTop(page, rows)).toBeGreaterThan(0);
+    const count = await page.locator(rows).count();
+    for (let i = 0; i < count; i++) await page.keyboard.press("k");
+    await expect.poll(() => panelTop(page, rows)).toBe(0);
+  });

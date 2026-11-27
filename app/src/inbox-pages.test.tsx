@@ -81,6 +81,7 @@ const inbox = (id: string, overrides: Partial<Inbox>): Inbox => ({
   query: "",
   no_bots: false,
   badge: true,
+  auto_review: true,
   ...overrides,
 });
 const reviews = inbox("Reviews", { what: "review", color: "purple" });
@@ -91,6 +92,8 @@ let node: HTMLDivElement;
 let entries: Entry[] = [];
 let daemon: { revision: number; inboxes: Inbox[] } | null = null;
 let puts: { revision: number; inboxes: Inbox[] }[] = [];
+// What api/automatic answers; {} is a daemon without automatic generation.
+let automatic: object = {};
 // What the first read of the inboxes waits for, and a status that replaces its answer.
 let inboxesHold: Promise<void> | null = null;
 let inboxesFail: number | null = null;
@@ -106,6 +109,7 @@ beforeEach(() => {
   entries = fixture();
   daemon = { revision: 1, inboxes: [reviews, acme] };
   puts = [];
+  automatic = {};
   inboxesHold = null;
   inboxesFail = null;
   node = document.createElement("div");
@@ -144,15 +148,17 @@ beforeEach(() => {
                 ? []
                 : path.endsWith("api/jobs")
                   ? { jobs: [] }
-                  : path.endsWith("api/github-auth")
-                    ? {
-                        state: "connected",
-                        host: "github.com",
-                        login: "acme",
-                        override: false,
-                        saved: true,
-                      }
-                    : {},
+                  : path.endsWith("api/automatic")
+                    ? automatic
+                    : path.endsWith("api/github-auth")
+                      ? {
+                          state: "connected",
+                          host: "github.com",
+                          login: "acme",
+                          override: false,
+                          saved: true,
+                        }
+                      : {},
       );
     }),
   );
@@ -316,6 +322,8 @@ it("checks the name as typed on Save, and keeps the unsaved inbox when the save 
   expect(node.querySelector(".inbox-name-error")!.textContent).toBe(
     "Another inbox already has that name.",
   );
+  // Focus goes back to the name, not left on Save.
+  expect(document.activeElement).toBe(nameInput());
   await type(nameInput(), "Hot");
   inboxesFail = 500;
   await click(button("Save"));
@@ -543,6 +551,33 @@ it("counts the inbox in the badge or not", async () => {
   );
 });
 
+it("reviews the inbox's pull requests automatically or not", async () => {
+  automatic = { enabled: true, pull_requests: "inboxes", repositories: [] };
+  await render("?page=inbox-edit&inbox=Acme");
+  const auto = node.querySelector<HTMLInputElement>('input[role="switch"][id$="-auto-review"]')!;
+  expect(auto.labels![0]!.textContent).toBe("Review automatically");
+  expect(auto.checked).toBe(true);
+  expect(node.textContent).toContain("baum reviews its pull requests on its own.");
+  await click(auto);
+  expect(puts[0]!.inboxes[1]!.auto_review).toBe(false);
+  expect(puts[0]!.inboxes[0]!.auto_review).toBe(true);
+  expect(node.textContent).toContain(
+    "baum reviews its pull requests only when you ask, unless another inbox holding them reviews automatically.",
+  );
+});
+
+it("says the switch waits for the Reviews setting when reviews don't follow the inboxes", async () => {
+  automatic = { enabled: true, pull_requests: "both", repositories: [] };
+  await render("?page=inbox-edit&inbox=Acme");
+  expect(node.textContent).toContain(
+    "No effect yet: turn on reviewing the pull requests in your inboxes in Settings › Reviews first.",
+  );
+  const link = Array.from(node.querySelectorAll("a")).find(
+    (a) => a.textContent === "Settings › Reviews",
+  )!;
+  expect(link.getAttribute("href")).toContain("page=settings&section=reviews");
+});
+
 it("tags the preview's rows with the other inboxes and says what an empty one waits for", async () => {
   await render("?page=inbox-edit&inbox=Acme");
   const rows = Array.from(node.querySelectorAll(".inbox-preview-row"));
@@ -737,12 +772,31 @@ it("lists each saved inbox, New inbox and Manage inboxes in Go to, with no Inbox
   await click(node.querySelector('[data-go-to] [role="option"]'));
   expect(search().get("inbox")).toBe("Acme");
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Acme");
-  // ⌘1 opens the first saved inbox.
-  await act(async () => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "1", code: "Digit1", ctrlKey: true, bubbles: true }),
-    );
-  });
+});
+
+it("returns to the inbox last seen with ⌘1, and to the first once that one is gone", async () => {
+  const pressOne = () =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "1", code: "Digit1", ctrlKey: true, bubbles: true }),
+      );
+      await settle();
+    });
+  // Nothing seen yet: the first saved inbox.
+  await render("?page=pulls");
+  await pressOne();
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+  // Acme seen, then another page: ⌘1 comes back to Acme, also after a reload.
+  await render("?inbox=Acme");
+  await render("?page=pulls");
+  await pressOne();
+  expect(location.search).toBe("?inbox=Acme");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Acme");
+  // Acme deleted: the first inbox again.
+  daemon = { revision: 2, inboxes: [reviews] };
+  await render("?page=pulls");
+  await pressOne();
   expect(location.search).toBe("?inbox=Reviews");
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
 });

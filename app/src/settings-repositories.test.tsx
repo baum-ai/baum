@@ -1,9 +1,9 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { formatDateTime } from "@baum/viewer/components/format";
 import type { Automatic, Entry, Job, Repository } from "./api";
-import { RepositoriesPage } from "./settings";
+import { RepositoriesPage, RepositoryPage } from "./settings";
 
 let root: Root;
 let node: HTMLDivElement;
@@ -132,4 +132,49 @@ it("groups repositories by owner and shows what each has going on", async () => 
   expect(row("acme/api").textContent).not.toContain("Automatic reviews");
   expect(row("solo/tool").textContent).toContain("Automatic reviews off");
   expect(row("solo/tool").textContent).toContain("~/work/solo/tool");
+});
+
+const withTiles = (tiles?: { types?: string[] }): Repository => {
+  const base = repository("acme/api");
+  const settings = { ...base.settings, tiles };
+  return { ...base, settings, clones: base.clones.map((c) => ({ ...c, settings })) };
+};
+
+function stubSettingsApi() {
+  const puts: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") puts.push(JSON.parse(String(init.body)));
+      return Response.json({});
+    }),
+  );
+  return puts;
+}
+
+const renderPage = (repositories: Repository[]) =>
+  act(async () =>
+    root.render(
+      <RepositoryPage
+        name="acme/api"
+        repositories={repositories}
+        loading={false}
+        automatic={null}
+        changed={async () => {}}
+        section="reviews"
+        setSection={() => {}}
+        Link={(props) => <a {...props} />}
+      />,
+    ),
+  );
+
+it("saves its review settings without the tile types pinned to it, which the daemon keeps", async () => {
+  const puts = stubSettingsApi();
+  await renderPage([withTiles({ types: ["schema_change"] })]);
+  // No layout preferences: the page arranges every review the same way.
+  expect(node.querySelector("#repository-tile-text")).toBeNull();
+  expect(node.querySelector("#repository-tile-pin")).toBeNull();
+  const decisions = node.querySelector<HTMLInputElement>("#repository-decisions")!;
+  await act(async () => decisions.click());
+  expect(puts).toEqual([{ automatic: null, decisions: false }]);
 });

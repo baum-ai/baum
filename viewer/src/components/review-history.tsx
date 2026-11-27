@@ -198,14 +198,22 @@ export function HistoryToolbar({
   );
 }
 
+/** The attribute on each of two compared versions' panes, so a key the
+ *  page listens for can go to the pane that has the focus. */
+export const COMPARED_PANE = "data-compared-pane";
+
 export function ReviewHistory({
   document,
   view,
   children,
+  labelled = true,
 }: {
   document: ReviewDocument;
   view: ReturnType<typeof useHistoryView>;
   children: (document: ReviewDocument, historical: boolean) => ReactNode;
+  /** Whether an earlier version read alone opens on its "Historical · Review
+   *  vN" line. Two compared versions always carry theirs. */
+  labelled?: boolean;
 }) {
   const { selection, state } = view;
   const compare = selection?.compare === true;
@@ -220,6 +228,7 @@ export function ReviewHistory({
       >
         {(!selection || compare) && (
           <div
+            {...(compare ? { [COMPARED_PANE]: "current" } : {})}
             className={
               compare ? "flex min-h-0 min-w-0 flex-col wide:overflow-hidden 2xl:pr-5" : "contents"
             }
@@ -234,13 +243,19 @@ export function ReviewHistory({
         )}
         {selection && (
           <section
+            {...(compare ? { [COMPARED_PANE]: "historical" } : {})}
             aria-label={`Historical ${compare ? "comparison" : "view"} v${selection.version}`}
             className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col wide:overflow-hidden",
               compare && "2xl:pl-5",
             )}
           >
-            <p className="mb-3 text-base font-medium text-tertiary">
+            <p
+              className={cn(
+                "mb-3 text-base font-medium text-tertiary",
+                !labelled && !compare && "sr-only",
+              )}
+            >
               Historical · Review v{selection.version}
               {state?.status === "ready" &&
                 ` · Generated against ${shortSha(state.document.review.head)} · ${formatDateTime(state.document.review.generated_at)}`}

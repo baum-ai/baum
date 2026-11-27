@@ -1,0 +1,479 @@
+{
+  "name": "postgres-migration",
+  "data": {
+    "engine": "postgres",
+    "migrations": [
+      {
+        "kind": "migration_file",
+        "label": "20261113100300_add_invoices_and_rename_payment_events_to_ledger_entries.up.sql",
+        "applies": "on_deploy",
+        "reversible": false,
+        "idempotent": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_0f3a9c2d7e61",
+            "lines": [
+              1,
+              19
+            ]
+          },
+          {
+            "type": "hunk",
+            "id": "h_1b7e4d0a95c2",
+            "lines": [
+              1,
+              4
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "query_file",
+        "label": "db/queries/accounts.sql",
+        "applies": "unknown",
+        "reversible": null,
+        "idempotent": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_2c8f5e1ba6d3",
+            "lines": [
+              9,
+              9
+            ]
+          }
+        ]
+      }
+    ],
+    "tables": [
+      {
+        "name": "invoices",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "BIGSERIAL PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "account_id",
+            "change": "added",
+            "before": null,
+            "after": "BIGINT NOT NULL REFERENCES accounts(id)",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "number",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "total_cents",
+            "change": "added",
+            "before": null,
+            "after": "BIGINT NOT NULL CHECK (total_cents >= 0)",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "currency",
+            "change": "added",
+            "before": null,
+            "after": "CHAR(3) NOT NULL DEFAULT 'EUR'",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "issued_at",
+            "change": "added",
+            "before": null,
+            "after": "TIMESTAMPTZ NOT NULL DEFAULT now()",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [
+          {
+            "name": "invoices_account_number",
+            "change": "added",
+            "definition": "(account_id, number)",
+            "unique": true,
+            "online": true
+          }
+        ],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_0f3a9c2d7e61",
+            "lines": [
+              1,
+              9
+            ]
+          }
+        ]
+      },
+      {
+        "name": "accounts",
+        "change": "altered",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "billing_email",
+            "change": "added",
+            "before": null,
+            "after": "TEXT",
+            "destructive": false,
+            "note": "Backfilled from owner_email"
+          },
+          {
+            "name": "owner_email",
+            "change": "unchanged",
+            "before": "TEXT NOT NULL",
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": "The backfill copies it into billing_email"
+          },
+          {
+            "name": "plan",
+            "change": "altered",
+            "before": "TEXT",
+            "after": "TEXT NOT NULL",
+            "destructive": true,
+            "note": "Fails if any row has no plan"
+          },
+          {
+            "name": "legacy_plan_code",
+            "change": "removed",
+            "before": "TEXT",
+            "after": null,
+            "destructive": true,
+            "note": "The down migration does not restore it"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "accounts_by_billing_email",
+            "change": "added",
+            "definition": "(billing_email)",
+            "unique": false,
+            "online": false
+          }
+        ],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_0f3a9c2d7e61",
+            "lines": [
+              11,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ledger_entries",
+        "change": "renamed",
+        "renamed_from": "payment_events",
+        "columns": [
+          {
+            "name": "amount_cents",
+            "change": "renamed",
+            "before": "amount BIGINT",
+            "after": "BIGINT",
+            "destructive": true,
+            "note": "Ledger.Sum still reads amount"
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_0f3a9c2d7e61",
+            "lines": [
+              16,
+              17
+            ]
+          }
+        ]
+      }
+    ],
+    "data_changes": [
+      {
+        "text": "Copies `owner_email` into `billing_email` for every account without one, in one statement.",
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_0f3a9c2d7e61",
+            "lines": [
+              19,
+              19
+            ]
+          }
+        ]
+      }
+    ],
+    "readers": [
+      {
+        "label": "GetAccount (db/queries/accounts.sql)",
+        "updated": true,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_2c8f5e1ba6d3",
+            "lines": [
+              9,
+              9
+            ]
+          },
+          {
+            "type": "hunk",
+            "id": "h_3d906f2cb7e4",
+            "lines": [
+              20,
+              25
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Ledger.Sum in internal/billing/ledger.go",
+        "updated": false,
+        "cites": []
+      }
+    ]
+  },
+  "hunks": {
+    "h_0f3a9c2d7e61": {
+      "path": "db/migrations/20261113100300_add_invoices_and_rename_payment_events_to_ledger_entries.up.sql",
+      "change": "added",
+      "range": [
+        1,
+        19
+      ],
+      "additions": 19,
+      "deletions": 0,
+      "header": "@@ -1,0 +1,19 @@",
+      "lines": [
+        {
+          "kind": "add",
+          "new": 1,
+          "text": "CREATE TABLE invoices ("
+        },
+        {
+          "kind": "add",
+          "new": 2,
+          "text": "    id          BIGSERIAL PRIMARY KEY,"
+        },
+        {
+          "kind": "add",
+          "new": 3,
+          "text": "    account_id  BIGINT NOT NULL REFERENCES accounts(id),"
+        },
+        {
+          "kind": "add",
+          "new": 4,
+          "text": "    number      TEXT NOT NULL,"
+        },
+        {
+          "kind": "add",
+          "new": 5,
+          "text": "    total_cents BIGINT NOT NULL CHECK (total_cents >= 0),"
+        },
+        {
+          "kind": "add",
+          "new": 6,
+          "text": "    currency    CHAR(3) NOT NULL DEFAULT 'EUR',"
+        },
+        {
+          "kind": "add",
+          "new": 7,
+          "text": "    issued_at   TIMESTAMPTZ NOT NULL DEFAULT now()"
+        },
+        {
+          "kind": "add",
+          "new": 8,
+          "text": ");"
+        },
+        {
+          "kind": "add",
+          "new": 9,
+          "text": "CREATE UNIQUE INDEX invoices_account_number ON invoices (account_id, number);"
+        },
+        {
+          "kind": "add",
+          "new": 10,
+          "text": ""
+        },
+        {
+          "kind": "add",
+          "new": 11,
+          "text": "ALTER TABLE accounts ADD COLUMN billing_email TEXT;"
+        },
+        {
+          "kind": "add",
+          "new": 12,
+          "text": "ALTER TABLE accounts ALTER COLUMN plan SET NOT NULL;"
+        },
+        {
+          "kind": "add",
+          "new": 13,
+          "text": "ALTER TABLE accounts DROP COLUMN legacy_plan_code;"
+        },
+        {
+          "kind": "add",
+          "new": 14,
+          "text": "CREATE INDEX accounts_by_billing_email ON accounts (billing_email);"
+        },
+        {
+          "kind": "add",
+          "new": 15,
+          "text": ""
+        },
+        {
+          "kind": "add",
+          "new": 16,
+          "text": "ALTER TABLE payment_events RENAME TO ledger_entries;"
+        },
+        {
+          "kind": "add",
+          "new": 17,
+          "text": "ALTER TABLE ledger_entries RENAME COLUMN amount TO amount_cents;"
+        },
+        {
+          "kind": "add",
+          "new": 18,
+          "text": ""
+        },
+        {
+          "kind": "add",
+          "new": 19,
+          "text": "UPDATE accounts SET billing_email = owner_email WHERE billing_email IS NULL;"
+        }
+      ]
+    },
+    "h_1b7e4d0a95c2": {
+      "path": "db/migrations/0042_invoices.down.sql",
+      "change": "added",
+      "range": [
+        1,
+        4
+      ],
+      "additions": 4,
+      "deletions": 0,
+      "header": "@@ -1,0 +1,4 @@",
+      "lines": [
+        {
+          "kind": "add",
+          "new": 1,
+          "text": "DROP TABLE invoices;"
+        },
+        {
+          "kind": "add",
+          "new": 2,
+          "text": "ALTER TABLE ledger_entries RENAME COLUMN amount_cents TO amount;"
+        },
+        {
+          "kind": "add",
+          "new": 3,
+          "text": "ALTER TABLE ledger_entries RENAME TO payment_events;"
+        },
+        {
+          "kind": "add",
+          "new": 4,
+          "text": "ALTER TABLE accounts DROP COLUMN billing_email;"
+        }
+      ]
+    },
+    "h_2c8f5e1ba6d3": {
+      "path": "db/queries/accounts.sql",
+      "change": "modified",
+      "range": [
+        8,
+        9
+      ],
+      "additions": 1,
+      "deletions": 1,
+      "header": "@@ -8,2 +8,2 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 8,
+          "new": 8,
+          "text": "-- name: GetAccount :one"
+        },
+        {
+          "kind": "remove",
+          "old": 9,
+          "text": "SELECT id, owner_email, plan, legacy_plan_code FROM accounts WHERE id = $1;"
+        },
+        {
+          "kind": "add",
+          "new": 9,
+          "text": "SELECT id, owner_email, billing_email, plan FROM accounts WHERE id = $1;"
+        }
+      ]
+    },
+    "h_3d906f2cb7e4": {
+      "path": "internal/db/accounts.sql.go",
+      "change": "modified",
+      "range": [
+        20,
+        25
+      ],
+      "additions": 1,
+      "deletions": 1,
+      "header": "@@ -20,6 +20,6 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 20,
+          "new": 20,
+          "text": "type GetAccountRow struct {"
+        },
+        {
+          "kind": "context",
+          "old": 21,
+          "new": 21,
+          "text": "\tID             int64"
+        },
+        {
+          "kind": "context",
+          "old": 22,
+          "new": 22,
+          "text": "\tOwnerEmail     string"
+        },
+        {
+          "kind": "remove",
+          "old": 23,
+          "text": "\tLegacyPlanCode sql.NullString"
+        },
+        {
+          "kind": "add",
+          "new": 23,
+          "text": "\tBillingEmail   sql.NullString"
+        },
+        {
+          "kind": "context",
+          "old": 24,
+          "new": 24,
+          "text": "\tPlan           string"
+        },
+        {
+          "kind": "context",
+          "old": 25,
+          "new": 25,
+          "text": "}"
+        }
+      ]
+    }
+  }
+}

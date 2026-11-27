@@ -179,12 +179,32 @@ func (s *Server) scoped(path string) (string, bool) {
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com; base-uri 'none'; form-action 'none'; frame-src 'self'; frame-ancestors 'none'; object-src 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
 		if s.origin == "" || r.Host != strings.TrimPrefix(s.origin, "http://") {
 			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		// Browsers label every request with where it came from. The app's own
+		// requests are same-origin and a typed or native navigation is none.
+		// Requests from inside a page or frame of another origin (fetch,
+		// subresources, frame navigations, form posts) are refused before any
+		// route sees them, even with the session cookie attached. A top-level
+		// GET navigation is let through, so a link or the desktop shell can
+		// open the app from elsewhere; it can read nothing. Clients that are
+		// not browsers send no label.
+		if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
+			topLevel := (r.Method == "GET" || r.Method == "HEAD") &&
+				r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+			if !topLevel {
+				http.Error(w, "cross-site request refused", http.StatusForbidden)
+				return
+			}
+		}
+		if strings.HasPrefix(r.URL.Path, framePrefix) {
+			serveFrame(w, r)
 			return
 		}
 		if r.URL.Path == mcpPath {
@@ -345,7 +365,7 @@ var errEventTooLarge = errors.New("event too large")
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "chat" && kind != "timeline" && kind != "decisions" {
+	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" && kind != "added_tiles" && kind != "tile_check" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)
@@ -374,6 +394,10 @@ func (s *Server) Publish(kind string, data any) error {
 	return nil
 }
 
+// Subscribed reports whether the app's event stream is connected: whether
+// any page of the app is open to hear an event.
+func (s *Server) Subscribed() bool { return s.hasSubscribers() }
+
 // hasSubscribers reports whether an event stream is connected.
 func (s *Server) hasSubscribers() bool {
 	s.mu.Lock()
@@ -396,9 +420,21 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A connection with no cursor is a page loading: it is not sent the
+	// render check's events from before it connected (a check long over would
+	// open or close the check window again). The page asks the daemon what
+	// is waiting instead. A reconnection, which has a cursor, is replayed
+	// them.
+	fresh := r.Header.Get("Last-Event-ID") == ""
+	var skipChecksUpTo uint64
 	ch := make(chan struct{}, 1)
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
+	// The checks to skip are the ones published before it subscribed: one
+	// published once it has, even before the loop first reads, is sent.
+	if fresh {
+		skipChecksUpTo = s.sequence
+	}
 	s.mu.Unlock()
 	select {
 	case s.joined <- struct{}{}:
@@ -424,6 +460,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, e := range events {
 			if e.ID > after {
+				if e.Kind == "tile_check" && e.ID <= skipChecksUpTo {
+					after = e.ID
+					continue
+				}
 				if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Kind, e.Data); err != nil {
 					return
 				}
@@ -446,13 +486,40 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-const bootstrapHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><script src="/launch.js" defer></script></head><body><h1>baum local</h1><p id="status">Connecting to the local application…</p></body></html>`
+// The bootstrap page shows for a moment on every launch, between the desktop
+// app's connecting screen and the application, so it paints what the
+// application's own connecting state paints: the canvas colour of the active
+// theme and nothing else. The desktop shell's preload sets `data-theme` and a
+// custom theme's tokens on the root before the first paint; without them (a
+// browser) the page follows the system's light or dark. The palette's seeds
+// and recipes are those of viewer/src/palette.css. The status fades in only
+// when the exchange is slow, and at once when it fails. The application's
+// fonts are behind the session, so the text uses the system's.
+const bootstrapHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><style>` + bootstrapCSS + `</style><script src="/launch.js" defer></script></head><body><main><p id="status" role="status">Connecting to the local application…</p></main></body></html>`
+
+const bootstrapCSS = `:root{--color-ink:#1f1b17;--color-paper:#ffffff;--color-shadow:#000000;--brand-forest:#0f1a14;--brand-sand-100:#f2dcad;` +
+	`--boot-canvas:var(--surface-canvas,color-mix(in srgb,var(--brand-sand-100) 42%,var(--color-paper)));` +
+	`--boot-text:var(--text-primary,var(--color-ink));` +
+	`--boot-muted:var(--text-secondary,color-mix(in srgb,var(--color-ink) 75%,var(--color-paper)));color-scheme:light}` +
+	`:root[data-theme="dark"]{color-scheme:dark;--boot-canvas:var(--surface-canvas,var(--brand-forest));` +
+	`--boot-text:var(--text-primary,color-mix(in srgb,var(--color-paper) 94%,var(--color-shadow)));` +
+	`--boot-muted:var(--text-secondary,color-mix(in srgb,var(--color-paper) 76%,var(--color-shadow)))}` +
+	`@media (prefers-color-scheme:dark){:root:not([data-theme]){color-scheme:dark;--boot-canvas:var(--brand-forest);` +
+	`--boot-text:color-mix(in srgb,var(--color-paper) 94%,var(--color-shadow));` +
+	`--boot-muted:color-mix(in srgb,var(--color-paper) 76%,var(--color-shadow))}}` +
+	`html,body{height:100%;margin:0;background:var(--boot-canvas)}` +
+	`main{display:grid;place-items:center;min-height:100%;padding:1.5rem;box-sizing:border-box;` +
+	`font:500 1rem/1.5 "Instrument Sans",ui-sans-serif,system-ui,sans-serif;color:var(--boot-muted);text-align:center}` +
+	`#status{margin:0;opacity:0;animation:boot-show .2s ease-out 1s forwards}` +
+	`#status.failed{opacity:1;animation:none;color:var(--boot-text)}` +
+	`@keyframes boot-show{to{opacity:1}}` +
+	`@media (prefers-reduced-motion:reduce){#status{animation-duration:0s}}`
 
 // The bootstrap exchanges the fragment capability, then replaces itself with
 // the application at the namespace path the exchange returns. A `page` of
 // "diagnostics" beside the token (the desktop app's first run) opens that
 // page; no other value is carried over.
-const bootstrapJS = `(async()=>{const params=new URLSearchParams(location.hash.slice(1));const token=params.get('token');const page=params.get('page')==='diagnostics'?'?page=diagnostics':'';history.replaceState(null,'',location.pathname);const status=document.getElementById('status');try{if(!token)throw Error('Open this page from the baum desktop app.');const response=await fetch('/api/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error('Launch authorization failed.');const {path}=await response.json();if(typeof path!=='string'||!path.startsWith('/s/'))throw Error('Launch authorization failed.');location.replace(path+page);}catch(error){status.textContent=error.message;}})();`
+const bootstrapJS = `(async()=>{const params=new URLSearchParams(location.hash.slice(1));const token=params.get('token');const page=params.get('page')==='diagnostics'?'?page=diagnostics':'';history.replaceState(null,'',location.pathname);const status=document.getElementById('status');try{if(!token)throw Error('Open this page from the baum desktop app.');const response=await fetch('/api/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error('Launch authorization failed.');const {path}=await response.json();if(typeof path!=='string'||!path.startsWith('/s/'))throw Error('Launch authorization failed.');location.replace(path+page);}catch(error){status.textContent=error.message;status.className='failed';}})();`
 
 // The default application page resolves API paths relative to its namespace.
 const appHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><script src="app.js" defer></script></head><body><h1>baum local</h1><p id="status">Connecting to the local application…</p></body></html>`

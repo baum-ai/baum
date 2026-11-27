@@ -20,8 +20,10 @@ import (
 )
 
 type relevanceBackend struct {
-	calls  int
-	title  string
+	calls int
+	title string
+	// limits is each request's output cap.
+	limits []int
 	inputs [][]relevanceCandidate
 	reply  func([]relevanceCandidate) ([]relevanceResult, error)
 }
@@ -33,6 +35,7 @@ func (b *relevanceBackend) Run(context.Context, agent.Request) (agent.Result, er
 }
 func (b *relevanceBackend) Complete(_ context.Context, req agent.CompleteRequest) (agent.Completion, error) {
 	b.calls++
+	b.limits = append(b.limits, req.MaxOutputTokens)
 	var input struct {
 		Title     string               `json:"title"`
 		Decisions []relevanceCandidate `json:"decisions"`
@@ -274,6 +277,11 @@ func TestRelevanceBatchesAndQueueAreBounded(t *testing.T) {
 	}
 	if len(b.inputs) != 2 || len(b.inputs[0]) != relevanceBatchLimit || len(b.inputs[1]) != 5 {
 		t.Fatalf("batch sizes: %v", b.inputs)
+	}
+	// A full batch's reply (about 250 tokens a decision) ran past a fixed
+	// 4096-token cap; a small batch still needs that much for thinking.
+	if b.limits[0] < 4096+relevanceBatchLimit*250 || b.limits[1] < 4096 || b.limits[1] >= b.limits[0] {
+		t.Fatalf("output caps: %v", b.limits)
 	}
 	for range 100 {
 		r.enqueue(relevanceWork{repository: "acme/demo", number: 7, keys: []SessionKey{{"claude-code", "session"}}})

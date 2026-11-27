@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/internal/store"
 )
 
 // codexSessionOn writes a rollout in the dated folder of day.
@@ -109,29 +108,6 @@ func TestRecordRejectsBadIDsAndForeignDirectories(t *testing.T) {
 	elsewhere := t.TempDir()
 	if err := Record(root, filepath.Join(elsewhere, agent.RunDirPrefix+"1"), true, "ok"); err != nil || exists(manifestPath(root, filepath.Join(elsewhere, agent.RunDirPrefix+"1"))) {
 		t.Errorf("a directory outside the root was recorded: %v", err)
-	}
-}
-
-func TestPruneSkipsRunsAlreadyPruned(t *testing.T) {
-	h := fakeHomes(t)
-	root := filepath.Join(t.TempDir(), "runs")
-	run, err := Create(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := Remove(root, run); err != nil {
-		t.Fatal(err)
-	}
-	if !pruned(root, run) {
-		t.Fatal("a removed run with no record is not seen as pruned")
-	}
-	// A session that shows up for the gone directory is not scanned for.
-	late := h.codexSessionOn(t, run, "d1", time.Now())
-	if err := PruneVersions(root, []store.Metadata{session("/x"), session("/y"), session(run)}); err != nil {
-		t.Fatal(err)
-	}
-	if !exists(late) {
-		t.Error("an already pruned run was scanned again")
 	}
 }
 

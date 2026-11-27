@@ -46,6 +46,8 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-repositories",
     "allow-finish-setup",
     "allow-step-zoom",
+    "allow-theme-state",
+    "allow-open-link",
 ];
 /// The bundled connecting screen.
 const CONNECTING_PAGE: &str = "index.html";
@@ -60,6 +62,9 @@ const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOKS_TIMEOUT: Duration = Duration::from_secs(240);
 /// Starting a GitHub sign-in asks GitHub for a device code.
 const GITHUB_TIMEOUT: Duration = Duration::from_secs(45);
+/// Where a GitHub sign-in's code is entered. Fixed rather than the daemon's
+/// verification URL, as on the setup screen.
+const GITHUB_DEVICE_PAGE: &str = "https://github.com/login/device";
 
 /// The setup screen's state while the app runs.
 #[derive(Default)]
@@ -636,6 +641,10 @@ pub struct ReviewSettings {
     effort: String,
     automatic: bool,
     pull_requests: String,
+    /// How automatic reviews follow later pushes: always, on_open or
+    /// on_change; empty leaves the saved choice.
+    #[serde(default)]
+    updates: String,
     /// The fixes' agent, model and effort; an empty agent follows reviews.
     #[serde(default)]
     fix_backend: String,
@@ -692,6 +701,9 @@ fn review_set_args(settings: &ReviewSettings) -> Vec<String> {
         format!("--pull-requests={}", settings.pull_requests),
         format!("--fix-backend={}", settings.fix_backend),
     ];
+    if !settings.updates.is_empty() {
+        args.push(format!("--updates={}", settings.updates));
+    }
     if !settings.fix_backend.is_empty() {
         args.push(format!("--fix-model={}", settings.fix_model));
         args.push(format!("--fix-effort={}", settings.fix_effort));
@@ -727,12 +739,20 @@ pub async fn save_review_settings(
 /// The GitHub step signs in through the attached daemon's own API, which runs
 /// the device flow and keeps the credential, so the screen never holds a
 /// token. It reads the connection, or starts, cancels or rechecks a sign-in;
-/// disconnecting stays in the app's settings.
+/// disconnecting stays in the app's settings. `open` opens GitHub's device
+/// page in the browser, a fixed address, a few seconds after a sign-in starts:
+/// the screen can no longer open a window then, and the window's navigations
+/// never open the browser (see `navigation::decide`).
 #[tauri::command]
 pub async fn github_connection(
     app: AppHandle,
     action: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    if action.as_deref() == Some("open") {
+        let page = url::Url::parse(GITHUB_DEVICE_PAGE).expect("static URL");
+        crate::open_externally(&app, &page);
+        return Ok(serde_json::Value::Null);
+    }
     blocking(move || {
         let launch =
             crate::tray::launch(&app).ok_or("baum is still starting. Try again in a moment.")?;
@@ -1083,6 +1103,10 @@ mod tests {
         assert_eq!(
             review_set_args(&settings(&format!("{{{base}}}")))[5..],
             ["--fix-backend="]
+        );
+        assert_eq!(
+            review_set_args(&settings(&format!(r#"{{{base},"updates":"on_change"}}"#)))[5..],
+            ["--fix-backend=", "--updates=on_change"]
         );
         assert_eq!(
             review_set_args(&settings(&format!(

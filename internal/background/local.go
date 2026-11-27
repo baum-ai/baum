@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/reviewv2"
 )
 
 // Retention reconciles the refs that keep saved review versions' commits in a
@@ -91,7 +92,9 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (resu
 	}
 	key := store.Key{Repository: repo.String(), Number: number}
 	saved, err := versions.Latest(ctx, key)
-	if errors.Is(err, store.ErrNotFound) {
+	// A baum.review/2 version's live facts are not refreshed in place: its
+	// pull request is observed as one without a review is.
+	if errors.Is(err, store.ErrNotFound) || err == nil && reviewv2.IsV2(saved.Document) {
 		evidence, err := l.Client.Fetch(ctx, repo, number, github.FetchOptions{MetadataOnly: true})
 		if err != nil {
 			return discovery.Observation{}, err
@@ -112,6 +115,10 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (resu
 	}
 	capture := &capturingClient{client: l.Client}
 	updater := refresh.Refresher{GitHub: capture, Git: git, Sessions: assemble.LocalSessions{Dir: git.Dir(), Warn: io.Discard, Repo: git}}
+	// Unreadable, it is unknown: the review shows as outdated, as before.
+	if kept, _ := versions.KeptHead(ctx, key, saved.Metadata.Version); kept != nil {
+		updater.KeptHead, updater.KeptBase = kept.Head, kept.Base
+	}
 	document, err := updater.Refresh(ctx, repo, number, saved, assemble.LimitsFrom(caps).Caps, time.Now().UTC())
 	// Remote metadata is useful even when reviewed git objects are no longer
 	// present or a local session store cannot be read. Never discard it because

@@ -1,0 +1,452 @@
+<style>
+  /* A list row of two lines: its lines take the row's width, so a long
+     name or chip wraps or truncates within it. */
+  .kit-list > li.kit-stack {
+    align-items: stretch;
+  }
+  /* A row's text keeps a readable width; its citations wrap below it when
+     they do not fit beside it. */
+  .row-text {
+    flex: 1 1 16rem;
+    min-width: 0;
+  }
+  .delta {
+    flex: none;
+    white-space: nowrap;
+  }
+  .delta > * + * {
+    margin-left: var(--space-1);
+  }
+  .name {
+    min-width: 0;
+  }
+  .glance-rows {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .glance-rows > li {
+    align-items: center;
+  }
+  .glance-rows.across {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-8);
+  }
+  /* The glance's pills share one width, so the names after them line up. */
+  .lead {
+    flex: none;
+    width: 5.75rem;
+  }
+  .kit-table .ident {
+    white-space: nowrap;
+  }
+  .pills {
+    display: flex;
+    gap: var(--space-1);
+    margin-bottom: var(--space-1);
+  }
+  .kit-table .note {
+    display: block;
+    margin-top: 2px;
+  }
+  .kit-table .code {
+    min-width: 9rem;
+    overflow-wrap: break-word;
+  }
+  /* With "Show only changes" on, the last row left shown ends the table. */
+  .kit-table tbody tr:not([hidden]):not(:has(~ tr:not([hidden]))) > td {
+    border-bottom: 0;
+  }
+  /* On a phone the columns share what there is and wrap, and the glance
+     lists its rows in one column so a name keeps its room. */
+  @media (max-width: 480px) {
+    .glance-rows.across {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .kit-table .code {
+      min-width: 0;
+    }
+  }
+</style>
+<script>
+  // The order tables are read in: what loses data first, then what other
+  // code notices, then what only adds.
+  const ORDER = { dropped: 0, renamed: 1, altered: 2, created: 3 };
+  // What a change is, as the review's diagrams mark it: a pill's words and tone.
+  const PILL = {
+    created: ["New", "info"],
+    added: ["New", "info"],
+    altered: ["Changed", "caution"],
+    renamed: ["Renamed", "caution"],
+    dropped: ["Dropped", "critical"],
+    removed: ["Removed", "critical"],
+  };
+  const pill = ([label, tone]) => baum.html`<span class="kit-pill" data-tone=${tone}>${label}</span>`;
+  const DESTRUCTIVE = ["Destructive", "critical"];
+  const APPLIES = { on_deploy: "Runs on deploy", on_start: "Runs on start", manual: "Run by hand", unknown: null };
+  const KIND = {
+    migration_file: "migration",
+    embedded: "in code",
+    schema_dump: "schema dump",
+    orm_model: "model",
+    query_file: "queries",
+  };
+  const ENGINE = { postgres: "Postgres", sqlite: "SQLite", mysql: "MySQL", other: null, unknown: null };
+
+  const plural = (count, one, many) => `${count} ${count === 1 ? one : many || `${one}s`}`;
+  /** Columns the table changes, without those listed only beside them. */
+  const changedColumns = (table) => table.columns.filter((column) => column.change !== "unchanged");
+  /** Columns listed as unchanged whose definition differs: drawn, and
+   *  counted, as altered. */
+  const misListed = (table) =>
+    table.columns.filter(
+      (column) =>
+        column.change === "unchanged" &&
+        (column.before === null || column.after === null || !baum.compare(column.before, column.after).same),
+    );
+  const destructiveColumns = (table) => changedColumns(table).filter((column) => column.destructive);
+
+  const destructive = (table) => table.change === "dropped" || destructiveColumns(table).length > 0;
+  const blocking = (table) => table.indexes.filter((index) => index.online === false && index.change !== "removed");
+
+  function sorted(tables) {
+    return [...tables].sort(
+      (a, b) =>
+        Number(destructive(b)) - Number(destructive(a)) ||
+        ORDER[a.change] - ORDER[b.change] ||
+        a.name.localeCompare(b.name),
+    );
+  }
+
+  function counts(tables) {
+    const parts = [];
+    for (const change of ["created", "altered", "renamed", "dropped"]) {
+      const count = tables.filter((table) => table.change === change).length;
+      if (count) parts.push(`${count} ${change}`);
+    }
+    return parts;
+  }
+
+  /** The lead: the count in bold, the kinds of change after it. */
+  function lede(data) {
+    if (data.tables.length === 0) {
+      return baum.html`<span class="kit-lede kit-clamp-2 kit-grow">Queries change; the schema does not</span>`;
+    }
+    return baum.html`<span class="kit-clamp-2 kit-grow">
+      <span class="kit-lede">${plural(data.tables.length, "table")}</span>
+      <span class="kit-muted">${counts(data.tables).map((part) => ` · ${part}`)}</span>
+    </span>`;
+  }
+
+  /** Facts about how the change runs, for the foot and the detail. */
+  function runFacts(data) {
+    const facts = [];
+    const engine = ENGINE[data.engine];
+    if (engine) facts.push(engine);
+    const applies = [...new Set(data.migrations.map((m) => APPLIES[m.applies]).filter(Boolean))];
+    facts.push(...applies);
+    return facts;
+  }
+
+  function delta(table) {
+    const count = (...changes) => changedColumns(table).filter((column) => changes.includes(column.change)).length;
+    const added = count("added");
+    const removed = count("removed");
+    const altered = count("altered", "renamed") + misListed(table).length;
+    if (table.change === "dropped" && changedColumns(table).length === 0) return null;
+    return baum.html`<span class="delta kit-small kit-num" title="Columns added, removed and altered">
+      ${added ? baum.html`<span class="kit-added">+${added}</span>` : null}
+      ${removed ? baum.html`<span class="kit-removed">−${removed}</span>` : null}
+      ${altered ? baum.html`<span class="kit-muted">~${altered}</span>` : null}
+    </span>`;
+  }
+
+  function glanceRow(table) {
+    return baum.html`<li>
+      <span class="lead">${pill(destructive(table) ? DESTRUCTIVE : PILL[table.change])}</span>
+      <span class="kit-mono kit-truncate kit-grow name" title=${table.name}>${table.name}</span>
+      ${delta(table)}
+    </li>`;
+  }
+
+  /** Badges for what a reviewer must weigh: destructive changes, migrations
+   *  that cannot be undone, index builds that block writes. */
+  function warnings(data, short) {
+    const badges = [];
+    const lost = data.tables.filter(destructive).length;
+    if (lost) badges.push(pill([short ? `${lost} destructive` : plural(lost, "destructive change"), "critical"]));
+    const irreversible = data.migrations.filter((m) => m.reversible === false).length;
+    if (irreversible) badges.push(baum.html`<span class="kit-badge" data-tone="caution">${short ? "No rollback" : plural(irreversible, "migration") + " without a rollback"}</span>`);
+    const blocks = data.tables.reduce((sum, table) => sum + blocking(table).length, 0);
+    if (blocks) badges.push(baum.html`<span class="kit-badge" data-tone="caution">${short ? "Blocks writes" : plural(blocks, "index build") + " blocking writes"}</span>`);
+    return badges;
+  }
+
+
+  /** Takes rows off the end of a glance's list until it fits its box, as
+   *  the lead may wrap to two lines, and says how many are left out. */
+  function fit(list, more, left) {
+    const rows = [...list.children];
+    let cut = left;
+    const show = () => {
+      more.textContent = `${cut} more`;
+      more.hidden = cut === 0;
+    };
+    show();
+    for (let pass = 0; pass < 2; pass++) {
+      while (rows.length > 1 && list.scrollHeight > list.clientHeight + 1) {
+        rows.pop().remove();
+        cut++;
+      }
+      show();
+    }
+  }
+
+  function glance({ data, size }) {
+    if (data.tables.length === 0 && data.migrations.length === 0 && data.data_changes.length === 0) {
+      return baum.empty("No schema changes.");
+    }
+    const tables = sorted(data.tables);
+    // As many rows as could fit; fit takes off what the box cannot hold.
+    const room = size === "third" ? 4 : 6;
+    const list = tables.length > 0 ? tables : data.migrations;
+    const rows =
+      tables.length > 0
+        ? tables.slice(0, room).map(glanceRow)
+        : data.migrations.slice(0, room).map(
+            (m) => baum.html`<li>
+              <span class="kit-tag">${KIND[m.kind]}</span>
+              <span class="kit-mono kit-truncate kit-grow name" title=${m.label}>${m.label}</span>
+            </li>`,
+          );
+    const badges = warnings(data, true);
+    const facts = runFacts(data);
+    if (data.data_changes.length) facts.push(plural(data.data_changes.length, "data change"));
+    const node = baum.html`<div class="kit-glance">
+      <div class="kit-row" data-wrap="no" data-align="start">
+        ${lede(data)}
+        ${size === "third" ? badges.slice(0, 1) : badges.slice(0, 2)}
+      </div>
+      <ul class=${["kit-list", "glance-rows", size === "full" ? "across" : null]} data-gap="1">
+        ${rows}
+      </ul>
+      <p class="kit-foot">${facts.map((fact) => baum.html`<span>${fact}</span>`)}<span class="more" hidden></span></p>
+    </div>`;
+    const ul = node.querySelector(".glance-rows");
+    const more = node.querySelector(".more");
+    requestAnimationFrame(() => fit(ul, more, list.length - rows.length));
+    return node;
+  }
+
+  function cites(list) {
+    if (!list || list.length === 0) return null;
+    return baum.html`<span class="kit-row" data-gap="1">${list.map((citation) => baum.cite(citation))}</span>`;
+  }
+
+  /** A column's row: what changed on a pill over its name, its definition
+   *  before and after with the words that differ marked, and its note. A
+   *  column listed only beside the changes, with its definition as it was,
+   *  is drawn quieter and marked so "Show only changes" can hide it. */
+  function columnRow(column, created) {
+    const note = column.note ? baum.html`<span class="kit-small kit-muted note">${column.note}</span>` : null;
+    if (created) {
+      return baum.html`<tr>
+        <td class="kit-mono ident">${column.name}</td>
+        <td class="code"><span class="kit-mono">${column.after ?? "—"}</span>${note}</td>
+      </tr>`;
+    }
+    const words = baum.compare(column.before ?? "", column.after ?? "");
+    // A column listed as unchanged whose definition differs is drawn as the
+    // change it is.
+    const listed = column.change === "unchanged";
+    const same = listed && column.before !== null && column.after !== null && words.same;
+    const change = listed ? "altered" : column.change;
+    const lost = column.destructive && !listed;
+    return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>
+      <td class="ident">
+        ${same ? null : baum.html`<span class="pills">${pill(PILL[change])}${lost ? pill(DESTRUCTIVE) : null}</span>`}
+        <span class="kit-mono">${column.name}</span>
+      </td>
+      <td class="kit-mono code">${column.before === null ? "—" : words.was}</td>
+      <td class="code"><span class="kit-mono">${column.after === null ? "—" : words.now}</span>${note}</td>
+    </tr>`;
+  }
+
+  function columnTable(table) {
+    if (table.columns.length === 0) return null;
+    const created = table.change === "created";
+    return baum.html`<div class="kit-scroll">
+      <table class="kit-table">
+        <thead>
+          <tr>${created ? baum.html`<th>Column</th><th>Definition</th>` : baum.html`<th>Column</th><th>Before</th><th>After</th>`}</tr>
+        </thead>
+        <tbody>
+          ${table.columns.map((column) => columnRow(column, created))}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  /** "Show only changes": a switch that hides the rows marked the same,
+   *  and a table of nothing else, offered when some rows are and some are
+   *  not. */
+  function onlyChanges(node) {
+    if (!node.querySelector("tr[data-same]") || !node.querySelector("tbody > tr:not([data-same])")) return;
+    const rows = [...node.querySelectorAll("tr[data-same]")];
+    for (const table of node.querySelectorAll(".kit-scroll")) {
+      if (!table.querySelector("tbody > tr:not([data-same])")) rows.push(table);
+    }
+    const control = baum.html`<label class="kit-switch"><input type="checkbox" role="switch">Show only changes</label>`;
+    const input = control.querySelector("input");
+    input.addEventListener("change", () => {
+      for (const row of rows) row.hidden = input.checked;
+    });
+    node.querySelector(".switch-slot").append(control);
+  }
+
+  function indexList(table) {
+    if (table.indexes.length === 0) return null;
+    return baum.html`<ul class="kit-list" data-gap="1">
+      ${table.indexes.map(
+        (index) => baum.html`<li>
+          <span class="lead">${pill(PILL[index.change] ?? PILL.altered)}</span>
+          <span class="kit-grow kit-break">
+            ${index.unique ? baum.html`<span class="kit-subtle kit-small">UNIQUE </span>` : null}<span class="kit-mono">${index.name ?? ""}</span>
+            <span class="kit-mono kit-muted">${index.definition}</span>
+          </span>
+          ${index.online === false && index.change !== "removed" ? baum.html`<span class="kit-badge" data-tone="caution">Blocks writes</span>` : null}
+        </li>`,
+      )}
+    </ul>`;
+  }
+
+  function tableCard(table) {
+    const lost = destructive(table);
+    return baum.html`<article class="kit-card kit-stack" data-tone=${lost ? "critical" : null}>
+      <div class="kit-row">
+        <span class="kit-mono kit-strong kit-break">${table.name}</span>
+        ${pill(PILL[table.change])}
+        ${table.renamed_from ? baum.html`<span class="kit-small kit-subtle">from <span class="kit-mono">${table.renamed_from}</span></span>` : null}
+        ${lost ? pill(DESTRUCTIVE) : null}
+        <span class="kit-grow"></span>
+        ${delta(table)}
+      </div>
+      ${columnTable(table)}
+      ${indexList(table)}
+      ${cites(table.cites)}
+      <details class="kit-details">
+        <summary>Statement</summary>
+        ${baum.diff(table.cites[0], { maxLines: 14 })}
+      </details>
+    </article>`;
+  }
+
+  function attention(data) {
+    const items = [];
+    for (const table of sorted(data.tables)) {
+      if (table.change === "dropped") {
+        items.push({ text: baum.html`Drops table <span class="kit-mono">${table.name}</span>`, cite: table.cites[0] });
+      }
+      for (const column of destructiveColumns(table)) {
+        items.push({
+          text: baum.html`<span class="kit-mono">${table.name}.${column.name}</span> ${column.change}${column.note ? baum.html`<span class="kit-muted">: ${column.note}</span>` : null}`,
+          cite: table.cites[0],
+        });
+      }
+    }
+    if (items.length === 0) return null;
+    return baum.html`<div class="kit-callout kit-stack" data-tone="critical" data-gap="2">
+      <span class="kit-strong">Loses or rejects existing data</span>
+      <ul class="kit-list" data-gap="1">
+        ${items.slice(0, 12).map((item) => baum.html`<li class="kit-stack" data-gap="1"><span class="kit-break">${item.text}</span><span>${baum.cite(item.cite)}</span></li>`)}
+      </ul>
+      ${items.length > 12 ? baum.html`<span class="kit-small kit-muted">${plural(items.length - 12, "more")} in the tables below</span>` : null}
+    </div>`;
+  }
+
+  function section(title, content) {
+    return baum.html`<section class="kit-section"><h2 class="kit-heading">${title}</h2>${content}</section>`;
+  }
+
+  function migrationList(data) {
+    if (data.migrations.length === 0) return null;
+    return section(
+      "Migrations",
+      baum.html`<ul class="kit-list" data-divided>
+        ${data.migrations.map(
+          (m) => baum.html`<li class="kit-stack" data-gap="2">
+            <div class="kit-row">
+              <span class="kit-tag">${KIND[m.kind]}</span>
+              <span class="kit-mono kit-break kit-grow">${m.label}</span>
+              ${APPLIES[m.applies] ? baum.html`<span class="kit-small kit-muted">${APPLIES[m.applies]}</span>` : null}
+            </div>
+            <div class="kit-row">
+              ${m.reversible === true ? baum.html`<span class="kit-badge" data-tone="positive">Reversible</span>` : null}
+              ${m.reversible === false ? baum.html`<span class="kit-badge" data-tone="caution">No rollback</span>` : null}
+              ${m.idempotent === true ? baum.html`<span class="kit-badge">Safe to rerun</span>` : null}
+              ${m.idempotent === false ? baum.html`<span class="kit-badge" data-tone="caution">Not safe to rerun</span>` : null}
+              ${cites(m.cites)}
+            </div>
+          </li>`,
+        )}
+      </ul>`,
+    );
+  }
+
+  function detail({ data }) {
+    if (data.tables.length === 0 && data.migrations.length === 0 && data.data_changes.length === 0) {
+      return baum.empty("No schema changes in this pull request.");
+    }
+    const tables = sorted(data.tables);
+    const facts = runFacts(data);
+    const badges = warnings(data, false);
+    const node = baum.html`<div class="kit-stack" data-gap="6">
+      <div class="kit-stack" data-gap="3">
+        <div class="kit-row" data-justify="between">${lede(data)}<span class="switch-slot"></span></div>
+        ${facts.length || badges.length
+          ? baum.html`<div class="kit-row">
+              ${facts.map((fact) => baum.html`<span class="kit-tag">${fact}</span>`)}
+              ${badges}
+            </div>`
+          : null}
+      </div>
+      ${attention(data)}
+      ${data.related && data.related.length
+        ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
+        : null}
+      ${tables.length
+        ? section("Tables", baum.html`<div class="kit-stack">${tables.map((table) => tableCard(table))}</div>`)
+        : null}
+      ${migrationList(data)}
+      ${data.data_changes.length
+        ? section(
+            "Data changes",
+            baum.html`<ul class="kit-list" data-divided>
+              ${data.data_changes.map((change) => baum.html`<li class="kit-row"><span class="row-text">${baum.md(change.text, { inline: true })}</span>${cites(change.cites)}</li>`)}
+            </ul>`,
+          )
+        : null}
+      ${data.readers.length
+        ? section(
+            "Code that reads these tables",
+            baum.html`<ul class="kit-list" data-divided>
+              ${data.readers.map(
+                (reader) => baum.html`<li class="kit-stack" data-gap="1">
+                  <div class="kit-row" data-wrap="no" data-align="baseline">
+                    <span class="kit-dot" data-tone=${reader.updated === true ? "positive" : reader.updated === false ? "caution" : "neutral"}></span>
+                    <span class="kit-mono kit-break kit-grow">${reader.label}</span>
+                    <span class="kit-small kit-subtle kit-natural">${reader.updated === true ? "updated" : reader.updated === false ? "not updated" : "unknown"}</span>
+                  </div>
+                  ${cites(reader.cites)}
+                </li>`,
+              )}
+            </ul>`,
+          )
+        : null}
+    </div>`;
+    onlyChanges(node);
+    return node;
+  }
+
+  baum.tile({ glance, detail });
+</script>

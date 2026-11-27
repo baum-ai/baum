@@ -702,7 +702,9 @@ func TestSessionToolsReadTheRealRoutes(t *testing.T) {
 	if len(page.Transcript.Session.Prompts) != 1 || page.Transcript.Session.NextTurn != 2 {
 		t.Errorf("paging: %s", text)
 	}
-	if text, failed := f.call(t, chat, "live_session_transcript", map[string]any{"session": "claude-code:nope"}); !failed {
+	// One that is not listed is looked up in the agent's store, which says
+	// when it has none.
+	if text, failed := f.call(t, chat, "live_session_transcript", map[string]any{"session": "claude-code:nope"}); failed || !strings.Contains(text, `"available":false`) {
 		t.Errorf("a session that is not listed: %s", text)
 	}
 	r := rawToolCall(t, f, action, "live_session_transcript")

@@ -1,13 +1,15 @@
 import { createRoot } from "react-dom/client";
 import { Setup } from "./setup";
-import { followSystemTheme } from "./system-theme";
+import { followTheme } from "./follow-theme";
 import "./screen.css";
 import "./setup.css";
 import { blockBrowserMenu } from "../native-menu";
 import { trackHidden } from "../visible-interval";
 import { installTextHistory } from "../text-history";
-followSystemTheme();
+import { openOutsideLinksInBrowser } from "../outside-links";
+followTheme();
 blockBrowserMenu();
 trackHidden();
 installTextHistory();
+openOutsideLinksInBrowser();
 createRoot(document.getElementById("root")!).render(<Setup />);

@@ -224,6 +224,25 @@ function HighlightedCodeBlock({
   );
 }
 
+/** Code outside Markdown (a code tile's excerpt), coloured as a fenced block
+ *  is when `lang` is a language the highlighter knows and the code is within
+ *  the limits; plain otherwise. */
+export function HighlightedCode({
+  code,
+  lang,
+  className,
+}: {
+  code: string;
+  lang: Lang | null;
+  className?: string;
+}) {
+  return lang && withinHighlightLimits(code.split("\n").length, code.length) ? (
+    <HighlightedCodeBlock code={code} lang={lang} className={className} />
+  ) : (
+    <code className={className}>{code}</code>
+  );
+}
+
 /** A fenced block's code, coloured when its fence names a language the
  *  highlighter knows and it is within the limits. */
 function codeBlock(className: string | undefined, children: ReactNode) {
@@ -433,7 +452,14 @@ const INLINE_ELEMENTS = ["p", "strong", "em", "del", "code", "a", "br"];
 const INLINE_COMPONENTS: Components = {
   // Paragraphs run together as one line of text: the inline form sits inside
   // a heading, a button or a sentence, where a block would not belong.
-  p: ({ children }) => <>{children} </>,
+  // A space joins a paragraph to the one before it, so the line never ends
+  // in one.
+  p: ({ children, node }) => (
+    <>
+      {node?.position?.start.offset ? " " : null}
+      {children}
+    </>
+  ),
   // Text only: inside a button or a link a nested link is invalid, and the
   // row it sits in already leads somewhere.
   a: ({ children }) => <>{children}</>,

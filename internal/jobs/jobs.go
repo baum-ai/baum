@@ -19,13 +19,13 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/appdb"
-	chatpkg "github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/tileview"
 )
 
 type Item struct {
@@ -35,12 +35,12 @@ type Item struct {
 	// the job generates the group's combined review. See
 	// internal/reviewgroups.
 	Group string `json:"group,omitempty"`
-	// Kind is KindFix for a fix, KindChat for a question to a review's
-	// agent, empty for a review.
+	// Kind is KindFix for a fix, KindChat for a question an earlier version
+	// asked a review's agent, empty for a review.
 	Kind string `json:"kind,omitempty"`
 	// FixChat, on a fix, makes the conversation of a review's agent part of
 	// what it fixes (see FixChatRef). It is `fix_chat`, not `chat`, because a
-	// job's own `chat` is the turn a chat job answers.
+	// job's own `chat` is the turn a chat job answered.
 	FixChat *FixChatRef `json:"fix_chat,omitempty"`
 	// Only limits a fix to one of what it fixes: FixOnlyChecks fixes the
 	// failing checks and leaves conflicts and review comments alone.
@@ -184,6 +184,10 @@ type Prepared struct {
 	// Draft: GitHub reports the PR as a draft. Automatic jobs skip drafts;
 	// a confirmed run does not.
 	Draft bool `json:"draft,omitempty"`
+	// Closed: GitHub reports the PR merged or closed. Automatic jobs skip
+	// it; a person can still generate its review again (a forced
+	// regeneration), from its head as it was merged or closed.
+	Closed bool `json:"closed,omitempty"`
 	// GroupName is a group job's group name when it was prepared, and
 	// Members its members' numbers and heads ("7@<sha>,9@<sha>"), which a
 	// confirmation covers like a pull request's head.
@@ -195,8 +199,14 @@ type Prepared struct {
 	Awaiting []int `json:"awaiting,omitempty"`
 	// RefuseDraft is set by the queue, never stored, on the inputs of an
 	// automatic job it executes: the executor refuses the run with
-	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
+	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft, and
+	// {ReasonClosed} if it reports the pull request merged or closed.
 	RefuseDraft bool `json:"-"`
+	// Triage is set by the queue, never stored, on the inputs of an
+	// automatic review: with automatic reviews set to review
+	// on change, the executor first asks whether the head would change the
+	// saved review, and completes with UnchangedError when it would not.
+	Triage bool `json:"-"`
 	// Fix is what a fix job (KindFix) does.
 	Fix FixInputs `json:"fix,omitzero"`
 	// FixThreads are the review threads a fix addresses (Fix.Threads).
@@ -206,7 +216,7 @@ type Prepared struct {
 	FixThreads          []FixThread `json:"fix_threads,omitempty"`
 	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
-	// Chat is what a chat job (KindChat) answers.
+	// Chat is what a chat job (KindChat) answered.
 	Chat ChatInputs `json:"chat,omitzero"`
 	// account identifies the GitHub credential partition the job was
 	// prepared with, apart from the rest of ConfigDigest, so a changed agent,
@@ -306,8 +316,11 @@ type Progress struct {
 	// with the current settings, which replace the job's prepared ones.
 	Backend, Model string
 	// Draft, when set, is a staged review's latest draft (generate.Options.
-	// OnDraft), which the queue holds in memory until the job ends.
-	Draft []byte
+	// OnDraft), which the queue holds in memory until the job ends, and
+	// DraftComposition its layout (generate.Draft.Composition), nil for
+	// none.
+	Draft            []byte
+	DraftComposition []byte
 	// FailedSections and ContextFailed, once Gaps is set, are what the
 	// published review lacks (see Job).
 	Gaps           bool
@@ -330,15 +343,17 @@ type Queue struct {
 	// replaced: their cancellation ends them as superseded.
 	superseded map[string]bool
 	// drafts holds the latest draft of each running staged review, by job.
-	drafts  map[string][]byte
-	cancels map[string]context.CancelFunc
-	wake    chan struct{}
-	// chatWake wakes the chat lane's workers (KindChat).
-	chatWake chan struct{}
-	// chat stores and settles chat turns; nil refuses questions.
+	drafts map[string]heldDraft
+	// draftTiles keeps the encoded tile view of each draft in drafts; an
+	// entry goes with its job's draft.
+	draftTiles draftTiles
+	cancels    map[string]context.CancelFunc
+	wake       chan struct{}
+	// chat lists the stored conversations; nil lists none.
 	chat ChatService
-	// ask serialises Ask from storing a turn to journaling its job.
-	ask     sync.Mutex
+	// added returns the tiles a person added to a pull request, which a
+	// draft's view shows (SetAdded).
+	added   func(repository string, number int) []tileview.AddedTile
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
@@ -366,7 +381,7 @@ type Queue struct {
 	// gate, when set, answers whether an automatic job may run now (and
 	// under which daily cap); see SetAutomaticGate.
 	gate func(Job) Admission
-	// limit is how many jobs outside the chat lane run at once; see
+	// limit is how many jobs run at once; see
 	// SetConcurrency.
 	limit int
 	// log records jobs starting and ending; see SetLogger.
@@ -457,7 +472,7 @@ func open(path string, executor Executor, concurrency int, changed func(Job), he
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency, held: held}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string]heldDraft{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency, held: held}
 	opened := false
 	defer func() {
 		if !opened {
@@ -470,10 +485,13 @@ func open(path string, executor Executor, concurrency int, changed func(Job), he
 		return nil, e
 	}
 	for i := range q.jobs {
-		if q.jobs[i].State == "running" || q.jobs[i].Draft != 0 {
+		// A chat job still queued has nothing left to run it: it ends as
+		// interrupted, as a running one does, so its turn reads that way.
+		orphaned := q.jobs[i].State == "queued" && q.jobs[i].Kind == KindChat
+		if q.jobs[i].State == "running" || orphaned || q.jobs[i].Draft != 0 {
 			q.mark(q.jobs[i].ID)
 		}
-		if q.jobs[i].State == "running" {
+		if q.jobs[i].State == "running" || orphaned {
 			// Its last estimate stays, as a lower bound: it left out
 			// whatever the call in flight used after its last report.
 			if q.jobs[i].Accounting != nil {
@@ -499,11 +517,7 @@ func open(path string, executor Executor, concurrency int, changed func(Job), he
 	// Every worker a limit may need runs; limit decides how many take a job.
 	for range repos.MaxJobConcurrency {
 		q.wg.Add(1)
-		go q.worker(false)
-	}
-	for range ChatWorkers {
-		q.wg.Add(1)
-		go q.worker(true)
+		go q.worker()
 	}
 	q.signal()
 	opened = true
@@ -673,16 +687,14 @@ func (q *Queue) retrySave() {
 	}
 }
 func (q *Queue) signal() {
-	for _, wake := range []chan struct{}{q.wake, q.chatWake} {
-		select {
-		case wake <- struct{}{}:
-		default:
-		}
+	select {
+	case q.wake <- struct{}{}:
+	default:
 	}
 }
 func (q *Queue) Close() { _ = q.Shutdown(context.Background()) }
 
-// SetConcurrency changes how many jobs outside the chat lane run at once.
+// SetConcurrency changes how many jobs run at once.
 // Lowering it stops none: running jobs finish, and no new one starts until
 // fewer than n run.
 func (q *Queue) SetConcurrency(n int) error {
@@ -823,21 +835,33 @@ func (q *Queue) ActiveFixes() []Job {
 	return out
 }
 
+// heldDraft is a running staged review's latest draft and its layout.
+type heldDraft struct {
+	document, composition []byte
+}
+
 // Draft is the latest draft of a running staged review and the count it is
 // (Job.Draft), or false when the job has none now.
 func (q *Queue) Draft(jobID string) ([]byte, int, bool) {
+	draft, _, revision, ok := q.DraftLayout(jobID)
+	return draft, revision, ok
+}
+
+// DraftLayout is Draft with the draft's layout (Progress.DraftComposition),
+// nil for none.
+func (q *Queue) DraftLayout(jobID string) (draft, composition []byte, revision int, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	draft, ok := q.drafts[jobID]
+	held, ok := q.drafts[jobID]
 	if !ok {
-		return nil, 0, false
+		return nil, nil, 0, false
 	}
 	for _, j := range q.jobs {
 		if j.ID == jobID {
-			return draft, j.Draft, true
+			return held.document, held.composition, j.Draft, true
 		}
 	}
-	return nil, 0, false
+	return nil, nil, 0, false
 }
 func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estimate, error) {
 	return q.estimate(ctx, items, mode, false)
@@ -1069,7 +1093,7 @@ func (q *Queue) membersBusy(j Job) bool {
 	}
 	members, _ := groupMembers(j.Members)
 	for _, r := range q.jobs {
-		if r.Group == "" && r.Kind != KindChat && (r.State == "queued" || r.State == "running") && strings.EqualFold(r.Repository, j.Repository) && slices.ContainsFunc(members, func(m generate.GroupMember) bool { return m.Number == r.PR }) {
+		if r.Group == "" && (r.State == "queued" || r.State == "running") && strings.EqualFold(r.Repository, j.Repository) && slices.ContainsFunc(members, func(m generate.GroupMember) bool { return m.Number == r.PR }) {
 			return true
 		}
 	}
@@ -1322,9 +1346,6 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 	defer func() {
 		q.mu.Unlock()
 		if notification != nil {
-			// A cancelled question's turn is settled before the event goes
-			// out, outside the lock: it writes the clone's store.
-			q.settleChat(*notification)
 			q.notify(*notification)
 		}
 	}()
@@ -1423,19 +1444,14 @@ func (q *Queue) stopSuperseded(ids []string) {
 	}
 }
 
-// worker runs queued jobs of its lane: chat jobs (KindChat) when chat is
-// set, every other job otherwise.
-func (q *Queue) worker(chat bool) {
+// worker runs queued jobs.
+func (q *Queue) worker() {
 	defer q.wg.Done()
-	wake := q.wake
-	if chat {
-		wake = q.chatWake
-	}
 	for {
 		select {
 		case <-q.ctx.Done():
 			return
-		case <-wake:
+		case <-q.wake:
 		}
 		for {
 			q.mu.Lock()
@@ -1444,10 +1460,10 @@ func (q *Queue) worker(chat bool) {
 				return
 			}
 			i := -1
-			// Outside the chat lane a worker takes a job only below limit;
-			// none starts while a restart waits (DrainRunning).
-			if !q.held && !q.draining && (chat || q.running() < q.limit) {
-				i = q.next(chat)
+			// A worker takes a job only below limit; none starts while the
+			// queue is held or a restart waits (DrainRunning).
+			if !q.held && !q.draining && q.running() < q.limit {
+				i = q.next()
 			}
 			if i < 0 {
 				q.mu.Unlock()
@@ -1485,6 +1501,7 @@ func (q *Queue) worker(chat bool) {
 			q.notify(j)
 			inputs := j.Prepared
 			inputs.RefuseDraft = j.Automatic
+			inputs.Triage = j.Automatic
 			cost, err := q.executor.Execute(ctx, inputs, func(p Progress) {
 				q.mu.Lock()
 				// Archiving may move the job in the history: find it again.
@@ -1517,7 +1534,7 @@ func (q *Queue) worker(chat bool) {
 					job.Backend, job.Model = p.Backend, p.Model
 				}
 				if p.Draft != nil {
-					q.drafts[j.ID] = p.Draft
+					q.drafts[j.ID] = heldDraft{p.Draft, p.DraftComposition}
 					job.Draft++
 				}
 				if p.Gaps {
@@ -1585,6 +1602,7 @@ func (q *Queue) worker(chat bool) {
 				cancel()
 				delete(q.cancels, j.ID)
 				delete(q.drafts, j.ID)
+				q.draftTiles.drop(j.ID)
 				delete(q.superseded, j.ID)
 				if q.log != nil {
 					q.log.Error("ended job missing from the history", "job", j.ID)
@@ -1602,12 +1620,14 @@ func (q *Queue) worker(chat bool) {
 			current.State = "completed"
 			// The draft is never a version: it goes with the job.
 			delete(q.drafts, j.ID)
+			q.draftTiles.drop(j.ID)
 			current.Draft = 0
 			var refused *NotAutomaticError
 			var fixErr *fix.Error
 			var stopped *StoppedError
 			var blocked *BlockedError
 			var members *MembersNeedReviewsError
+			var unchanged *UnchangedError
 			switch {
 			case err != nil && errors.As(err, &members):
 				// A member's own review failed or was cancelled while the
@@ -1627,6 +1647,11 @@ func (q *Queue) worker(chat bool) {
 				current.State = "failed"
 				current.Reason = stopped.Reason
 				current.Detail = stopped.Error()
+			case err != nil && errors.As(err, &unchanged):
+				// The saved review still holds for the new head: an outcome
+				// the person reads in its summary, not a failure.
+				current.Reason = ReasonNoSignificantChange
+				current.Summary = unchanged.Reason
 			case err != nil && errors.As(err, &fixErr) && fixErr.Reason == fix.ReasonNoChanges:
 				// The agent found nothing it should, or could, change: an
 				// outcome the person reads in its summary, not a failure to
@@ -1658,7 +1683,7 @@ func (q *Queue) worker(chat bool) {
 				// turned draft) before any model call.
 				current.State = "cancelled"
 				current.Reason = refused.Reason
-			case err != nil && (errors.Is(err, ErrNeedsClone) || errors.Is(err, chatpkg.ErrNeedsClone)):
+			case err != nil && errors.Is(err, ErrNeedsClone):
 				// The clone was removed while the job waited: nothing ran. An
 				// automatic job is cancelled like a refused one, so its head is
 				// not used up and runs once a clone is back; a manual one fails.
@@ -1708,7 +1733,6 @@ func (q *Queue) worker(chat bool) {
 			result := *current
 			q.mu.Unlock()
 			logFinished(log, result, started, err)
-			q.settleChat(result)
 			q.notify(result)
 			if saveErr != nil {
 				// Another worker takes what this one's job held back.
@@ -1718,19 +1742,19 @@ func (q *Queue) worker(chat bool) {
 	}
 }
 
-// next is the index of the queued job of its lane a worker starts next, or
+// next is the index of the queued job a worker starts next, or
 // -1: the oldest job a person started, else the oldest automatic one, so an
 // automatic backlog never holds up a person's job. A job waiting for another
 // of its pull requests (pullRunning, membersBusy) is passed over. mu is held.
-func (q *Queue) next(chat bool) int {
+func (q *Queue) next() int {
 	automatic := -1
 	for n, j := range q.jobs {
 		// Without a gate an automatic job waits: the daemon installs it
 		// right after Open, and a journaled job must not start first.
-		if j.State != "queued" || (j.Kind == KindChat) != chat || (j.Automatic && (q.gate == nil || automatic >= 0)) {
+		if j.State != "queued" || (j.Automatic && (q.gate == nil || automatic >= 0)) {
 			continue
 		}
-		if !chat && (q.pullRunning(j) || q.membersBusy(j)) {
+		if q.pullRunning(j) || q.membersBusy(j) {
 			continue
 		}
 		if !j.Automatic {
@@ -1762,17 +1786,17 @@ func (q *Queue) find(id string) int {
 
 func validConcurrency(n int) bool { return n >= 1 && n <= repos.MaxJobConcurrency }
 
-// pullRunning reports whether another job outside the chat lane runs for one
-// of j's pull requests, such as its fix beside its review or a group's review
-// beside a member's fix: j waits for it, so no two jobs fetch, read or push
-// one pull request's head at once. mu is held.
+// pullRunning reports whether another job runs for one of j's pull
+// requests, such as its fix beside its review or a group's review beside a
+// member's fix: j waits for it, so no two jobs fetch, read or push one pull
+// request's head at once. mu is held.
 func (q *Queue) pullRunning(j Job) bool {
 	pulls := j.pulls()
 	if len(pulls) == 0 {
 		return false
 	}
 	for _, r := range q.jobs {
-		if r.State == "running" && r.Kind != KindChat && r.Repository == j.Repository && slices.ContainsFunc(r.pulls(), func(n int) bool { return slices.Contains(pulls, n) }) {
+		if r.State == "running" && r.Repository == j.Repository && slices.ContainsFunc(r.pulls(), func(n int) bool { return slices.Contains(pulls, n) }) {
 			return true
 		}
 	}
@@ -1793,11 +1817,11 @@ func (j Job) pulls() []int {
 	return pulls
 }
 
-// running counts the jobs outside the chat lane that run; mu is held.
+// running counts the jobs that run; mu is held.
 func (q *Queue) running() int {
 	n := 0
 	for _, j := range q.jobs {
-		if j.State == "running" && j.Kind != KindChat {
+		if j.State == "running" {
 			n++
 		}
 	}

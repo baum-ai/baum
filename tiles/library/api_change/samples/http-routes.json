@@ -1,0 +1,533 @@
+{
+  "name": "http-routes",
+  "data": {
+    "endpoints": [
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/widgets/{id}/labels",
+        "change": "removed",
+        "auth": null,
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": true,
+        "breaking_reason": "Clients that read labels get 404; the app's widget page still calls it.",
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_9e5a3172d4fc"
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "POST",
+        "name": "/api/widgets",
+        "change": "changed",
+        "auth": "session cookie",
+        "request": [
+          {
+            "field": "owner",
+            "change": "added",
+            "before": null,
+            "after": "string, a user login",
+            "required": true
+          }
+        ],
+        "response": [],
+        "errors": [
+          {
+            "code": "400",
+            "change": "added",
+            "meaning": "owner is missing"
+          }
+        ],
+        "breaking": true,
+        "breaking_reason": "Callers that create widgets without `owner` now get 400.",
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_9e5a3172d4fc",
+            "lines": [
+              42,
+              42
+            ]
+          },
+          {
+            "type": "hunk",
+            "id": "h_b1a7c594f61e",
+            "lines": [
+              60,
+              63
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/widgets/{id}/tags",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [
+          {
+            "field": "id",
+            "change": "added",
+            "before": null,
+            "after": "path, int64",
+            "required": true
+          }
+        ],
+        "response": [
+          {
+            "field": "widget",
+            "change": "added",
+            "before": null,
+            "after": "int64",
+            "required": true
+          },
+          {
+            "field": "tags",
+            "change": "added",
+            "before": null,
+            "after": "array of string",
+            "required": true
+          }
+        ],
+        "errors": [
+          {
+            "code": "400",
+            "change": "added",
+            "meaning": "bad widget id"
+          },
+          {
+            "code": "404",
+            "change": "added",
+            "meaning": "no such widget"
+          }
+        ],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_9e5a3172d4fc",
+            "lines": [
+              43,
+              43
+            ]
+          },
+          {
+            "type": "hunk",
+            "id": "h_a0f6b483e50d",
+            "lines": [
+              14,
+              26
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "PUT",
+        "name": "/api/widgets/{id}/tags",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [
+          {
+            "field": "tags",
+            "change": "added",
+            "before": null,
+            "after": "array of string, at most 20",
+            "required": true
+          }
+        ],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_9e5a3172d4fc",
+            "lines": [
+              44,
+              44
+            ]
+          },
+          {
+            "type": "hunk",
+            "id": "h_a0f6b483e50d",
+            "lines": [
+              9,
+              12
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "DELETE",
+        "name": "/api/widgets/{id}/tags/{tag}",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_9e5a3172d4fc",
+            "lines": [
+              45,
+              45
+            ]
+          }
+        ]
+      }
+    ],
+    "consumers": [
+      {
+        "label": "createWidget in app/src/api.ts",
+        "updated": true,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_c2b8d6a5072f",
+            "lines": [
+              55,
+              57
+            ]
+          }
+        ]
+      },
+      {
+        "label": "WidgetPage in app/src/widget.tsx (reads labels)",
+        "updated": false,
+        "cites": []
+      }
+    ],
+    "docs": {
+      "updated": true,
+      "cites": [
+        {
+          "type": "hunk",
+          "id": "h_d3c9e7b61830",
+          "lines": [
+            120,
+            122
+          ]
+        }
+      ]
+    }
+  },
+  "hunks": {
+    "h_9e5a3172d4fc": {
+      "path": "internal/server/routes.go",
+      "change": "modified",
+      "range": [
+        40,
+        46
+      ],
+      "additions": 4,
+      "deletions": 2,
+      "header": "@@ -40,5 +40,7 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 40,
+          "new": 40,
+          "text": "func (s *Server) routes(mux *http.ServeMux) {"
+        },
+        {
+          "kind": "context",
+          "old": 41,
+          "new": 41,
+          "text": "\tmux.HandleFunc(\"GET /api/widgets\", s.listWidgets)"
+        },
+        {
+          "kind": "remove",
+          "old": 42,
+          "text": "\tmux.HandleFunc(\"POST /api/widgets\", s.createWidget)"
+        },
+        {
+          "kind": "add",
+          "new": 42,
+          "text": "\tmux.HandleFunc(\"POST /api/widgets\", s.requireOwner(s.createWidget))"
+        },
+        {
+          "kind": "add",
+          "new": 43,
+          "text": "\tmux.HandleFunc(\"GET /api/widgets/{id}/tags\", s.widgetTags)"
+        },
+        {
+          "kind": "add",
+          "new": 44,
+          "text": "\tmux.HandleFunc(\"PUT /api/widgets/{id}/tags\", s.setWidgetTags)"
+        },
+        {
+          "kind": "add",
+          "new": 45,
+          "text": "\tmux.HandleFunc(\"DELETE /api/widgets/{id}/tags/{tag}\", s.removeWidgetTag)"
+        },
+        {
+          "kind": "remove",
+          "old": 43,
+          "text": "\tmux.HandleFunc(\"GET /api/widgets/{id}/labels\", s.widgetLabels)"
+        },
+        {
+          "kind": "context",
+          "old": 44,
+          "new": 46,
+          "text": "}"
+        }
+      ]
+    },
+    "h_a0f6b483e50d": {
+      "path": "internal/server/tags.go",
+      "change": "added",
+      "range": [
+        1,
+        26
+      ],
+      "additions": 26,
+      "deletions": 0,
+      "header": "@@ -1,0 +1,26 @@",
+      "lines": [
+        {
+          "kind": "add",
+          "new": 1,
+          "text": "package server"
+        },
+        {
+          "kind": "add",
+          "new": 2,
+          "text": ""
+        },
+        {
+          "kind": "add",
+          "new": 3,
+          "text": "// tagsResponse is what GET /api/widgets/{id}/tags returns."
+        },
+        {
+          "kind": "add",
+          "new": 4,
+          "text": "type tagsResponse struct {"
+        },
+        {
+          "kind": "add",
+          "new": 5,
+          "text": "\tWidget int64    `json:\"widget\"`"
+        },
+        {
+          "kind": "add",
+          "new": 6,
+          "text": "\tTags   []string `json:\"tags\"`"
+        },
+        {
+          "kind": "add",
+          "new": 7,
+          "text": "}"
+        },
+        {
+          "kind": "add",
+          "new": 8,
+          "text": ""
+        },
+        {
+          "kind": "add",
+          "new": 9,
+          "text": "// setTagsRequest replaces a widget's tags."
+        },
+        {
+          "kind": "add",
+          "new": 10,
+          "text": "type setTagsRequest struct {"
+        },
+        {
+          "kind": "add",
+          "new": 11,
+          "text": "\tTags []string `json:\"tags\"` // at most 20, each 1-40 characters"
+        },
+        {
+          "kind": "add",
+          "new": 12,
+          "text": "}"
+        },
+        {
+          "kind": "add",
+          "new": 13,
+          "text": ""
+        },
+        {
+          "kind": "add",
+          "new": 14,
+          "text": "func (s *Server) widgetTags(w http.ResponseWriter, r *http.Request) {"
+        },
+        {
+          "kind": "add",
+          "new": 15,
+          "text": "\tid, err := strconv.ParseInt(r.PathValue(\"id\"), 10, 64)"
+        },
+        {
+          "kind": "add",
+          "new": 16,
+          "text": "\tif err != nil {"
+        },
+        {
+          "kind": "add",
+          "new": 17,
+          "text": "\t\thttp.Error(w, \"bad widget id\", http.StatusBadRequest)"
+        },
+        {
+          "kind": "add",
+          "new": 18,
+          "text": "\t\treturn"
+        },
+        {
+          "kind": "add",
+          "new": 19,
+          "text": "\t}"
+        },
+        {
+          "kind": "add",
+          "new": 20,
+          "text": "\ttags, err := s.store.Tags(r.Context(), id)"
+        },
+        {
+          "kind": "add",
+          "new": 21,
+          "text": "\tif errors.Is(err, store.ErrNotFound) {"
+        },
+        {
+          "kind": "add",
+          "new": 22,
+          "text": "\t\thttp.NotFound(w, r)"
+        },
+        {
+          "kind": "add",
+          "new": 23,
+          "text": "\t\treturn"
+        },
+        {
+          "kind": "add",
+          "new": 24,
+          "text": "\t}"
+        },
+        {
+          "kind": "add",
+          "new": 25,
+          "text": "\twriteJSON(w, tagsResponse{Widget: id, Tags: tags})"
+        },
+        {
+          "kind": "add",
+          "new": 26,
+          "text": "}"
+        }
+      ]
+    },
+    "h_b1a7c594f61e": {
+      "path": "internal/server/widgets.go",
+      "change": "modified",
+      "range": [
+        60,
+        63
+      ],
+      "additions": 1,
+      "deletions": 0,
+      "header": "@@ -60,3 +60,4 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 60,
+          "new": 60,
+          "text": "type createWidgetRequest struct {"
+        },
+        {
+          "kind": "context",
+          "old": 61,
+          "new": 61,
+          "text": "\tName  string `json:\"name\"`"
+        },
+        {
+          "kind": "add",
+          "new": 62,
+          "text": "\tOwner string `json:\"owner\"` // required: a user login"
+        },
+        {
+          "kind": "context",
+          "old": 62,
+          "new": 63,
+          "text": "}"
+        }
+      ]
+    },
+    "h_c2b8d6a5072f": {
+      "path": "app/src/api.ts",
+      "change": "modified",
+      "range": [
+        55,
+        57
+      ],
+      "additions": 1,
+      "deletions": 1,
+      "header": "@@ -55,3 +55,3 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 55,
+          "new": 55,
+          "text": "export async function createWidget(name: string) {"
+        },
+        {
+          "kind": "remove",
+          "old": 56,
+          "text": "  return post(\"/api/widgets\", { name });"
+        },
+        {
+          "kind": "add",
+          "new": 56,
+          "text": "  return post(\"/api/widgets\", { name, owner: currentUser() });"
+        },
+        {
+          "kind": "context",
+          "old": 57,
+          "new": 57,
+          "text": "}"
+        }
+      ]
+    },
+    "h_d3c9e7b61830": {
+      "path": "docs/api.md",
+      "change": "modified",
+      "range": [
+        120,
+        122
+      ],
+      "additions": 2,
+      "deletions": 0,
+      "header": "@@ -120,1 +120,3 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 120,
+          "new": 120,
+          "text": "## Widgets"
+        },
+        {
+          "kind": "add",
+          "new": 121,
+          "text": ""
+        },
+        {
+          "kind": "add",
+          "new": 122,
+          "text": "`GET /api/widgets/{id}/tags` returns a widget's tags; `PUT` replaces them."
+        }
+      ]
+    }
+  }
+}

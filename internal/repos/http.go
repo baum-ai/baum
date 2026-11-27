@@ -37,6 +37,10 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		if errors.Is(err, ErrInvalidRepository) {
 			status = http.StatusBadRequest
 		}
+		if errors.Is(err, ErrInvalidSettings) {
+			http.Error(w, invalidReason(err), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, http.StatusText(status), status)
 	}
 	writeStatus := func(w http.ResponseWriter, status int, v any) {
@@ -62,26 +66,31 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		return true
 	}
 	// decodeSettings reads the whole settings object of a PUT.
-	decodeSettings := func(w http.ResponseWriter, req *http.Request) (Settings, bool) {
+	decodeSettings := func(w http.ResponseWriter, req *http.Request) (Settings, json.RawMessage, bool) {
 		req.Body = http.MaxBytesReader(w, req.Body, 16<<10)
 		raw, err := io.ReadAll(req.Body)
 		var fields map[string]json.RawMessage
 		if err != nil || json.Unmarshal(raw, &fields) != nil {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
-			return Settings{}, false
+			return Settings{}, nil, false
 		}
 		// The whole settings object is replaced, so removing the automatic
 		// choice must be explicit: null, never a missing field.
 		if _, ok := fields["automatic"]; !ok {
 			http.Error(w, "automatic is required (null for the default)", http.StatusBadRequest)
-			return Settings{}, false
+			return Settings{}, nil, false
 		}
 		req.Body = io.NopCloser(bytes.NewReader(raw))
 		var s Settings
 		if !decode(w, req, &s) {
-			return Settings{}, false
+			return Settings{}, nil, false
 		}
-		return s, true
+		s, err = s.Checked()
+		if err != nil {
+			fail(w, err)
+			return Settings{}, nil, false
+		}
+		return s, fields["tiles"], true
 	}
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, req *http.Request) {
 		list, e := r.List(req.Context())
@@ -136,6 +145,14 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 			http.Error(w, "path is required", 400)
 			return
 		}
+		if input.Settings != nil {
+			checked, e := input.Settings.Checked()
+			if e != nil {
+				fail(w, e)
+				return
+			}
+			input.Settings = &checked
+		}
 		var c Clone
 		var e error
 		if input.Repository != "" {
@@ -166,15 +183,20 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("PUT /api/repos/{id}/settings", func(w http.ResponseWriter, req *http.Request) {
-		s, ok := decodeSettings(w, req)
+		s, tiles, ok := decodeSettings(w, req)
 		if !ok {
 			return
 		}
-		if e := r.Update(req.Context(), req.PathValue("id"), s); e != nil {
+		// The tiles merge member by member with the stored ones.
+		saved, e := r.UpdateIf(req.Context(), req.PathValue("id"), func(stored Settings) (Settings, error) {
+			s.Tiles = mergedTiles(stored.Tiles, s.Tiles, tiles)
+			return s, nil
+		})
+		if e != nil {
 			fail(w, e)
 			return
 		}
-		write(w, s)
+		write(w, saved)
 	})
 	// Picked repositories, with or without a local clone.
 	mux.HandleFunc("GET /api/repositories", func(w http.ResponseWriter, req *http.Request) {
@@ -193,6 +215,14 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		if !decode(w, req, &input) {
 			return
 		}
+		if input.Settings != nil {
+			checked, e := input.Settings.Checked()
+			if e != nil {
+				fail(w, e)
+				return
+			}
+			input.Settings = &checked
+		}
 		v, e := r.Pick(req.Context(), input.Repository, input.Settings)
 		if e != nil {
 			fail(w, e)
@@ -208,15 +238,20 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("PUT /api/repositories/{owner}/{name}/settings", func(w http.ResponseWriter, req *http.Request) {
-		s, ok := decodeSettings(w, req)
+		s, tiles, ok := decodeSettings(w, req)
 		if !ok {
 			return
 		}
-		if e := r.UpdateRepository(req.Context(), req.PathValue("owner")+"/"+req.PathValue("name"), s); e != nil {
+		// The tiles merge member by member with the stored ones.
+		saved, e := r.UpdateRepositoryIf(req.Context(), req.PathValue("owner")+"/"+req.PathValue("name"), func(current Settings) (Settings, error) {
+			s.Tiles = mergedTiles(current.Tiles, s.Tiles, tiles)
+			return s, nil
+		})
+		if e != nil {
 			fail(w, e)
 			return
 		}
-		write(w, s)
+		write(w, saved)
 	})
 	mux.HandleFunc("GET /api/repositories/{owner}/{name}/prompts", func(w http.ResponseWriter, req *http.Request) {
 		r.ServePrompts(w, req, req.PathValue("owner")+"/"+req.PathValue("name"))
@@ -269,8 +304,13 @@ func registerError(e error) string {
 // baum no longer has a spending cap, and the harness and model are global.
 var retiredSettings = []string{"daily_cap", "backend", "model"}
 
-// withoutRetired drops the retiredSettings an older app still sends, in a
-// request or in its settings object, so such an app is not refused for them.
+// retiredTileSettings are the members of a repository's tile settings an
+// older app still sends: the tile grid's layout instruction and pins.
+var retiredTileSettings = []string{"text", "pins"}
+
+// withoutRetired drops the retiredSettings (and retiredTileSettings) an
+// older app still sends, in a request or in its settings object, so such an
+// app is not refused for them.
 // Anything that is not a JSON object is left for the strict decoder to
 // refuse.
 func withoutRetired(raw []byte) []byte {
@@ -291,6 +331,19 @@ func withoutRetired(raw []byte) []byte {
 			found = true
 		}
 	}
+	for _, object := range []map[string]json.RawMessage{fields, settings} {
+		var tiles map[string]json.RawMessage
+		if object == nil || json.Unmarshal(object["tiles"], &tiles) != nil || tiles == nil {
+			continue
+		}
+		for _, name := range retiredTileSettings {
+			if _, ok := tiles[name]; ok {
+				delete(tiles, name)
+				found = true
+			}
+		}
+		object["tiles"], _ = json.Marshal(tiles)
+	}
 	if nested {
 		fields["settings"], _ = json.Marshal(settings)
 	}
@@ -303,4 +356,9 @@ func withoutRetired(raw []byte) []byte {
 	}
 	return out
 
+}
+
+// invalidReason is the reason an ErrInvalidSettings carries.
+func invalidReason(err error) string {
+	return strings.TrimPrefix(err.Error(), ErrInvalidSettings.Error()+": ")
 }

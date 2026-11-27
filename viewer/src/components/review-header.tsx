@@ -63,8 +63,8 @@ export type ReviewHeaderSlots = {
   /** Additional status beside the full page title. */
   titleAside?: ReactNode;
   pullRequest?: PullRequestFacts;
-  /** The way back to wherever the reader came from, drawn in the compact bar
-   *  through the host's link component. */
+  /** The way back to wherever the reader came from, drawn before the title and
+   *  in the compact bar through the host's link component. */
   back?: { href: string; label: string };
   /** An approval state, shown beside the title and in the compact bar. */
   approval?: ReactNode;
@@ -94,9 +94,9 @@ function StateMark({ state }: { state: string }) {
   );
 }
 
-function Dot() {
+function Dot({ className }: { className?: string }) {
   return (
-    <span aria-hidden className="text-disabled">
+    <span aria-hidden className={cn("text-disabled", className)}>
       •
     </span>
   );
@@ -260,6 +260,7 @@ export function ReviewHeader({
       <div className="sticky top-0 z-(--z-sticky) hidden h-0 lg:block">
         <div
           aria-hidden={!compact}
+          inert={!compact}
           style={{ height: REVIEW_BAR_PX }}
           className={cn(
             REVIEW_GUTTER,
@@ -326,6 +327,18 @@ export function ReviewHeader({
       <header ref={head} className={cn(REVIEW_GUTTER, "border-b border-subtle")}>
         <div className="pb-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
+            {slots.back ? (
+              <ViewerLink
+                href={slots.back.href}
+                aria-label={slots.back.label}
+                className={cn(
+                  "-mr-1 inline-flex h-7 w-7 flex-none items-center justify-center rounded-sm text-tertiary hover:bg-surface-hover hover:text-secondary",
+                  FOCUS_RING,
+                )}
+              >
+                <ChevronLeftIcon size={14} />
+              </ViewerLink>
+            ) : null}
             <h1 className="text-2xl font-medium tracking-[-0.015em]">
               {heading !== undefined ? (
                 heading
@@ -357,7 +370,28 @@ export function ReviewHeader({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-secondary">
-            {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+            {/* The GitHub link stays with the repository's name, never on a
+                line of its own. */}
+            {repositoryFullName || githubUrl ? (
+              <span className="inline-flex items-center gap-1">
+                {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+                {githubUrl ? (
+                  <a
+                    href={githubUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="View on GitHub"
+                    title="View on GitHub"
+                    className={cn(
+                      "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
+                      FOCUS_RING,
+                    )}
+                  >
+                    <GitHubIcon size={16} />
+                  </a>
+                ) : null}
+              </span>
+            ) : null}
             {/* Beside the repository from sm; on a phone, a row of their own. */}
             {facts.branches ? (
               <span className="hidden sm:contents">
@@ -369,9 +403,21 @@ export function ReviewHeader({
                 <BranchChip name={facts.branches.base} />
               </span>
             ) : null}
+            {facts.lines ? (
+              <span className="inline-flex items-center gap-2 tabular-nums">
+                <Dot />
+                <Lines
+                  additions={facts.lines.additions}
+                  deletions={facts.lines.deletions}
+                  format={formatLinesCompact}
+                />
+              </span>
+            ) : null}
             {reviewMinutes !== null ? (
-              <>
-                {repositoryFullName ? <Dot /> : null}
+              // The dot goes with the time, so a line never ends on it; on a
+              // phone, where the time takes a line of its own, there is none.
+              <span className="inline-flex items-center gap-2">
+                {repositoryFullName ? <Dot className="hidden sm:inline" /> : null}
                 <span
                   title={`Estimated time to read this review: about ${reviewMinutes} ${
                     reviewMinutes === 1 ? "minute" : "minutes"
@@ -379,22 +425,7 @@ export function ReviewHeader({
                 >
                   ~{reviewMinutes} min to review
                 </span>
-              </>
-            ) : null}
-            {githubUrl ? (
-              <a
-                href={githubUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="View on GitHub"
-                title="View on GitHub"
-                className={cn(
-                  "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
-                  FOCUS_RING,
-                )}
-              >
-                <GitHubIcon size={16} />
-              </a>
+              </span>
             ) : null}
             {slots.subtitle ? (
               <span className="flex min-w-0 flex-wrap items-center gap-2">

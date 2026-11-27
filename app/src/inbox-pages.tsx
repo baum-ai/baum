@@ -30,7 +30,8 @@ const PREVIEW_GROUPS = [
   ...GROUPS,
   { id: "others", title: OTHERS_TITLE, kinds: ["other"] as QueueItem["kind"][] },
 ];
-import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
+import { DANGER, PRIMARY, SECONDARY, SMALL } from "./action-classes";
+import { Empty } from "@baum/viewer/components/states";
 import { CheckIcon, ExternalLinkIcon } from "@baum/viewer/components/icons";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
@@ -50,6 +51,9 @@ export type InboxPageProps = {
   entries?: Entry[];
   /** How many saves the daemon has accepted; each shows "Saved" for a moment. */
   saves: number;
+  /** Whether automatic reviews follow the inboxes (Settings › Reviews), which
+   *  is when an inbox's own switch counts; null while unknown. */
+  reviewsFollowInboxes?: boolean | null;
   save: (inboxes: Inbox[]) => void;
   go: (href: string) => void;
   Link: ComponentType<ViewerLinkProps>;
@@ -194,12 +198,15 @@ export function EditInboxPage({
       <section>
         <PageBar title="Inbox not found" />
         <div className="local-page-body">
-          <div className="local-empty">
-            <h2>This inbox no longer exists</h2>
-            <p>
-              <Link href={appURL()}>Go to Inbox</Link>
-            </p>
-          </div>
+          <Empty
+            variant="page"
+            title="This inbox no longer exists"
+            action={
+              <Link href={appURL()} className={SMALL}>
+                Go to Inbox
+              </Link>
+            }
+          />
         </div>
       </section>
     );
@@ -233,6 +240,7 @@ function EditInbox({
   entries,
   saves,
   save,
+  reviewsFollowInboxes = null,
   Link,
 }: InboxPageProps & {
   inbox: Inbox;
@@ -328,6 +336,10 @@ function EditInbox({
         event.preventDefault();
         const problem = nameProblem(draft, inboxes, inbox.id);
         setNameError(problem);
+        if (problem) {
+          nameField.current?.focus();
+          nameField.current?.select();
+        }
         if (!problem) {
           const text =
             event.currentTarget.querySelector<HTMLTextAreaElement>(".inbox-query textarea")?.value;
@@ -484,6 +496,32 @@ function EditInbox({
                 onChange={(event) => change({ badge: event.target.checked })}
               />
             </SettingRow>
+            <SettingRow
+              label="Review automatically"
+              htmlFor={`${ids}-auto-review`}
+              detail={
+                reviewsFollowInboxes === false ? (
+                  <>
+                    No effect yet: turn on reviewing the pull requests in your inboxes in{" "}
+                    <Link href={appURL("?page=settings&section=reviews")}>Settings › Reviews</Link>{" "}
+                    first.
+                  </>
+                ) : inbox.auto_review ? (
+                  "baum reviews its pull requests on its own. Drafts, forks and authors without write access are skipped."
+                ) : (
+                  "baum reviews its pull requests only when you ask, unless another inbox holding them reviews automatically."
+                )
+              }
+            >
+              <input
+                id={`${ids}-auto-review`}
+                type="checkbox"
+                role="switch"
+                className="local-switch"
+                checked={inbox.auto_review}
+                onChange={(event) => change({ auto_review: event.target.checked })}
+              />
+            </SettingRow>
           </div>
           {keepDraft ? (
             <div className="inbox-block inbox-delete">
@@ -495,6 +533,10 @@ function EditInbox({
                   // The name as typed, checked as leaving its field would.
                   const problem = nameProblem(draft, inboxes, inbox.id);
                   setNameError(problem);
+                  if (problem) {
+                    nameField.current?.focus();
+                    nameField.current?.select();
+                  }
                   if (!problem) saveDraft?.({ ...inbox, name: draft.trim() });
                 }}
               >

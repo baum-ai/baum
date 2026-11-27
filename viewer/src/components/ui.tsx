@@ -217,6 +217,10 @@ type SegmentedItem<T extends string> = {
    *  takes the colour when selected, and a dot beside its label carries it
    *  when not. Only the `tabs` variant draws it. */
   tone?: "positive" | "critical" | "caution";
+  /** How many things the choice shows, beside its label. */
+  count?: number;
+  /** Nothing to show: drawn in its place, but cannot be chosen. */
+  disabled?: boolean;
 };
 
 const TAB_TONES = {
@@ -254,24 +258,27 @@ export function SegmentedControl<T extends string>({
 }) {
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!tablist) return;
-    const last = items.length - 1;
-    const next =
+    // The arrows pass over a disabled choice.
+    const open = items.flatMap((item, at) => (item.disabled ? [] : [at]));
+    const here = open.indexOf(index);
+    const last = open.length - 1;
+    const step =
       event.key === "ArrowRight"
-        ? index === last
+        ? here === last
           ? 0
-          : index + 1
+          : here + 1
         : event.key === "ArrowLeft"
-          ? index === 0
+          ? here <= 0
             ? last
-            : index - 1
+            : here - 1
           : event.key === "Home"
             ? 0
             : event.key === "End"
               ? last
               : null;
-    if (next === null) return;
+    if (step === null || last < 0) return;
     event.preventDefault();
-    const target = items[next]!;
+    const target = items[open[step]!]!;
     onChange(target.value);
     document.getElementById(tabIds(tablist, target.value).tab)?.focus();
   };
@@ -304,11 +311,15 @@ export function SegmentedControl<T extends string>({
                   tabIndex: selected ? 0 : -1,
                 }
               : { "aria-pressed": selected })}
+            disabled={item.disabled}
             onClick={() => onChange(item.value)}
             onKeyDown={(event) => onKeyDown(event, index)}
             className={
               variant === "segmented"
-                ? segmentedTileClass(selected)
+                ? cn(
+                    segmentedTileClass(selected),
+                    "flex-none disabled:cursor-default disabled:text-tertiary disabled:opacity-60",
+                  )
                 : cn(
                     SEGMENT_BASE,
                     FOCUS_RING,
@@ -326,6 +337,12 @@ export function SegmentedControl<T extends string>({
                 fill a 400px pane. */}
             {variant === "segmented" ? item.icon : null}
             {item.label}
+            {item.count !== undefined ? (
+              <>
+                {" "}
+                <span className="text-xs tabular-nums text-tertiary">{item.count}</span>
+              </>
+            ) : null}
             {variant === "tabs" && item.tone ? (
               <span
                 aria-hidden

@@ -19,7 +19,13 @@
         "connect-src": "ipc: http://ipc.localhost",
         "frame-ancestors": "'none'"
       },
-      "capabilities": ["connecting-screen", "setup-screen", "daemon-pages", "tray-panel"]
+      "capabilities": [
+        "connecting-screen",
+        "setup-screen",
+        "daemon-pages",
+        "tray-panel",
+        "tile-check"
+      ]
     }
   },
   "bundle": {
@@ -44,7 +50,10 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0 (>= 2.38)"]
+        "depends": ["libwebkit2gtk-4.1-0 (>= 2.40)", "gstreamer1.0-libav"]
+      },
+      "appimage": {
+        "bundleMediaFramework": true
       }
     },
     "macOS": {

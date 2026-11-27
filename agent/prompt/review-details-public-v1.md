@@ -19,6 +19,7 @@ directory.
    read to settle a specific question, not to tour the repository.
 3. Open each image the bundle's `attachments` lists at its `path` with the
    tool you have for viewing images, where it may show a section's change.
+   Do not open a `video/*` attachment: it is a clip you cannot watch.
 4. Check the claims and look for the defects agent-written changes carry
    (section 3 of the shared instructions) in each section's hunks.
 5. Write each section's details, then run the final checklist before you
@@ -29,7 +30,7 @@ directory.
 ```
 {
   "sections": [
-    { id, summary, attention, risks, evidence, blocks, tiles }, ...
+    { id, summary, attention, risks, evidence, blocks }, ...
   ]
 }
 ```
@@ -44,7 +45,7 @@ section you are not asked for. Do not write a section's `title`, `kind`,
 
 - `summary`: `{text, anchors}`. One to three sentences on what this section
   changes and its effect. Anchors are hunks or files.
-- `risks`, `evidence`, `attention`, `blocks` and `tiles`: below.
+- `risks`, `evidence`, `attention` and `blocks`: below.
 - Size the details to the section's assessment level. A level 1 section
   and the mechanical section get a one- or two-sentence summary and no
   `question`, risks or `missing` items, unless you find a concrete defect
@@ -221,14 +222,10 @@ has at most one of each of `intent`, `behavior`, `groups`, `decisions`,
   before/after or wide/narrow pair in the section even when the sample
   content is unrelated to the pull request. Describe only what you saw when
   you opened the image; if you could not open it, rely on its alt text and
-  heading. Use only IDs `attachments` lists, also in previous sections you
+  heading. A `video/*` clip is placed by its alt text and heading alone.
+  Use only IDs `attachments` lists, also in previous sections you
   keep; with no `attachments`, add no `images` block. `media` takes a URL
   only if it appears in the bundle.
-
-### Tiles
-
-Write tiles only if tile guidance follows this prompt, and only of the kinds
-it lists. Otherwise leave `tiles` out.
 
 ## Final checklist
 

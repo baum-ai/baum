@@ -30,8 +30,8 @@ func TestSignedOutIsARefusalTheLoopDoesNotRetry(t *testing.T) {
 	}
 	calls := 0
 	g := agent.Generator{Backend: countingBackend{&Backend{Binary: script}, &calls}, RetryDelay: func(int) time.Duration { return 0 }}
-	var outcome agent.Outcome
-	if _, err := g.Continue(context.Background(), agent.Budgets{MaxCalls: 2, MaxTokens: 100, MaxProviderAttempts: 3}, r, &outcome); !agent.SignInRejected(err) || calls != 1 {
-		t.Errorf("Continue err %v after %d calls", err, calls)
+	task := agent.Task{Directory: t.TempDir(), Prompt: "p", Schema: []byte(`{"type":"object"}`), Budgets: agent.Budgets{MaxCalls: 2, MaxTokens: 100, MaxProviderAttempts: 3}}
+	if _, _, err := g.RunTask(context.Background(), task); !agent.SignInRejected(err) || calls != 1 {
+		t.Errorf("RunTask err %v after %d calls", err, calls)
 	}
 }

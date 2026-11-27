@@ -1,0 +1,128 @@
+<style>
+  .delta {
+    white-space: nowrap;
+  }
+</style>
+<script>
+  const TONE = { created: "info", altered: "caution", dropped: "critical", renamed: "critical" };
+  const ROW_TONE = { added: "positive", altered: "caution", removed: "critical", renamed: "caution" };
+  const SEVERITY = { high: "critical", medium: "caution", low: "neutral" };
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+  function countLine(tables) {
+    const parts = [plural(tables.length, "table")];
+    for (const change of ["created", "altered", "dropped", "renamed"]) {
+      const count = tables.filter((table) => table.change === change).length;
+      if (count) parts.push(`${count} ${change}`);
+    }
+    return parts.join(" · ");
+  }
+
+  function delta(table) {
+    const count = (change) => table.columns.filter((column) => column.change === change).length;
+    return baum.html`<span class="delta kit-small kit-num">
+      <span class="kit-added">+${count("added")}</span>
+      <span class="kit-removed">−${count("removed")}</span>
+      <span class="kit-subtle">~${count("altered")}</span>
+    </span>`;
+  }
+
+  baum.tile({
+    glance({ data, size }) {
+      if (data.tables.length === 0) return baum.empty("No schema changes; only queries changed.");
+      const order = { dropped: 0, renamed: 1, altered: 2, created: 3 };
+      const tables = [...data.tables].sort((a, b) => order[a.change] - order[b.change]);
+      const concern = data.concerns[0];
+      return baum.html`<div class="kit-glance">
+        <div class="kit-row">
+          <span class="kit-lede">${countLine(data.tables)}</span>
+          <span class="kit-tag">${data.engine}</span>
+          ${data.migrations.slice(0, 1).map((migration) => baum.html`<span class="kit-badge">${migration.applies.replace("_", " ")}</span>`)}
+        </div>
+        <ul class="kit-list">
+          ${tables.slice(0, size === "full" ? 2 : 3).map(
+            (table) => baum.html`<li>
+              <span class="kit-mono kit-truncate kit-grow">${table.name}</span>
+              <span class="kit-badge" data-tone=${TONE[table.change]}>${table.change}</span>
+              ${delta(table)}
+            </li>`,
+          )}
+        </ul>
+        ${concern
+          ? baum.html`<p class="kit-foot"><span class="kit-row" data-wrap="no">
+              <span class="kit-dot" data-tone=${SEVERITY[concern.severity]}></span>
+              <span class="kit-truncate">${concern.text}</span>
+            </span></p>`
+          : null}
+      </div>`;
+    },
+
+    detail({ data }) {
+      if (data.tables.length === 0) return baum.empty("No schema changes; only queries changed.");
+      return baum.html`<div class="kit-stack" data-gap="6">
+        ${baum.md(data.summary)}
+        <section class="kit-section">
+          <h2 class="kit-heading">Concerns</h2>
+          <ul class="kit-list" data-gap="3">
+            ${data.concerns.map(
+              (concern) => baum.html`<li>
+                <span class="kit-dot" data-tone=${SEVERITY[concern.severity]}></span>
+                <div class="kit-stack kit-grow" data-gap="1">
+                  <p>${concern.text}</p>
+                  <div class="kit-row">
+                    <span class="kit-tag">${concern.kind}</span>
+                    ${concern.cites.map((citation) => baum.cite(citation))}
+                  </div>
+                </div>
+              </li>`,
+            )}
+          </ul>
+        </section>
+        <section class="kit-section">
+          <h2 class="kit-heading">Tables</h2>
+          ${data.tables.map(
+            (table) => baum.html`<div class="kit-card kit-stack">
+              <div class="kit-row">
+                <span class="kit-mono kit-strong">${table.name}</span>
+                <span class="kit-badge" data-tone=${TONE[table.change]}>${table.change}</span>
+                ${table.renamed_from ? baum.html`<span class="kit-subtle kit-small">from <span class="kit-mono">${table.renamed_from}</span></span>` : null}
+              </div>
+              <div class="kit-scroll">
+                <table class="kit-table">
+                  <thead><tr><th>Column</th><th>Before</th><th>After</th><th>Note</th></tr></thead>
+                  <tbody>
+                    ${table.columns.map(
+                      (column) => baum.html`<tr data-tone=${ROW_TONE[column.change]}>
+                        <td class="kit-mono">${column.name}</td>
+                        <td class="kit-mono kit-muted">${column.before ?? "—"}</td>
+                        <td class="kit-mono">${column.after ?? "—"}</td>
+                        <td class="kit-muted">${column.note ?? ""}</td>
+                      </tr>`,
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <details class="kit-details" open>
+                <summary>Statement</summary>
+                ${baum.diff(table.cites[0], { maxLines: 8 })}
+              </details>
+            </div>`,
+          )}
+        </section>
+        <section class="kit-section">
+          <h2 class="kit-heading">Migrations</h2>
+          <dl class="kit-facts">
+            ${data.migrations.map(
+              (migration) => baum.html`<dt>${migration.label}</dt>
+                <dd class="kit-row">
+                  <span class="kit-badge">${migration.applies.replace("_", " ")}</span>
+                  <span class="kit-badge" data-tone=${migration.reversible ? "positive" : "caution"}>${migration.reversible ? "reversible" : "no down migration"}</span>
+                  ${migration.cites.map((citation) => baum.cite(citation))}
+                </dd>`,
+            )}
+          </dl>
+        </section>
+      </div>`;
+    },
+  });
+</script>

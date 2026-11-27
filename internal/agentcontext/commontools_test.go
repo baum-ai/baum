@@ -316,7 +316,7 @@ func TestAppHelp(t *testing.T) {
 	if failed || !strings.Contains(whole, "## shortcuts") || !strings.Contains(whole, "## sessions") {
 		t.Fatalf("whole help: %.200s", whole)
 	}
-	for topic, want := range map[string]string{"sessions": "agent sessions", "shortcuts": "`Mod+K`", "Pull_Request": "walkthrough", "up next": "queue of pull requests", "decision": "choice made"} {
+	for topic, want := range map[string]string{"sessions": "agent sessions", "shortcuts": "`Mod+K`", "Pull_Request": "Earlier questions", "up next": "queue of pull requests", "decision": "choice made"} {
 		text, failed := data(t, s, token, "app_help", map[string]any{"topic": topic})
 		if failed || !strings.Contains(text, want) || strings.Contains(text, "## inbox") {
 			t.Errorf("%s: %.200s", topic, text)
@@ -423,7 +423,7 @@ func TestActionsLackSearchAndDaemonStatus(t *testing.T) {
 		t.Errorf("an action's refused calls read %v", d.requests())
 	}
 	text, _ := data(t, s, action, "current_page", nil)
-	if strings.Contains(text, "search") || strings.Contains(text, "daemon_status") || !strings.Contains(text, "app_help") {
+	if strings.Contains(text, `"search"`) || strings.Contains(text, "daemon_status") || !strings.Contains(text, "app_help") {
 		t.Errorf("an action's page lists %s", text)
 	}
 }

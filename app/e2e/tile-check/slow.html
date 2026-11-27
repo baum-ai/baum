@@ -1,0 +1,9 @@
+<script>
+  // The detail takes 600 ms to draw (`slow`, a warning).
+  function detail({ data }) {
+    const until = performance.now() + 600;
+    while (performance.now() < until);
+    return baum.html`<p>${data.items.length} items</p>`;
+  }
+  baum.tile({ glance: ({ data }) => baum.html`<p class="kit-lede">${data.items.length} items</p>`, detail });
+</script>

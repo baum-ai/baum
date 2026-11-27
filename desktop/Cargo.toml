@@ -7,6 +7,12 @@ edition = "2024"
 rust-version = "1.90"
 publish = false
 
+[features]
+# scripts/bridge-test.sh only: the updater installs an update as soon as it
+# has downloaded it, so a Tauri AppImage updates itself to the Electron one
+# without anyone clicking. Never enable it in a release build.
+bridge-test = []
+
 [[bin]]
 name = "baum-desktop"
 path = "src/main.rs"
@@ -25,6 +31,12 @@ tauri-plugin-opener = "2.7.2"
 tauri-plugin-single-instance = "2.5.4"
 tauri-plugin-updater = "2.13.3"
 url = "2"
+
+# The version wry uses, to end the check window's web process (check_window.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0.2", features = ["v2_40"] }
+# The version wry uses, to hear the pointer leave the window (pointer.rs).
+gtk = "0.18.2"
 
 [dev-dependencies]
 base64 = "0.22"

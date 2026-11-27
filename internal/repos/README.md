@@ -9,7 +9,7 @@ its HTTP handler uses.
 
 - `repositories(identity, settings)`: settings shared by every clone of a
   repository. `identity` is the lowercase `owner/name` on github.com and
-  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `decisions`); a `daily_cap`, `backend` or
+  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `decisions`, `tiles`); a `daily_cap`, `backend` or
   `model` an older baum stored is ignored and dropped on the next write, and
   dropped from a request an older app sends: the harnesses and models are
   global preferences.
@@ -50,7 +50,13 @@ its HTTP handler uses.
   `review_time_limit_minutes` and `run_time_limit_minutes`, when set (1 to
   `MaxTimeLimit`, 240), replace the config file's `review_timeout` and
   `run_timeout` in `Preferences.Resolve`; a value out of range keeps the
-  file's and does not block saving other preferences.
+  file's and does not block saving other preferences. Its `panel` object
+  (`agent`, `model`, `mode`, `position`) is the session panel's defaults;
+  `ResolvePanel` fills what is unset from the fix agent, `auto` and `bottom`
+  (see "Session panel conversations" in `ARCHITECTURE.md`). Its `labs`
+  object turns experimental features on, each off by default:
+  `tile_reviews` arranges every new review of one pull request as tiles
+  (`generate.Options.Tiles`; `LabsPreferences.TileReviewsOn`).
   `UpdatePreferences` edits them in one transaction that holds the write lock
   from its start; `UpdatePreferencesIf` is the same with an edit that may
   refuse, rolling back and writing nothing. A chat's proposal of a setting is
@@ -179,10 +185,16 @@ While the stamp is unchanged the answer is reused, for at most `ProbeMaxAge`
 `url.insteadOf`, therefore shows within that time. A clone whose directory or
 `.git` is gone is unavailable without running git.
 
-Settings PUTs replace the whole object and require `automatic`, `null` for
-the default. A `daily_cap` an older app still sends, in a settings PUT or in
+`tiles` holds a repository's standing tile settings (`TileSettings`: `types`,
+at most 8 saved tile type names pinned to the repository, which every later
+review fills while tile reviews are on); `Settings.Checked` trims and
+validates them on every write, and a route answers a refusal with its reason
+and a 400. Settings PUTs replace the whole object and require
+`automatic`, `null` for the default. A `daily_cap` an older app still sends, in a settings PUT or in
 the settings of a `POST`, is dropped rather than refused: baum sets no
-spending limits.
+spending limits. So are the `text` and `pins` members of `tiles` (the removed
+tile grid's layout instruction and pins), and settings stored with them keep
+only their `types`.
 
 ## CLI
 

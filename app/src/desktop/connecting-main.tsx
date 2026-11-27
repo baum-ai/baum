@@ -1,10 +1,10 @@
 import { createRoot } from "react-dom/client";
 import { Connecting } from "./connecting";
-import { followSystemTheme } from "./system-theme";
+import { followTheme } from "./follow-theme";
 import "./screen.css";
 import { blockBrowserMenu } from "../native-menu";
 import { trackHidden } from "../visible-interval";
-followSystemTheme();
+followTheme();
 blockBrowserMenu();
 trackHidden();
 createRoot(document.getElementById("root")!).render(<Connecting />);

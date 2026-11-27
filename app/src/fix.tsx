@@ -139,10 +139,6 @@ function RunOutcome({ job }: { job: Job }) {
   return <>{job.state === "completed" ? "finished without pushing" : job.state}</>;
 }
 
-/** A conversation with the review's agent a fix is made from: its ids, and the
- *  agent's suggested change when the answer made one, for the dialog to show. */
-export type FixChat = { conversation_id: string; turn: number; suggestion?: string };
-
 /** Where a thread is: its file and line. */
 function threadPlace(thread: FixThread) {
   return thread.line ? `${thread.path}:${thread.line}` : thread.path;

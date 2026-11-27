@@ -1,0 +1,10 @@
+{
+  "name": "nothing",
+  "data": {
+    "engine": "unknown",
+    "migrations": [],
+    "tables": [],
+    "data_changes": [],
+    "readers": []
+  }
+}

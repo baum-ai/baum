@@ -1,5 +1,6 @@
 import {
   Component,
+  type ErrorInfo,
   type ReactNode,
   useCallback,
   useEffect,
@@ -13,6 +14,7 @@ import {
   type ReviewSteps,
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import { formatDate } from "@baum/viewer/components/format";
 import type {
   HostSessionView,
   SessionListState,
@@ -20,12 +22,7 @@ import type {
 } from "@baum/viewer/components/session-list";
 import { useVisibleInterval } from "./visible-interval";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
-import {
-  ChevronDownIcon,
-  SparkleIcon,
-  StackIcon,
-  WarningIcon,
-} from "@baum/viewer/components/icons";
+import { ChevronDownIcon, StackIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { type MenuItem, useContextMenu } from "./context-menu";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
@@ -48,9 +45,14 @@ import {
   backTo,
   request,
   selector,
-  documentRequest,
+  tiledDocument,
+  shellRequest,
+  tilesRequest,
+  addedTileRequest,
+  type TilesAnswer,
   type ChatFocus,
   type Entry,
+  type PR,
   type Job,
   isActiveJob,
   automaticLabel,
@@ -58,49 +60,48 @@ import {
   LocalRequestError,
   liveFor,
   listedFor,
-  fixEligible,
   fixLabel,
   jobHref,
   navigate,
+  redirect,
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, FixRuns, type FixState, type FixChat, useDismissedFixes } from "./fix";
+import { FixNotice, FixRuns, type FixState, phases, useDismissedFixes } from "./fix";
 import { useArchive } from "./up-next";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useVersionLoader } from "./version-cache";
-import { LiveSessionCard, LiveSessions, liveSessionLabel } from "./sessions";
-import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
+import { LiveSessionCard, liveSessionLabel, transcriptHref } from "./sessions";
+import { parseLiveTranscript, TranscriptCard, transcriptPath } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
-  PullRequestDecisionsList,
   PullRequestDecisionsPane,
   usePullRequestDecisions,
   type PullRequestDecisionsRead,
 } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
+import { useIssueLinks } from "./integrations";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
+import { type RepositoryFileSources, RepositoryFileSourceContext } from "./repository-file-source";
 import { canMerge, MergeDialog } from "./merge";
 import {
   openActiveBlock,
   reviewKeyStep,
+  SIDE_PANE_KEY,
   toggleActiveBlock,
   useGitHubKey,
   useShortcuts,
 } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
-import { Walkthrough, type WalkMode } from "./walkthrough";
-import { buildTour } from "./walkthrough-model";
-import { AnswerActions } from "./answer-actions";
-import { AskPanel } from "./chat";
+import { sessionPanel } from "./session-panel-state";
+import { EarlierQuestions, useEarlierQuestions } from "./chat";
 import { documentFilesSlot, factsFilesSlot, factsQuery, useFacts } from "./facts";
 import { liveDetailsChecks, useChecks } from "./checks";
 import { useLiveThreads } from "./threads";
-import { SECONDARY } from "./action-classes";
 import {
   CommentsPane,
   ReviewButton,
@@ -108,10 +109,21 @@ import {
   usePendingReview,
   type Composer,
 } from "./pending-review";
-import { commentTarget, reviewable } from "./pending-review-model";
-import type { ReviewEvent } from "./walkthrough-model";
+import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
-import { readSelection } from "@baum/viewer/review-selection";
+import { readSelection, withSelection } from "@baum/viewer/review-selection";
+import { useViewPlaces } from "./review-view/places";
+import {
+  CODE_PLACE,
+  commentSelection,
+  reviewOf,
+  servedReview,
+  withReview,
+} from "./review-view/model";
+import { activeTile } from "./review-view/view-tile";
+import { TileHostContext, type TileHost } from "./tiles/host";
+import { addedTilesKey, useAddedTilesEvents } from "./tiles/added-events";
+import { useToast } from "./toast";
 
 /** `commitsSlot`'s loaders over the daemon's commit routes under `route`
  *  (`api` for a saved version, `api/facts` for the facts), with the page's
@@ -180,6 +192,47 @@ export function Transcript({
   return <TranscriptCard transcript={load} title={title} focusTurn={focusTurn} embedded />;
 }
 
+/** The live sessions' agent for a linked session's vendor. */
+const LIVE_AGENTS: Record<string, string> = {
+  claude_code: "claude-code",
+  codex: "codex",
+  cursor: "cursor",
+};
+
+/** Linked sessions whose transcript the daemon has on this computer, by
+ *  `agent:id`, and those it is being asked about: where the answer should go,
+ *  the latest opening's page and address. */
+const onComputer = new Set<string>();
+const asking = new Map<string, { href: string; from: string }>();
+
+/** Opens a linked session on its page when its transcript is on this
+ *  computer, which only the daemon knows: one linked from another computer,
+ *  such as a teammate's, stays in the pane. Until the daemon answers, the
+ *  pane shows it, and the page replaces it if it is still the one open. A
+ *  session that is not here is asked about again the next time. */
+function openLinked(agent: string, id: string, focusTurn?: number): boolean {
+  const key = `${agent}:${id}`;
+  const href = transcriptHref({ agent, session_id: id }, focusTurn);
+  if (onComputer.has(key)) {
+    redirect(href);
+    return true;
+  }
+  const pending = asking.has(key);
+  asking.set(key, { href, from: location.href });
+  if (pending) return false;
+  void request<unknown>(transcriptPath(agent, id, null))
+    .then((body) => parseLiveTranscript(body)?.available === true)
+    .catch(() => false)
+    .then((here) => {
+      const latest = asking.get(key);
+      asking.delete(key);
+      if (!here) return;
+      onComputer.add(key);
+      if (latest && location.href === latest.from) redirect(latest.href);
+    });
+  return false;
+}
+
 /** The pull request's Sessions group: one list of the sessions linked to it
  *  through its commits (`linked`) and the sessions the daemon lists on it
  *  (`listed`: working, waiting, or ended and still listed). A listed session
@@ -194,6 +247,19 @@ export function pullRequestSessions(
   return sessionsSlot(linked, {
     renderSession,
     hosted: listedSessionRows(listed, linked, decisions),
+    // A session opens on its own page, where it can be continued.
+    open: (id, focusTurn) => {
+      const listedAgent = listed.find((s) => s.session_id === id)?.agent;
+      if (listedAgent) {
+        redirect(transcriptHref({ agent: listedAgent, session_id: id }, focusTurn));
+        return true;
+      }
+      const agent =
+        linked.status === "ready"
+          ? LIVE_AGENTS[linked.sessions.find((s) => s.id === id)?.vendor ?? ""]
+          : undefined;
+      return agent ? openLinked(agent, id, focusTurn) : false;
+    },
     empty:
       "Sessions on this computer show here while they work on this pull request, and once one of their commits is in it.",
   });
@@ -223,14 +289,8 @@ export function listedSessionRows(
       renderCard: (open) => (
         <LiveSessionCard session={s} open={open} Link={ViewerLink} decisions={decisions} />
       ),
-      renderPane: () => (
-        <>
-          <div className="pb-3">
-            <LiveSessionCard session={s} titled={false} Link={ViewerLink} decisions={decisions} />
-          </div>
-          <EmbeddedLiveTranscript session={s} />
-        </>
-      ),
+      // Opened, it leaves for its page on Sessions (`open` above).
+      renderPane: () => null,
     }));
 }
 /** The hosted PR page's shared viewer, with local sources for its slots. */
@@ -264,7 +324,6 @@ export function LocalReview({
   fix,
   fixState = { starting: false, error: "" },
   fixJob,
-  chats = [],
   fixRuns = [],
 }: {
   entry: Entry;
@@ -284,49 +343,43 @@ export function LocalReview({
   /** The review groups this pull request belongs to. */
   groups?: { id: string; name: string; stack?: boolean }[];
   /** Starts the fix at once; absent when the pull request has no clone. */
-  fix?: (chat?: FixChat) => void;
+  fix?: () => void;
   /** The fix asked for here: starting, or why it did not start. */
   fixState?: FixState;
   /** The pull request's latest fix job. */
   fixJob?: Job;
   /** Every fix job of the pull request, newest first. */
   fixRuns?: Job[];
-  chats?: Job[];
 }) {
   const pr = entry.pull_request;
+  const linkedIssues = useIssueLinks(pr);
   const url = useUrlState();
+  // The page reads a baum.review/2 version with its tile document, and a
+  // baum.review/1 one as stored.
+  const readDocument = shellRequest;
+  const places = useViewPlaces();
   const back = backTo(url.search);
   // The refresh key works on every state of the page, also where the button
-  // is not drawn, as while the review loads or has nothing to walk through.
+  // is not drawn, as while the review loads.
   usePageRefreshAction(refresh);
-  // One of the head's actions, on the walkthrough and on the full review alike.
+  // One of the head's actions.
   const refreshButton = refresh ? (
     <RefreshButton refresh={refresh} label="Refresh from GitHub" />
   ) : undefined;
-  // A pull request opens on the full review; walk=landing is the
-  // walkthrough's overview and walk=tour the tour one step in. walk=all named
-  // the list view the walkthrough once had, and walk=full the full review when
-  // the overview was the default.
-  const walk = url.search.get("walk");
-  const walkMode: WalkMode | null =
-    walk === "tour" || walk === "all" ? "tour" : walk === "landing" ? "landing" : null;
-  const setWalk = (mode: WalkMode | null) =>
+  // Ask opens the session panel on this pull request, about the part of the
+  // review picked, if any.
+  const ask = (focus: ChatFocus | null = null) =>
+    sessionPanel.ask({ repository: pr.repository, number: pr.number }, focus);
+  // The earlier questions to the review's agent, read-only, dock beside the
+  // review; the URL keeps them open over a reload.
+  const earlier = useEarlierQuestions(clone, pr.number);
+  const questionsOpen = url.search.get("questions") === "1" && !!earlier?.length;
+  const setQuestions = (open: boolean) =>
     url.update((current) => {
-      if (mode) current.set("walk", mode);
-      else current.delete("walk");
-      current.delete("pane");
+      if (open) current.set("questions", "1");
+      else current.delete("questions");
       return current;
     });
-  // The Ask panel docks beside the review; the URL keeps it open over a reload.
-  const askOpen = url.search.get("ask") === "1";
-  const setAsk = (open: boolean) =>
-    url.update((current) => {
-      if (open) current.set("ask", "1");
-      else current.delete("ask");
-      return current;
-    });
-  // The part of the review the next question is about.
-  const [askFocus, setAskFocus] = useState<ChatFocus | null>(null);
   // The pull request's description, opened from a source chip that cites it.
   const [description, setDescription] = useState<{ section?: string } | null>(null);
   // A repository file a context chip opened, with the selector and GitHub
@@ -336,23 +389,18 @@ export function LocalReview({
     source: string;
     href: string;
   } | null>(null);
-  // An answer's Open the draft asks the walkthrough for its wrap-up page.
-  const [toDraft, setToDraft] = useState(false);
-  // Below 72rem the panel overlays the review, which is then inert behind it.
+  // Below 72rem the questions overlay the review, which is then inert behind
+  // them.
   const narrow = useMedia("(width < 72rem)");
   // Docked on a window under 104rem, the review has too little width for its
   // side pane, which folds to its strip meanwhile.
   const tight = useMedia("(72rem <= width < 104rem)");
-  // Closing hands the keyboard back to the Ask button that opened it.
-  const closeAsk = () => {
-    setAsk(false);
+  // Closing hands the keyboard back to the button that opened them.
+  const closeQuestions = () => {
+    setQuestions(false);
     requestAnimationFrame(() =>
-      window.document.querySelector<HTMLElement>("[data-ask-button]")?.focus(),
+      window.document.querySelector<HTMLElement>("[data-questions-button]")?.focus(),
     );
-  };
-  const askAbout = (focus: ChatFocus) => {
-    setAskFocus(focus);
-    if (!askOpen) setAsk(true);
   };
   const fixLabelText = fixLabel(entry);
   const fixing = isActiveJob(fixJob);
@@ -417,6 +465,12 @@ export function LocalReview({
         : entry.status === "current" || entry.status === "outdated" || entry.status === "failed"
           ? entry.status
           : undefined;
+  // The review was kept for the head the pull request is at: it is current,
+  // and says so with the agent's reason rather than as outdated.
+  const kept =
+    !generating && entry.status === "current" && entry.kept && entry.kept.head === pr.head_sha
+      ? entry.kept
+      : null;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
   // The decisions of its sessions, in their own pane beside Sessions and
   // Commits rather than above the review.
@@ -426,8 +480,6 @@ export function LocalReview({
     `${ended}:${doc?.review.version ?? 0}`,
     pr.head_sha,
   );
-  // Where an answer's comment lands when it is added to the draft.
-  const tour = useMemo(() => (doc ? buildTour(doc) : null), [doc]);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [provenance, setProvenance] = useState<Provenance[]>([]);
@@ -439,16 +491,17 @@ export function LocalReview({
   const steps = useRef<ReviewSteps>(null);
   useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
-    // a opens the Ask panel, or puts the cursor in its box when open; it
-    // works in the walkthrough too.
-    if (event.key === "a" && doc && !showingDraft) {
+    // a asks an agent about the pull request: the session panel opens on its
+    // conversation with the keys in its composer. On the review page a tile
+    // under the keys is what it asks about, so "explain this" needs no
+    // question.
+    if (event.key === "a") {
       event.preventDefault();
-      if (askOpen) window.document.getElementById("ask-question")?.focus();
-      else setAsk(true);
+      const card = viewedDocument ? activeTile() : null;
+      const tile = card ? reviewOf(viewedDocument!).tiles.find((t) => t.id === card) : undefined;
+      ask(tile ? { kind: "tile", id: tile.id, title: tile.title } : null);
       return;
     }
-    // The tour has keys of its own; the overview leaves the page's to it.
-    if (walkMode === "tour" && doc && !showingDraft) return;
     // Space opens or closes the fold of the block j and k are on; on a
     // focused button or link it still presses that.
     if (
@@ -499,7 +552,14 @@ export function LocalReview({
       navigate(jobHref(watchable));
     } else if (event.key === "c" && canReview && !showingDraft) {
       event.preventDefault();
-      setComposer({ kind: "new", ...commentOn });
+      // A tile under the keys takes the comment, placed on the code it
+      // cites; elsewhere it is on what is being read.
+      const card = viewedDocument ? activeTile() : null;
+      const tiled = card && reviewOf(viewedDocument!).tiles.some((t) => t.id === card);
+      setComposer({
+        kind: "new",
+        ...(tiled ? commentTarget(viewedDocument ?? null, { kind: "tile", id: card }) : commentOn),
+      });
       setRevealComments((n) => n + 1);
     } else if (event.key === "v") {
       // As a click on the review button: its menu of verdicts.
@@ -509,9 +569,12 @@ export function LocalReview({
       button.click();
     }
   });
+  // A change to the tiles the person added (or to those being made) reads
+  // the versions on screen again: an added tile stands on every version.
+  const [tilesGeneration, setTilesGeneration] = useState(0);
   const loadVersion = useVersionLoader(
-    `${clone}:${pr.number}`,
-    (version) => documentRequest(clone, pr.number, version),
+    `${clone}:${pr.number}:${tilesGeneration}`,
+    (version) => readDocument(clone, pr.number, version),
     doc?.review.version,
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
@@ -522,8 +585,7 @@ export function LocalReview({
       ? history.state.document
       : null
     : doc;
-  // What c comments on: the section, risk or file being read.
-  const commentOn = commentTarget(viewedDocument ?? null, readSelection(url.search));
+  const selection = readSelection(url.search);
   const query = selector(clone, pr.number, viewedVersion);
   const latestQuery = selector(clone, pr.number);
   // While the daemon writes a review in stages it holds a draft of it. It is
@@ -536,21 +598,21 @@ export function LocalReview({
       return;
     }
     const abort = new AbortController();
-    request<{ document?: ReviewDocument }>(
-      `api/jobs/${encodeURIComponent(job.id)}/draft`,
+    request<Partial<TilesAnswer>>(
+      `api/jobs/${encodeURIComponent(job.id)}/draft?tiles=1`,
       undefined,
       "GET",
       abort.signal,
     )
       .then((body) => {
-        if (!abort.signal.aborted && Array.isArray(body.document?.sections))
-          setDraft(body.document);
+        if (abort.signal.aborted || !Array.isArray(body.document?.sections)) return;
+        setDraft(tiledDocument(body as TilesAnswer));
       })
       .catch(() => {
         /* The draft is gone, or the next one is on its way. */
       });
     return () => abort.abort();
-  }, [job?.id, draftCount]);
+  }, [job?.id, draftCount, tilesGeneration]);
   // A page without a review shows the draft as soon as there is one; one with
   // a saved version keeps showing that version until the new one is saved.
   const showingDraft = draft !== null && !doc && entry.version_count === 0;
@@ -571,16 +633,150 @@ export function LocalReview({
       showingDraft
         ? draft
         : retrying && doc && failedSections.length > 0
-          ? {
-              ...doc,
-              sections: doc.sections.map((s) =>
-                failedSections.includes(s.id) ? { ...s, details: "pending" as const } : s,
-              ),
-            }
+          ? retried(doc, failedSections)
           : doc,
     [showingDraft, draft, retrying, doc, failedSections],
   );
+  // Where "Where this fits" reads the files it names, whole, at the head of
+  // the version on screen. A draft is no saved version, so the daemon has no
+  // document to read its files for.
+  // Each pane reads its own version's files: two compared versions differ.
+  const latestVersion = doc?.review.version;
+  const repositoryFiles = useMemo<RepositoryFileSources | null>(() => {
+    if (showingDraft) return null;
+    return (document) => ({
+      source: `api/file?${selector(
+        clone,
+        pr.number,
+        document.review.version === latestVersion ? undefined : document.review.version,
+      )}`,
+      href: (path) => contextRefUrl(document, path),
+    });
+  }, [showingDraft, clone, pr.number, latestVersion]);
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
+  // Before there is a review, Files changed lists the pull request's files
+  // in the viewer's own files pane; once one lands, the same place is the
+  // review's Files changed, in place of that address.
+  const factsFile =
+    shownDocument && (selection.kind === "files" || selection.kind === "file")
+      ? selection.kind === "file"
+        ? selection.id
+        : ""
+      : null;
+  useEffect(() => {
+    if (factsFile === null) return;
+    url.update(
+      (current) =>
+        withSelection(current, {
+          kind: "tile",
+          id: CODE_PLACE,
+          ...(factsFile ? { item: factsFile } : {}),
+        }),
+      { replace: true, preventScrollReset: true },
+    );
+  }, [factsFile, url]);
+  // What c comments on: the section, risk, file or tile being read; on the
+  // review page's Code tab, the file open there.
+  const commentOn = commentTarget(viewedDocument ?? null, commentSelection(selection));
+  // The tiles the person added, and those being made in the session panel,
+  // are read again when they change, from the session panel, the page or
+  // another window.
+  const toast = useToast();
+  const reloadTiles = useRef(async () => {});
+  reloadTiles.current = async () => {
+    setTilesGeneration((n) => n + 1);
+    // Added tiles stand on baum.review/2 versions only.
+    if (doc && servedReview(doc)) setDoc(await tilesRequest(clone, pr.number));
+  };
+  useAddedTilesEvents(addedTilesKey(pr.repository, pr.number), () => {
+    void reloadTiles.current().catch(() => undefined);
+  });
+  const historyRetry = useRef(history.retry);
+  historyRetry.current = history.retry;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a change to the added tiles reads the earlier version again
+  useEffect(() => {
+    if (tilesGeneration > 0 && history.selection) historyRetry.current();
+  }, [tilesGeneration]);
+  // Rebuilt only when what the tiles read of it changes.
+  const latestHost = useRef({ viewedDocument, canReview, showingDraft });
+  latestHost.current = { viewedDocument, canReview, showingDraft };
+  // A custom tile's frame that never answered: read the tile route of every
+  // version on screen again, which registers their frame documents again.
+  const rereadTiles = useRef<() => Promise<unknown>>(async () => undefined);
+  rereadTiles.current = () =>
+    Promise.all([
+      showingDraft && job
+        ? request(`api/jobs/${encodeURIComponent(job.id)}/draft?tiles=1`)
+        : tilesRequest(clone, pr.number),
+      ...(history.selection ? [tilesRequest(clone, pr.number, history.selection.version)] : []),
+    ]);
+  const commenting = canReview && !showingDraft;
+  const tileHost = useMemo<TileHost>(
+    () => ({
+      draft: showingDraft,
+      comment: commenting
+        ? (tile) => {
+            setComposer({
+              kind: "new",
+              ...commentTarget(latestHost.current.viewedDocument ?? null, {
+                kind: "tile",
+                id: tile,
+              }),
+            });
+            setRevealComments((n) => n + 1);
+          }
+        : undefined,
+      ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
+      saveToLibrary: (tile) => {
+        ask({ kind: "tile", id: tile.id, title: tile.title });
+        sessionPanel.setDraft("Save this tile to my library");
+      },
+      removeDraft: (tile) => {
+        void request(
+          `api/tiles/drafts/${encodeURIComponent(tile)}?${new URLSearchParams({ clone, pr: String(pr.number) })}`,
+          {},
+          "DELETE",
+        ).catch(() => undefined);
+      },
+      // Remove takes an added tile off every version; the toast's Undo puts
+      // it back where it was.
+      removeAdded: showingDraft
+        ? undefined
+        : (tile) => {
+            const send = (action: "remove" | "restore") =>
+              addedTileRequest(clone, pr.number, tile.id, action).then(() =>
+                reloadTiles.current().catch(() => undefined),
+              );
+            send("remove").then(
+              () =>
+                toast({
+                  title: `Removed ${tile.title}`,
+                  action: {
+                    label: "Undo",
+                    run: () =>
+                      void send("restore").catch((error: unknown) =>
+                        toast({
+                          title: `${tile.title} couldn't be put back`,
+                          detail: error instanceof Error ? error.message : String(error),
+                          error: true,
+                        }),
+                      ),
+                  },
+                }),
+              (error: unknown) =>
+                toast({
+                  title: `${tile.title} wasn't removed`,
+                  detail: error instanceof Error ? error.message : String(error),
+                  error: true,
+                }),
+            );
+          },
+      reread: () => rereadTiles.current(),
+    }),
+    // `ask` reads the pull request, which keys the page; the rest is read
+    // through `latestHost` and `reloadTiles` when called.
+    [showingDraft, commenting, toast],
+  );
   // Why the last retry did not write the details, said until it is dismissed.
   const [headChanged, setHeadChanged] = useState(false);
   const [retryError, setRetryError] = useState("");
@@ -672,7 +868,7 @@ export function LocalReview({
   useEffect(() => {
     const abort = new AbortController();
     setFailed(false);
-    documentRequest(clone, pr.number, undefined, abort.signal)
+    readDocument(clone, pr.number, undefined, abort.signal)
       .then(setDoc)
       .catch(() => {
         if (!abort.signal.aborted) setFailed(true);
@@ -869,111 +1065,8 @@ export function LocalReview({
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
-          <div className="ask-main" inert={narrow && askOpen ? true : undefined}>
-            {walkMode && doc && !showingDraft ? (
-              // A new version starts afresh, with that version's own progress.
-              <Walkthrough
-                key={doc.review.version}
-                entry={entry}
-                document={doc}
-                mode={walkMode}
-                setMode={setWalk}
-                close={() => setWalk(null)}
-                back={back}
-                patches={patches}
-                changed={changed}
-                ask={{
-                  open: askOpen,
-                  toggle: () => (askOpen ? closeAsk() : setAsk(true)),
-                  about: askAbout,
-                }}
-                toDraft={toDraft}
-                drafted={() => setToDraft(false)}
-                refresh={refreshButton}
-                actions={
-                  <>
-                    {fix && fixLabelText ? (
-                      <button
-                        type="button"
-                        className={SECONDARY}
-                        disabled={fixing || fixStarting}
-                        onClick={() => fix()}
-                      >
-                        <SparkleIcon size={14} className="flex-none text-status-critical" />
-                        {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
-                      </button>
-                    ) : null}
-                    {canMerge(entry) ? (
-                      <button type="button" className={SECONDARY} onClick={() => setMerging(true)}>
-                        Merge…
-                      </button>
-                    ) : null}
-                    {canUpdateBranch(entry) ? (
-                      <button type="button" className={SECONDARY} onClick={() => setUpdating(true)}>
-                        Update branch
-                      </button>
-                    ) : null}
-                    {canRerunChecks(entry) ? (
-                      <button
-                        type="button"
-                        className={SECONDARY}
-                        onClick={() => setRerunning(true)}
-                      >
-                        Re-run checks
-                      </button>
-                    ) : null}
-                    {entry.status === "outdated" || generating ? (
-                      <button
-                        type="button"
-                        className={SECONDARY}
-                        disabled={generating || entry.needs_clone}
-                        onClick={generate}
-                      >
-                        {generating ? "Generating review…" : "Regenerate review"}
-                      </button>
-                    ) : null}
-                  </>
-                }
-                notices={
-                  <>
-                    {archivedNotice}
-                    {fixState.error ? (
-                      <Alert>Couldn't start the fix: {fixState.error}</Alert>
-                    ) : null}
-                    {showFix && fixJob ? (
-                      <FixNotice
-                        key={fixJob.id}
-                        job={fixJob}
-                        changed={changed}
-                        dismiss={fixing ? undefined : () => dismissFix(fixJob.id)}
-                      />
-                    ) : null}
-                    <PullRequestDecisionsList
-                      repository={pr.repository}
-                      number={pr.number}
-                      live={running}
-                      revision={`${ended}:${doc.review.version}`}
-                      read={decisions}
-                    />
-                    <LiveSessions sessions={running} Link={ViewerLink} decisions={decisions} />
-                    {gaps}
-                    {retryNotices}
-                    {failed ? (
-                      <Alert>
-                        The latest review could not be read. This saved version remains available.{" "}
-                        <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
-                      </Alert>
-                    ) : null}
-                    {generating ? (
-                      <Notice>
-                        A new review is being generated. This saved version remains available while
-                        it runs.
-                      </Notice>
-                    ) : null}
-                  </>
-                }
-              />
-            ) : (
+          <div className="ask-main" inert={narrow && questionsOpen ? true : undefined}>
+            <ReviewHosts tileHost={tileHost} files={repositoryFiles}>
               <ReviewViewer
                 document={shownDocument}
                 openSource={(anchor) => {
@@ -1024,6 +1117,7 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
+                places={places}
                 detailsChecks={(shown) =>
                   liveDetailsChecks(
                     shown,
@@ -1043,7 +1137,8 @@ export function LocalReview({
                     ? threadsNow
                     : null
                 }
-                foldSidePane={askOpen && tight}
+                foldSidePane={questionsOpen && tight}
+                sidePaneKey={SIDE_PANE_KEY}
                 header={{
                   pullRequest: {
                     number: pr.number,
@@ -1051,6 +1146,10 @@ export function LocalReview({
                     repository: pr.repository,
                     url: pr.url,
                     state: pr.state.toLowerCase(),
+                    ...(pr.head_ref && pr.base_ref
+                      ? { branches: { head: pr.head_ref, base: pr.base_ref } }
+                      : {}),
+                    ...pullRequestLines(pr, doc),
                   },
                   back: { href: back.href, label: back.label },
                   generation: { state: generationState, rewriting: generating && Boolean(doc) },
@@ -1058,8 +1157,17 @@ export function LocalReview({
                   // The stacks and groups it belongs to, under the title with its
                   // other facts rather than as a notice over the review.
                   subtitle:
-                    groups.length > 0 ? (
+                    groups.length > 0 || kept || linkedIssues ? (
                       <>
+                        {kept ? (
+                          <span
+                            className="local-kept-note"
+                            title={`Checked ${formatDate(kept.kept_at)}: ${kept.reason}`}
+                          >
+                            Still applies to the newer commits
+                          </span>
+                        ) : null}
+                        {linkedIssues}
                         {groups.map((group) => (
                           <ViewerLink
                             key={group.id}
@@ -1122,7 +1230,7 @@ export function LocalReview({
                               ? [{ label: "Re-run checks", onSelect: () => setRerunning(true) }]
                               : []),
                             ...(canUpdateBranch(entry)
-                              ? [{ label: "Update branch", onSelect: () => setUpdating(true) }]
+                              ? [{ label: "Update branch…", onSelect: () => setUpdating(true) }]
                               : []),
                           ]}
                         />
@@ -1133,18 +1241,32 @@ export function LocalReview({
                           </span>
                         ) : null}
                         <div className="ml-auto flex flex-wrap items-center gap-2">
-                          {doc && !showingDraft ? (
+                          {earlier?.length ? (
                             <Button
                               variant="secondary"
                               size="compact"
-                              aria-pressed={askOpen}
-                              aria-keyshortcuts="a"
-                              data-ask-button=""
-                              onClick={() => (askOpen ? closeAsk() : setAsk(true))}
+                              aria-pressed={questionsOpen}
+                              data-questions-button=""
+                              title="Questions asked of the review's agent before the session panel, read-only"
+                              onClick={() =>
+                                questionsOpen ? closeQuestions() : setQuestions(true)
+                              }
                             >
-                              Ask
+                              Earlier questions
                             </Button>
                           ) : null}
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            aria-keyshortcuts="a"
+                            title="Ask an agent about this pull request in the session panel"
+                            onClick={() => ask()}
+                          >
+                            Ask
+                            <kbd aria-hidden="true" className="key-hint">
+                              a
+                            </kbd>
+                          </Button>
                           {canReview ? (
                             <ReviewButton
                               entry={entry}
@@ -1153,8 +1275,15 @@ export function LocalReview({
                             />
                           ) : null}
                           {canMerge(entry) ? (
-                            <Button size="compact" onClick={() => setMerging(true)}>
+                            <Button
+                              size="compact"
+                              aria-keyshortcuts="m"
+                              onClick={() => setMerging(true)}
+                            >
                               Merge…
+                              <kbd aria-hidden="true" className="key-hint">
+                                m
+                              </kbd>
                             </Button>
                           ) : null}
                         </div>
@@ -1318,8 +1447,13 @@ export function LocalReview({
                   decisions
                     ? {
                         count: decisions.total,
-                        renderPane: () => (
-                          <PullRequestDecisionsPane read={decisions} live={running} heading />
+                        renderPane: (_actions, open) => (
+                          <PullRequestDecisionsPane
+                            read={decisions}
+                            live={running}
+                            heading
+                            open={open}
+                          />
                         ),
                       }
                     : undefined
@@ -1360,46 +1494,22 @@ export function LocalReview({
                   showingDraft ? (doc ? undefined : (path: string) => factsPatches(path)) : patches
                 }
               />
-            )}
+            </ReviewHosts>
           </div>
-          {askOpen && doc && !showingDraft ? (
+          {questionsOpen && earlier ? (
             <>
-              <div className="ask-backdrop" aria-hidden onClick={closeAsk} />
-              <AskPanel
+              <div className="ask-backdrop" aria-hidden onClick={closeQuestions} />
+              <EarlierQuestions
                 key={`${clone}:${pr.number}`}
-                clone={clone}
+                repository={pr.repository}
                 pr={pr.number}
                 pullRequestUrl={pr.url}
-                latestVersion={doc.review.version}
-                // Questions are about the version on screen, which is an older
-                // one while the viewer reads it.
-                document={!walkMode && viewedDocument ? viewedDocument : doc}
+                conversations={earlier}
+                // Citations are drawn from the version on screen, which is an
+                // older one while the viewer reads it.
+                document={showingDraft ? null : (viewedDocument ?? doc)}
                 patches={patches}
-                focus={askFocus}
-                clearFocus={() => setAskFocus(null)}
-                close={closeAsk}
-                jobs={chats}
-                answerActions={({ conversation, turn, answer }) =>
-                  // Only an answer about the newest review goes to its draft or
-                  // to a fix of the pull request as it is now.
-                  tour && conversation.version === doc.review.version ? (
-                    <AnswerActions
-                      conversation={conversation}
-                      turn={turn}
-                      answer={answer}
-                      document={doc}
-                      tour={tour}
-                      fix={fix && fixEligible(entry) ? fix : undefined}
-                      fixRunning={fixing || fixStarting}
-                      openDraft={() => {
-                        setWalk("tour");
-                        setToDraft(true);
-                        // The overlay would cover the draft and keep it inert.
-                        if (narrow) closeAsk();
-                      }}
-                    />
-                  ) : null
-                }
+                close={closeQuestions}
               />
             </>
           ) : null}
@@ -1471,16 +1581,78 @@ export function LocalReview({
   );
 }
 
-class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  override state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
+/** The size the head shows: GitHub's count of the pull request's lines, or,
+ *  from an older daemon that has none, the size of the diff the review
+ *  read. */
+function pullRequestLines(
+  pr: PR,
+  doc: ReviewDocument | null | undefined,
+): { lines?: { additions: number; deletions: number } } {
+  if ((pr.additions ?? 0) > 0 || (pr.deletions ?? 0) > 0)
+    return { lines: { additions: pr.additions ?? 0, deletions: pr.deletions ?? 0 } };
+  if (doc && (doc.stats.additions > 0 || doc.stats.deletions > 0))
+    return { lines: { additions: doc.stats.additions, deletions: doc.stats.deletions } };
+  return {};
+}
+
+/** The document with its failed sections marked as being written while a
+ *  retry of their details runs. */
+function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
+  const copy: ReviewDocument = {
+    ...doc,
+    sections: doc.sections.map((s) =>
+      ids.includes(s.id) ? { ...s, details: "pending" as const } : s,
+    ),
+  };
+  // The baum.review/2 document the tabs read reads as being written too.
+  const review = servedReview(doc);
+  return review
+    ? withReview(copy, {
+        ...review,
+        sections: review.sections.map((s) =>
+          ids.includes(s.id) ? { ...s, details: "pending" as const } : s,
+        ),
+      })
+    : copy;
+}
+
+/** What the review's tiles and its context's files read from the page: the
+ *  tile host, and the route repository files are read from. */
+function ReviewHosts({
+  tileHost,
+  files,
+  children,
+}: {
+  tileHost: TileHost;
+  files: RepositoryFileSources | null;
+  children: ReactNode;
+}) {
+  return (
+    <TileHostContext.Provider value={tileHost}>
+      <RepositoryFileSourceContext.Provider value={files}>
+        {children}
+      </RepositoryFileSourceContext.Provider>
+    </TileHostContext.Provider>
+  );
+}
+
+class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean; why: string }> {
+  override state = { failed: false, why: "" };
+  static getDerivedStateFromError(error: unknown) {
+    // The first line of what threw, so the notice says more than that
+    // something did; the whole error, with its stack, goes to the console.
+    const why = error instanceof Error ? error.message : String(error);
+    return { failed: true, why: why.split("\n")[0]?.slice(0, 200) ?? "" };
+  }
+  override componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("The review page could not be drawn:", error, info.componentStack);
   }
   override render() {
     return this.state.failed ? (
       <Alert>
         The stored document could not be rendered.{" "}
-        <Button onClick={() => this.setState({ failed: false })}>Retry rendering</Button>
+        {this.state.why ? <span className="text-secondary">({this.state.why})</span> : null}{" "}
+        <Button onClick={() => this.setState({ failed: false, why: "" })}>Retry rendering</Button>
       </Alert>
     ) : (
       this.props.children
@@ -1647,7 +1819,7 @@ export function ReviewJob({
           {job.state === "queued" ? "New version queued" : "Generating a new version"}
           {/* The title already says it generates; another phase is news. */}
           {job.state === "running" && job.phase && job.phase !== "generating" ? (
-            <span className="font-normal text-tertiary"> · {job.phase}</span>
+            <span className="font-normal text-tertiary"> · {phases[job.phase] ?? job.phase}</span>
           ) : null}
         </p>
         {started || saved ? (

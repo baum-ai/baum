@@ -31,12 +31,12 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/orchestrate"
 	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/pricing"
-	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
@@ -113,8 +113,6 @@ type Options struct {
 	Budgets        agent.Budgets
 	// PassTimeout bounds each backend call; zero leaves it to the wall clock.
 	PassTimeout time.Duration
-	// TileKinds is the tile allow-list; empty offers no tiles.
-	TileKinds []string
 	// PromptSource is recorded in the stored metadata as store.Metadata's
 	// PromptSource; the host that chose the prompts sets it.
 	PromptSource string
@@ -134,16 +132,22 @@ type Options struct {
 	// (CompleteStaged) but with the sections still being written pending.
 	// It is never a version. Calls come one at a time, from a goroutine of
 	// the run, and the last one returns before Run does.
-	OnDraft func(document []byte)
+	OnDraft func(Draft)
+	// Tiles, for a V2 run, supplies its dedicated tile types (see Tiles).
+	// Other runs ignore it.
+	Tiles *Tiles
 	// Continue, for a staged run, is the saved version to complete instead
 	// of writing a new one: the latest version, some of whose sections
 	// failed. Only the details of those sections are written again
 	// (agent.StagedRun.Outline), against the version's head, base and merge
 	// base, and the result is the same version with its metadata, model,
 	// prompt version and generation time. Request.Previous must be the
-	// version before it, which it was reconciled with. Nothing is kept for
-	// a chat.
-	Continue  *store.Version
+	// version before it, which it was reconciled with.
+	Continue *store.Version
+	// NoReuse, for a staged run, writes every section's details instead of
+	// reusing the previous version's (agent.StagedRun.NoReuse). Only tools
+	// that measure the prompts set it.
+	NoReuse   bool
 	Validator *review.DocumentValidator
 	Redactor  *bundle.Redactor
 	// Progress receives one line per step; nil discards them. The document is
@@ -154,16 +158,6 @@ type Options struct {
 	OnRepairs func(repairs int)
 	// KeepRunDir keeps the run directory and reports its path on Progress.
 	KeepRunDir bool
-	// KeepSession persists the backend's session and keeps the run directory,
-	// under SessionRoot, when the run succeeds with a session id, and records
-	// both in the version's Metadata.Session so a later chat can continue the
-	// session in the same directory. A failed run, a missing session id and a
-	// group review remove the directory as usual. Only a local Claude Code or
-	// Codex backend supports it.
-	KeepSession bool
-	// SessionRoot is the directory kept runs are made in; empty is
-	// reviewruns.DefaultRoot.
-	SessionRoot string
 	// Stored, for Publish, runs once the version is stored, with its metadata.
 	// The version is already published: an error is a warning on Progress.
 	Stored func(ctx context.Context, key store.Key, m store.Metadata) error
@@ -179,6 +173,13 @@ type Options struct {
 	// pull requests it names instead of the one Request names; Prompts then
 	// defaults to the public group prompt.
 	Group *Group
+	// V2, for a new review of a single pull request (no Group, no
+	// Continue), writes it as a baum.review/2 document in the levels of
+	// agent/orchestrate instead of the staged review (see V2). Tiles, when
+	// set too, supplies the dedicated tile types (its library and saved
+	// types) and their fill texts. Groups, stacks and continued versions
+	// keep baum.review/1.
+	V2 *V2
 }
 
 // Result is a finished run.
@@ -188,7 +189,7 @@ type Result struct {
 	Document []byte
 	Metadata store.Metadata
 	Outcome  agent.Outcome
-	// RunDir is the run directory when KeepRunDir or KeepSession kept it.
+	// RunDir is the run directory when KeepRunDir kept it.
 	RunDir string
 	// Elapsed is the wall time of the run.
 	Elapsed time.Duration
@@ -196,6 +197,23 @@ type Result struct {
 	// without their details, and ContextFailed says it has no context.
 	FailedSections []string
 	ContextFailed  bool
+	// OutlineRepairs and OutlineRejections, for a staged run, count the
+	// outline stage's validation repairs and the replies its harness
+	// rejected against the schema, which tile reviews widen.
+	OutlineRepairs, OutlineRejections int
+	// V2, for a baum.review/2 run (Options.V2), is what its levels did; its
+	// Outcome is Outcome before masking.
+	V2 *orchestrate.Outcome
+}
+
+// Draft is a staged run's review so far (Options.OnDraft).
+type Draft struct {
+	// Document is the review so far, masked and completed as the published
+	// document is, with the sections still being written pending.
+	Document []byte
+	// Composition is the stored composition of the version a run continues
+	// (Options.Continue), which presents its tiles; nil otherwise.
+	Composition []byte
 }
 
 // Run executes the pipeline. The run directory is removed on every path
@@ -298,62 +316,14 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		return result, err
 	}
 	defer RemoveTree(archives)
-	// A continued version keeps the session it was written with.
-	keepSession := o.KeepSession && o.Group == nil && o.Continue == nil
-	var runDir, sessionRoot string
-	if keepSession {
-		sessionRoot = o.SessionRoot
-		if sessionRoot == "" {
-			if sessionRoot, err = reviewruns.DefaultRoot(); err != nil {
-				progress("warning: not keeping the agent session: %v", err)
-				keepSession = false
-			}
-		}
-	}
-	if keepSession {
-		if runDir, err = reviewruns.Create(sessionRoot); err != nil {
-			// A cache directory that cannot be written to must not fail the review.
-			progress("warning: not keeping the agent session: %v", err)
-			keepSession = false
-		}
-	}
-	if !keepSession {
-		if runDir, err = os.MkdirTemp("", agent.RunDirPrefix+"*"); err != nil {
-			return result, err
-		}
-	}
-	// A kept session's directory and the CLI's session files go unless the
-	// run succeeds with a session; then only the sessions of the calls that
-	// did not produce the accepted document go.
-	kept := false
-	var sessionIDs []string
-	// uncertain is set when a call may have left a session with no id reported.
-	uncertain := false
-	if keepSession && !o.KeepRunDir {
-		defer func() {
-			switch {
-			case !kept:
-				RemoveTree(runDir)
-				if len(sessionIDs) > 0 || uncertain {
-					_ = reviewruns.RemoveSessions(sessionRoot, runDir)
-				} else {
-					reviewruns.Forget(sessionRoot, runDir)
-				}
-			case len(sessionIDs) > 1:
-				var others []string
-				for _, id := range sessionIDs {
-					if id != result.Metadata.Session.ID {
-						others = append(others, id)
-					}
-				}
-				_ = reviewruns.RemoveSessions(sessionRoot, runDir, others...)
-			}
-		}()
+	runDir, err := os.MkdirTemp("", agent.RunDirPrefix+"*")
+	if err != nil {
+		return result, err
 	}
 	if o.KeepRunDir {
 		result.RunDir = runDir
 		defer progress("run directory kept: %s", runDir)
-	} else if !keepSession {
+	} else {
 		defer RemoveTree(runDir)
 	}
 
@@ -399,6 +369,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		runCtx, cancel = context.WithTimeout(ctx, o.Budgets.WallClock)
 	}
 	defer cancel()
+	if o.V2 != nil && o.Group == nil && o.Continue == nil {
+		return v2Run(ctx, runCtx, o, assembled, captured, runDir, redactor, fail, progress, started, now)
+	}
 	backend := o.Backend
 	if o.PassTimeout > 0 {
 		backend = passBounded{Backend: backend, timeout: o.PassTimeout}
@@ -408,7 +381,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		Logger: slog.New(&progressHandler{w: o.Progress, repairs: o.OnRepairs, stages: map[string]int{}}),
 	}
 	run := agent.Run{
-		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate, PersistSession: keepSession,
+		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, Budgets: o.Budgets, Decorate: decorate,
 	}
 	if o.Group != nil {
 		run.ModelSchema = groupModelSchema
@@ -421,7 +394,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	var genErr, redactErr error
 	closed := 0
 	if staged {
-		continued.Run, continued.Prompts = run, stagedPrompts
+		continued.Run, continued.Prompts, continued.NoReuse = run, stagedPrompts, o.NoReuse
 		draftModel := o.Model
 		if o.Continue != nil {
 			draftModel = o.Continue.Metadata.Model
@@ -431,39 +404,34 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		}
 		var stopDrafts func()
 		if o.OnDraft != nil {
-			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(draft []byte) []byte {
+			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(p agent.StagedProgress) (Draft, bool) {
 				var scratch agent.Outcome
-				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, draft, &b, checkout, &scratch)
+				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, p.Document, &b, checkout, &scratch)
 				if err != nil || closed > 0 {
-					return nil
+					return Draft{}, false
 				}
 				completed, findings := validator.CompleteStaged(masked, &b, runDir, draftModel, promptVersion, now())
 				if findings != "" {
-					return nil
+					return Draft{}, false
 				}
-				return completed
+				d := Draft{Document: completed}
+				if o.Continue != nil && len(o.Continue.Composition) > 0 {
+					d.Composition = o.Continue.Composition
+				}
+				return d, true
 			})
 		}
 		var stages agent.StagedOutcome
 		stages, document, genErr = generator.StagedReview(runCtx, continued)
+		result.OutlineRepairs, result.OutlineRejections = stages.Outline.ValidationRepairs, stages.Outline.StructuredOutputRejections
 		if stopDrafts != nil {
 			stopDrafts()
 		}
-		sessionIDs = stages.Sessions
 		document, closed, redactErr = agent.RedactStagedOutput(redactCtx, validator, redactor, document, &b, checkout, &stages)
 		outcome = stages.Outcome
 	} else {
 		outcome, document, genErr = generator.Generate(runCtx, run)
-		sessionIDs = outcome.Sessions
 		document, closed, redactErr = agent.RedactOutput(redactCtx, validator, redactor, document, &b, checkout, &outcome)
-	}
-	if keepSession {
-		uncertain = outcome.ErroredAttempts > 0
-		// Removing the run deletes exactly these sessions by id. A failed
-		// write only leaves the removal to a bounded scan.
-		if e := reviewruns.Record(sessionRoot, runDir, outcome.ErroredAttempts == 0, sessionIDs...); e != nil {
-			progress("warning: recording the agent sessions: %v", e)
-		}
 	}
 	if redactErr == nil {
 		document, _ = agent.RejectSecrets(&outcome, document, closed)
@@ -555,16 +523,6 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		}
 		if result.ContextFailed {
 			progress("the review has no codebase context")
-		}
-	}
-	if keepSession && outcome.SessionID != "" {
-		result.Metadata.Session = &store.ReviewSession{Backend: o.Backend.Name(), ID: outcome.SessionID, Directory: runDir}
-		result.RunDir = runDir
-		kept = true
-		// The raw model output of the repairs is not needed to chat.
-		rejected, _ := filepath.Glob(filepath.Join(runDir, "rejected-*.json"))
-		for _, path := range rejected {
-			_ = os.Remove(path)
 		}
 	}
 	result.Attachments = captured
@@ -719,6 +677,9 @@ func (p passBounded) Run(ctx context.Context, request agent.Request) (agent.Resu
 
 // ConcurrentCalls forwards the bounded backend's agent.ConcurrentCaller.
 func (p passBounded) ConcurrentCalls() bool { return ConcurrentCalls(p.Backend) }
+
+// KeepsSessions forwards the bounded backend's agent.SessionKeeper.
+func (p passBounded) KeepsSessions() bool { return agent.KeepsSessions(p.Backend) }
 
 // ConcurrentCalls reports whether backend may run several calls over one run
 // directory at once (agent.ConcurrentCaller). A host's wrapper of a backend

@@ -26,7 +26,9 @@
 // environment, no hooks and no reflog (UpdateRetained). The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
 // changed, except by a Fix: the temporary worktree, refs and push of a fix a
-// person confirmed (see Fix). An export is the hosted mirror's own git archive command run in
+// person confirmed (see Fix), and by AddPullWorktree: the worktree, branch
+// and its upstream configuration of a pull request a person opened a
+// session on, which leave every other worktree as it was. An export is the hosted mirror's own git archive command run in
 // the private repository, so it is byte for byte the archive the hosted
 // service produces, including whatever attributes that archive applies: it
 // still applies working-tree-encoding from the tree.
@@ -785,6 +787,25 @@ func (r *Repo) PatchFetcher(ctx context.Context, comparison bundle.Comparison) b
 	}
 }
 
+// Diff is the whole text diff between two commits exactly as given, without
+// computing a merge base: a file summary (--stat) and then every file's
+// patch. Output over maxBytes is bundle.ErrOutputTooLarge.
+func (r *Repo) Diff(ctx context.Context, baseOID, headOID string, maxBytes int64) ([]byte, error) {
+	if !validOID(baseOID) || !validOID(headOID) || maxBytes <= 0 {
+		return nil, ErrInvalidInput
+	}
+	done, err := r.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	out, err := r.read(ctx, maxBytes, "diff", "--no-ext-diff", "--no-textconv", "-M", "-l1000", "--stat", "--patch", baseOID, headOID, "--")
+	if err != nil {
+		return nil, fmt.Errorf("reading diff: %w", err)
+	}
+	return out, nil
+}
+
 // TextPatch diffs one file (or a rename's old and new path) between two
 // commits exactly as given, without computing a merge base.
 func (r *Repo) TextPatch(ctx context.Context, baseOID, headOID string, paths ...string) ([]byte, error) {
@@ -1048,9 +1069,25 @@ var removeAll = os.RemoveAll
 
 // inside reports whether child is parent or below it.
 func inside(parent, child string) bool {
-	if p, err := filepath.EvalSymlinks(parent); err == nil {
-		parent = p
-	}
-	rel, err := filepath.Rel(parent, child)
+	rel, err := filepath.Rel(resolveExisting(parent), resolveExisting(child))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolveExisting is path with symlinks and Windows short names resolved in
+// its deepest existing part and the rest appended, so an alias of a directory
+// (/var for /private/var on macOS, RUNNER~1 on Windows) compares as the
+// directory, whether or not path itself exists yet.
+func resolveExisting(path string) string {
+	existing, rest := filepath.Clean(path), ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(existing); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		next := filepath.Dir(existing)
+		if next == existing {
+			return filepath.Clean(path)
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = next
+	}
 }

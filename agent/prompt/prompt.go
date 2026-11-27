@@ -1,8 +1,7 @@
 // Package prompt is the review prompt this module ships: the instructions the
 // generate-and-repair loop (agent.Generator) gives a model backend. It also
 // holds the fix instructions (Fix): fix-public-v1.md, with fix-conflicts.md
-// and fix-checks.md for what a fix is for, and the instructions of a chat turn
-// (Chat): chat-public-v1.md.
+// and fix-checks.md for what a fix is for.
 //
 // Five review files are embedded:
 //
@@ -19,8 +18,8 @@
 //
 // Instructions joins the shared text with the backend's submit text under the
 // trailing heading, sets Version to Version and Digest to the sha256 of the
-// joined Body. The repair wording stays in agent.RepairText and the tile
-// guidance in tilecatalogue, so neither belongs in these files.
+// joined Body. The repair wording stays in agent.RepairText, so it does not
+// belong in these files.
 //
 // A staged review (agent.Generator.StagedReview, StagedPrompts) has four
 // more, derived from review-public-v6.md:
@@ -42,8 +41,8 @@
 // # Custom prompts
 //
 // A host may replace the text of any prompt by passing Overrides (a map from
-// ID to text) in the Overrides field of GroupPrompts or StagedPrompts, or to
-// FixWith. The one-pass review (Prompts) is not replaceable: a review of one
+// ID to text) in the Overrides field of GroupPrompts, StagedPrompts or
+// V2Prompts, or to FixWith. The one-pass review (Prompts) is not replaceable: a review of one
 // pull request is staged, and a group's prompt (review-group) is the whole
 // text, the review instructions included. An override replaces the built-in text of its part only: the
 // Submitting heading and the backend's submit block (the output contract)
@@ -77,7 +76,7 @@ import (
 
 // Version is the prompt version recorded in the document's generator block.
 // Change it with the text of review-public-v6.md.
-const Version = "review-public-v8"
+const Version = "review-public-v9"
 
 //go:embed review-public-v6.md
 var reviewPublic string
@@ -87,7 +86,7 @@ var submitClaude string
 
 // GroupVersion is the prompt version of a review group's combined review.
 // Change it with the text of group-public-v1.md or review-public-v6.md.
-const GroupVersion = "group-review-public-v6"
+const GroupVersion = "group-review-public-v7"
 
 //go:embed group-public-v1.md
 var groupPublic string
@@ -146,7 +145,7 @@ func (g GroupPrompts) Instructions(_ context.Context, backend string) (agent.Pro
 
 // StagedVersion is the prompt version of a staged review. Change it with the
 // text of any review-*-public-v1.md file of the staged review.
-const StagedVersion = "review-staged-public-v3"
+const StagedVersion = "review-staged-public-v6"
 
 //go:embed review-shared-public-v1.md
 var stagedShared string

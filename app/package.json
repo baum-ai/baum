@@ -9,18 +9,22 @@
     "*.css"
   ],
   "scripts": {
-    "generate": "pnpm --dir ../viewer generate",
-    "typecheck": "pnpm generate && tsc --noEmit",
-    "build": "pnpm generate && vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "build:profile": "vite build --mode profile",
+    "gallery": "vite --config vite.gallery.config.ts",
     "lint:palette": "node scripts/check-palette.mjs",
+    "tile-kit": "node scripts/build-tile-kit.mjs",
+    "tile-kit:check": "node scripts/build-tile-kit.mjs --check",
     "lint": "pnpm lint:palette && oxlint --deny-warnings .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "test:unit": "node --test scripts/check-palette.test.mjs && vitest run",
+    "test:unit": "node --test scripts/check-palette.test.mjs scripts/profile/*.test.ts && vitest run && KIT_SCRIPT=inlined vitest run src/tile-kit",
     "test:e2e": "playwright test",
     "test:desktop": "node ../desktop/tests/onboarding.cjs",
     "test:development": "playwright test --config playwright.development.config.ts",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:unit"
+    "test:custom-tiles": "playwright test --config playwright.custom-tiles.config.ts",
+    "check": "pnpm lint && pnpm format:check && pnpm tile-kit:check && pnpm typecheck && pnpm test:unit"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
@@ -32,10 +36,8 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "4.1.12",
-    "ajv": "^8.20.0",
     "http-proxy-3": "^2.0.1",
     "jsdom": "30.1.0",
-    "json-schema-to-typescript": "^16.0.0",
     "oxlint": "1.73.0",
     "pluralize": "^8.0.0",
     "react": "19.2.7",

@@ -15,10 +15,13 @@ import (
 	"strings"
 )
 
-// commonToolNames are the tools of every page: they read the app as a whole,
-// not what one page shows. New adds them to the tools of every page, and
-// RegisterPage to those of each page registered later.
-var commonToolNames = []string{"search", "link", "app_help", "daemon_status"}
+// commonToolNames are the tools offered on every page: they act on the app as
+// a whole, not on what one page shows (search, link, app_help, daemon_status)
+// or propose an app-wide change (propose_theme, propose_theme_choice,
+// propose_prompt and propose_prompt_reset, proposals under the
+// ProposalAnywhere "app" sentinel rather than a page). New adds them to the
+// tools of every page, and RegisterPage to those of each page registered later.
+var commonToolNames = []string{"search", "link", "app_help", "daemon_status", "propose_theme", "propose_theme_choice", "propose_prompt", "propose_prompt_reset"}
 
 // withCommonTools is names followed by the common tools, each once.
 func withCommonTools(names []string) []string {
@@ -57,7 +60,7 @@ func (s *Server) commonTools() []Tool {
 			`"job":{"type":"string","description":"The job id, for job."},` +
 			`"feature":{"type":"string","description":"The feature id, for feature."},` +
 			`"inbox":{"type":"string","description":"A saved inbox's id from the inboxes tool, for inbox. Without it the inbox page opens on the person's first inbox."},` +
-			`"section":{"type":"string","description":"The settings section (general, reviews, fixes, connections, computer, prompts) or, with a repository, its section (reviews, prompts, registration)."},` +
+			`"section":{"type":"string","description":"The settings section (general, appearance, reviews, fixes, panel, connections, computer, prompts, tiles) or, with a repository, its section (reviews, prompts, registration)."},` +
 			`"filters":{"type":"object","additionalProperties":{"type":"string"},"description":"Address parameters of a list page, such as {\"repo\":\"acme/web\"}."}},` +
 			`"required":["page"],"additionalProperties":false}`),
 		// It reads nothing, so an action may build addresses too, but not for
@@ -435,12 +438,12 @@ var requiredSubjects = map[string][]string{
 }
 
 var (
-	settingsSections   = []string{"general", "reviews", "fixes", "connections", "computer", "prompts"}
+	settingsSections   = []string{"general", "appearance", "reviews", "fixes", "panel", "connections", "computer", "prompts", SectionTiles}
 	repositorySections = []string{"reviews", "prompts", "registration"}
 	// reservedKeys are the address parameters that name a page or its subject:
 	// they are set by their own arguments, which are checked, never by a filter.
 	reservedKeys = map[string]bool{"page": true, "repository": true, "clone": true, "pr": true, "group": true, "session": true,
-		"job": true, "feature": true, "section": true, "inbox": true, "peek": true, "walk": true}
+		"job": true, "feature": true, "section": true, "inbox": true, "peek": true}
 	filterKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 	// inboxID is the shape of a saved inbox's id, as the inbox store makes it.
 	inboxID = regexp.MustCompile(`^[0-9a-f]{32}$`)

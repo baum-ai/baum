@@ -37,6 +37,8 @@ func (s *Store) Handler() http.Handler {
 			return
 		}
 		switch err := s.Answer(r.PathValue("id"), reply); {
+		case errors.Is(err, ErrPanelSession):
+			writeError(w, http.StatusConflict, "panel_session", "This session runs in baum's session panel: answer it there.")
 		case errors.Is(err, ErrGone):
 			writeError(w, http.StatusConflict, "request_gone", err.Error())
 		case err != nil:
@@ -74,6 +76,8 @@ func (s *Store) Handler() http.Handler {
 			return
 		}
 		switch err := s.Queue(input.Agent, input.SessionID, input.Text); {
+		case errors.Is(err, ErrPanelSession):
+			writeError(w, http.StatusConflict, "panel_session", "This session runs in baum's session panel: write to it there.")
 		case errors.Is(err, ErrNotRunning):
 			writeError(w, http.StatusNotFound, "session_not_running", "This session is not running, so it cannot be sent a message.")
 		case err != nil:

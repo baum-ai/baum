@@ -13,6 +13,7 @@ const inbox = (overrides: Partial<Inbox> = {}): Inbox => ({
   query: "",
   no_bots: false,
   badge: true,
+  auto_review: true,
   ...overrides,
 });
 

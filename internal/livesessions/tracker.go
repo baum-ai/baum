@@ -192,7 +192,19 @@ type Session struct {
 	LinkStatus         string       `json:"link_status,omitempty"`
 	ObservedAt         time.Time    `json:"observed_at,omitzero"`
 	WorkHistory        *WorkHistory `json:"work_history,omitempty"`
+	// Origin is OriginPanel for a session the app's session panel runs, with
+	// Conversation its conversation's id (Tracker.Panel); absent for every
+	// other session.
+	Origin       string `json:"origin,omitempty"`
+	Conversation string `json:"conversation,omitempty"`
 }
+
+// OriginPanel is the Origin of a session the app's session panel runs.
+const OriginPanel = "panel"
+
+// LinkPanel is the LinkStatus of a panel session whose directory is in no
+// registered clone: the empty directory baum made for its conversation.
+const LinkPanel = "panel"
 
 // Link is where a working directory belongs.
 type Link struct {
@@ -259,6 +271,14 @@ type Tracker struct {
 	// Mask, when set, masks the secrets and e-mail addresses in a waiting
 	// message, as transcripts are masked; nil keeps the text.
 	Mask func(string) string
+	// Panel, when set, names the session panel conversation a session belongs
+	// to: by the session's id once the panel knows it, or by its working
+	// directory when that is a conversation's empty directory. Such a session
+	// is marked OriginPanel, and is listed even when its directory is in no
+	// registered clone (LinkPanel), where any other session is dropped. It
+	// is called with the tracker's lock held, so it must not block or call
+	// back into the tracker.
+	Panel func(agent, id, cwd string) (conversation string, ok bool)
 	// Waiting, when set, is called once for each wait for a permission or an
 	// answer (WaitPermission, WaitInput) of a session the application is
 	// shown, as it begins: not for a finished turn, not for the waits a
@@ -937,6 +957,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 		// The session's own work comes before its directory's pull request,
 		// so its pull requests are checked again whatever the directory has.
 		read := t.readWork(ctx, r.work, ok)
+		_, panel := t.panelOf(r.k, r.cwd)
 		now := t.now()
 		t.mu.Lock()
 		delete(t.pending, r.k)
@@ -954,6 +975,12 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 				r.s.setLink(withWork(link, r.s.work), now)
 				r.s.unlinked = false
 				// A new session's wait is announced once it is shown.
+				t.announceLocked(r.k, now)
+			case panel && (r.s.unlinked || r.s.LinkStatus == LinkPanel):
+				// The empty directory of a panel conversation is in no clone:
+				// the session is listed without a repository.
+				r.s.unlinked, r.s.stale = false, false
+				r.s.linkedAt, r.s.LinkStatus = now, LinkPanel
 				t.announceLocked(r.k, now)
 			case r.s.unlinked:
 				delete(t.sessions, r.k)
@@ -1003,7 +1030,18 @@ func (t *Tracker) view(k key, now time.Time) (Session, bool) {
 	}
 	out := s.Session
 	out.State = s.state(now)
+	if conversation, ok := t.panelOf(k, s.cwd); ok {
+		out.Origin, out.Conversation = OriginPanel, conversation
+	}
 	return out, true
+}
+
+// panelOf is the panel conversation the session belongs to (Panel).
+func (t *Tracker) panelOf(k key, cwd string) (string, bool) {
+	if t.Panel == nil {
+		return "", false
+	}
+	return t.Panel(k.agent, k.id, cwd)
 }
 
 // significant reports whether the application should be told of the change

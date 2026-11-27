@@ -8,7 +8,10 @@ import (
 	"github.com/baum-ai/baum/linkage"
 )
 
-func TestCheckpointCandidatesRequireIndependentEvidence(t *testing.T) {
+// Only a recorded creation links a commit. Editing its files, tying with
+// another editor or starting from its parent never does: those linked
+// colleagues' commits to sessions here that edited the same files.
+func TestCommitEdgesNeedARecordedCreation(t *testing.T) {
 	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
 	end := start.Add(20 * time.Minute)
 	commit := linkage.EnrichedCommit{
@@ -17,74 +20,62 @@ func TestCheckpointCandidatesRequireIndependentEvidence(t *testing.T) {
 	}
 	editor := linkage.RunCandidate{RunID: "editor", StartedAt: &start, EndedAt: &end,
 		FilesEdited: []string{"feature.go"}, FilesTouched: []string{"feature.go"}}
+	other := editor
+	other.RunID = "other"
 	reader := linkage.RunCandidate{RunID: "reader", StartedAt: &start, EndedAt: &end,
 		StartingCommitSHA: "parent", FilesTouched: []string{"feature.go"}}
 	for _, tc := range []struct {
 		name       string
 		candidates []linkage.RunCandidate
-		want       []string
 	}{
-		{"one editor and a reader", []linkage.RunCandidate{editor, reader}, []string{"editor"}},
-		{"reader sharing parent", []linkage.RunCandidate{reader}, nil},
+		{"an editor", []linkage.RunCandidate{editor}},
+		{"tied editors", []linkage.RunCandidate{editor, other}},
+		{"a reader sharing the parent", []linkage.RunCandidate{reader}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			edges, err := commitEdges(commit, tc.candidates, linkage.DefaultConfig())
 			if err != nil {
 				t.Fatal(err)
 			}
-			var got []string
-			for _, edge := range edges {
-				got = append(got, edge.RunID)
-				if edge.Method != linkage.MethodFilesOverlap || edge.Confidence == 1 {
-					t.Fatalf("unsupported edge: %+v", edge)
-				}
-			}
-			if !slices.Equal(got, tc.want) {
-				t.Fatalf("sessions = %v, want %v", got, tc.want)
+			if len(edges) != 0 {
+				t.Fatalf("linked without a recorded creation: %+v", edges)
 			}
 		})
 	}
-	for _, offset := range []time.Duration{-48 * time.Hour, time.Hour} {
-		at := start.Add(offset)
-		candidate := editor
-		candidate.StartedAt, candidate.EndedAt = &at, &at
-		edges, err := commitEdges(commit, []linkage.RunCandidate{candidate}, linkage.DefaultConfig())
-		if err != nil {
-			t.Fatal(err)
+}
+
+// Every session that recorded creating the commit links, by full id or an
+// unambiguous prefix; an editor beside them does not.
+func TestCommitEdgesLinkEveryCreator(t *testing.T) {
+	commit := linkage.EnrichedCommit{Commit: linkage.Commit{OID: "abcdef0123456789", CommittedAt: "2026-07-01T11:00:00Z"}, FilesTouched: []string{"feature.go"}}
+	editor := linkage.RunCandidate{RunID: "editor", FilesEdited: []string{"feature.go"}}
+	creator := linkage.RunCandidate{RunID: "creator", CommitRefs: []linkage.CommitRef{{SHA: commit.OID, Role: linkage.RoleCreated}}}
+	amender := linkage.RunCandidate{RunID: "amender", CommitRefs: []linkage.CommitRef{{SHA: commit.OID[:7], Role: linkage.RoleCreated}}}
+	mentioner := linkage.RunCandidate{RunID: "mentioner", CommitRefs: []linkage.CommitRef{{SHA: commit.OID, Role: linkage.RoleMentioned}}}
+	edges, err := commitEdges(commit, []linkage.RunCandidate{editor, creator, amender, mentioner}, linkage.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, edge := range edges {
+		if edge.Method != linkage.MethodCommitRef || edge.Confidence != linkage.DefaultConfig().CommitRefConfidence {
+			t.Fatalf("edge = %+v, want a commit_ref", edge)
 		}
-		if len(edges) != 0 {
-			t.Fatalf("out-of-window checkpoint candidate linked: %+v", edges)
-		}
+		got = append(got, edge.RunID)
+	}
+	if !slices.Equal(got, []string{"creator", "amender"}) {
+		t.Fatalf("linked %v, want the two creators", got)
 	}
 }
 
-func TestLocalFileTiesStayUnresolved(t *testing.T) {
-	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
-	end := start.Add(time.Hour)
-	commit := linkage.EnrichedCommit{Commit: linkage.Commit{OID: "abcdef0123456789", CommittedAt: end.Format(time.RFC3339)}, FilesTouched: []string{"feature.go"}}
-	first := linkage.RunCandidate{RunID: "first", StartedAt: &start, EndedAt: &end, FilesEdited: []string{"feature.go"}}
-	second := first
-	second.RunID = "second"
-	edges, err := commitEdges(commit, []linkage.RunCandidate{first, second}, linkage.DefaultConfig())
+func TestCommitEdgesSkipMergeCommits(t *testing.T) {
+	commit := linkage.EnrichedCommit{Commit: linkage.Commit{OID: "abcdef0123456789"}, IsMerge: true}
+	creator := linkage.RunCandidate{RunID: "creator", CommitRefs: []linkage.CommitRef{{SHA: commit.OID, Role: linkage.RoleCreated}}}
+	edges, err := commitEdges(commit, []linkage.RunCandidate{creator}, linkage.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(edges) != 0 {
-		t.Fatalf("file tie became attribution: %+v", edges)
-	}
-}
-
-func TestCommitCreatorIsKeptBesideEditor(t *testing.T) {
-	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
-	end := start.Add(time.Hour)
-	commit := linkage.EnrichedCommit{Commit: linkage.Commit{OID: "abcdef0123456789", CommittedAt: end.Format(time.RFC3339)}, FilesTouched: []string{"feature.go"}}
-	editor := linkage.RunCandidate{RunID: "editor", StartedAt: &start, EndedAt: &end, FilesEdited: []string{"feature.go"}}
-	creator := linkage.RunCandidate{RunID: "creator", CommitRefs: []linkage.CommitRef{{SHA: commit.OID, Role: linkage.RoleCreated}}}
-	edges, err := commitEdges(commit, []linkage.RunCandidate{editor, creator}, linkage.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(edges) != 2 || edges[0].RunID != "creator" || edges[0].Method != linkage.MethodCommitRef || edges[1].RunID != "editor" {
-		t.Fatalf("links = %+v; want creator and corroborated editor", edges)
+		t.Fatalf("merge commit linked: %+v", edges)
 	}
 }

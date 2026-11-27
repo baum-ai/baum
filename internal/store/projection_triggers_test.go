@@ -140,7 +140,7 @@ func TestTriggersProjectWritesFromOlderBinaries(t *testing.T) {
 		t.Fatalf("same-length refresh not projected: %+v %v", rows, summaryRows(t, s))
 	}
 	// ... appends a new version.
-	if _, err = db.Exec(`INSERT INTO versions VALUES ('a/b',1,2,'{"version":2}',?)`, docFor(k, 2, `,"pr_state":"open"`, `"title":"v2","review_minutes":20`)); err != nil {
+	if _, err = db.Exec(`INSERT INTO versions(repository,pr,version,metadata,document) VALUES ('a/b',1,2,'{"version":2}',?)`, docFor(k, 2, `,"pr_state":"open"`, `"title":"v2","review_minutes":20`)); err != nil {
 		t.Fatal(err)
 	}
 	rows := snapshotRows(t, s)
@@ -148,7 +148,7 @@ func TestTriggersProjectWritesFromOlderBinaries(t *testing.T) {
 		t.Fatalf("insert not projected: %+v", rows)
 	}
 	// A write to a version that is not the latest changes nothing.
-	if _, err = db.Exec(`INSERT INTO versions VALUES ('a/b',1,0,'{"version":0}',?)`, docFor(k, 0, ``, `"title":"ancient"`)); err != nil {
+	if _, err = db.Exec(`INSERT INTO versions(repository,pr,version,metadata,document) VALUES ('a/b',1,0,'{"version":0}',?)`, docFor(k, 0, ``, `"title":"ancient"`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`UPDATE versions SET document=? WHERE repository='a/b' AND pr=1 AND version=1`, docFor(k, 1, ``, `"title":"edited old"`)); err != nil {

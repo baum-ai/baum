@@ -30,11 +30,13 @@ esac
 
 for app in internal/viewer/dist internal/localapp/dist; do
   if [ ! -f "$app/index.html" ]; then
-    echo "sidecar: warning: $app is not built, so the app's window will only say so; run 'just viewer-build' first" >&2
+    echo "sidecar: warning: $app is not built, so the app's window will only say so; run 'just viewer::build-app' first" >&2
   fi
 done
 
+stamp=$(sh desktop/scripts/sidecar-stamp.sh)
 mkdir -p desktop/binaries
 out="desktop/binaries/baum-$target$suffix"
 CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -o "$out" ./cmd/baum
+echo "$stamp" >"$out.stamp"
 echo "$out"

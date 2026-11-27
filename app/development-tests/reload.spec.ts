@@ -43,6 +43,33 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
   });
   expect(rejected.status()).toBe(403);
 
+  // A custom tile's frame reaches the daemon with its fetch metadata, not
+  // Vite's page: this suite starts the fixture with BAUM_APP_CUSTOM_TILES=1,
+  // so acme/demo#7 has synthetic custom tiles.
+  const clones: { id: string; repository: string }[] = await (
+    await page.request.get(`${base}api/repos`)
+  ).json();
+  const clone = clones.find((candidate) => candidate.repository === "acme/demo")!;
+  const tiled = await (await page.request.get(`${base}api/tiles?clone=${clone.id}&pr=7`)).json();
+  const widget = tiled.document.tiles.find((tile: { id: string }) => tile.id === "widget_health");
+  const framePath = `/tile-frames/${widget.definition.digest.slice("sha256:".length)}`;
+  const frameResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === framePath,
+  );
+  await page.evaluate((src) => {
+    const frame = document.createElement("iframe");
+    frame.id = "development-frame";
+    frame.sandbox.add("allow-scripts");
+    frame.src = src;
+    document.body.append(frame);
+  }, framePath);
+  const loaded = await frameResponse;
+  expect(loaded.status()).toBe(200);
+  expect(await loaded.text()).toContain('<style id="baum-kit-style">');
+  await page.evaluate(() => document.getElementById("development-frame")?.remove());
+  // Without the frame's metadata the daemon refuses it, still not Vite.
+  expect((await page.request.get(framePath)).status()).toBe(404);
+
   // A page reload would erase this marker. Both edits must update in place.
   const selection = page.getByRole("checkbox", { name: "Select acme/demo #7", exact: true });
   await selection.check();

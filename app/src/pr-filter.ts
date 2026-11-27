@@ -936,8 +936,20 @@ const OPERATOR_HELP: Record<(typeof OPERATORS)[number], string> = {
 /** The page a filter belongs to: `inbox`, `inbox:<id>` or `pulls`. */
 export type FilterPage = string;
 /** A Pull requests tab saved from a view and its filter. */
-export type SavedTab = { id: string; name: string; view: string; query: string };
-type Filters = { pages: Record<FilterPage, string>; tabs: SavedTab[] };
+export type SavedTab = {
+  id: string;
+  name: string;
+  view: string;
+  query: string;
+  /** The tab's sort (`pr-sort.ts`); absent or "" for none. */
+  sort?: string;
+};
+type Filters = {
+  pages: Record<FilterPage, string>;
+  tabs: SavedTab[];
+  /** Each page's sort, where it has one. */
+  sorts?: Record<FilterPage, string>;
+};
 /** The daemon keeps at most 64 pages; the least recently changed go first. */
 const KEEP_PAGES = 60;
 export const MAX_TABS = 20;
@@ -956,7 +968,29 @@ function readable(value: Partial<Filters>): Filters {
       typeof tab.view === "string" &&
       typeof tab.query === "string",
   );
-  return { pages, tabs };
+  const sorts: Record<string, string> = {};
+  for (const [page, sort] of Object.entries(value.sorts ?? {}))
+    if (typeof sort === "string" && sort) sorts[page] = sort;
+  return Object.keys(sorts).length ? { pages, tabs, sorts } : { pages, tabs };
+}
+
+/** A page's sort, remembered in the daemon (`ui/filters`) beside its filter:
+ *  Pull requests' (`pulls`). A saved tab keeps its own (`useSavedTabs`). */
+export function usePageSort(page: FilterPage) {
+  const saved = useUIState(filters());
+  const sort = readable(saved.value).sorts?.[page] ?? "";
+  return {
+    sort,
+    set(next: string) {
+      if (next === sort) return;
+      saved.update((value) => {
+        const { sorts: current, ...others } = readable(value);
+        const { [page]: _, ...rest } = current ?? {};
+        const sorts = next ? { ...rest, [page]: next } : rest;
+        return Object.keys(sorts).length ? { ...others, sorts } : others;
+      });
+    },
+  };
 }
 
 /** Each page's filter, remembered in the daemon (`ui/filters`). */
@@ -1041,7 +1075,7 @@ export function useSavedTabs() {
       saved.update((value) => {
         const current = readable(value);
         const { [from]: _, ...pages } = current.pages;
-        return { pages, tabs: [...current.tabs, tab].slice(0, MAX_TABS) };
+        return { ...current, pages, tabs: [...current.tabs, tab].slice(0, MAX_TABS) };
       }),
     remove: (id: string) => change((tabs) => tabs.filter((one) => one.id !== id)),
     rename: (id: string, name: string) =>
@@ -1052,5 +1086,14 @@ export function useSavedTabs() {
       if (!tab || tab.query === text || queryProblem(text, false)) return;
       change((tabs) => tabs.map((one) => (one.id === id ? { ...one, query: text } : one)));
     },
+    /** Saves the tab's sort at once, as an inbox's is. */
+    setSort: (id: string, sort: string) =>
+      change((tabs) =>
+        tabs.map((one) => {
+          if (one.id !== id) return one;
+          const { sort: _, ...rest } = one;
+          return sort ? { ...rest, sort } : rest;
+        }),
+      ),
   };
 }

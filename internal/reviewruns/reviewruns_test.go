@@ -3,13 +3,10 @@ package reviewruns
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/internal/privatefs"
-	"github.com/baum-ai/baum/internal/store"
 )
 
 func makeRun(t *testing.T, root, name string) string {
@@ -32,48 +29,6 @@ func makeRun(t *testing.T, root, name string) string {
 func exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
-}
-
-func session(dir string) store.Metadata {
-	return store.Metadata{Session: &store.ReviewSession{Backend: "claude", ID: "x", Directory: dir}}
-}
-
-func TestPruneVersionsKeepsTheLatestTwo(t *testing.T) {
-	root := t.TempDir()
-	dirs := []string{
-		makeRun(t, root, agent.RunDirPrefix+"3"), makeRun(t, root, agent.RunDirPrefix+"2"),
-		makeRun(t, root, agent.RunDirPrefix+"1"), makeRun(t, root, agent.RunDirPrefix+"0"),
-	}
-	versions := []store.Metadata{session(dirs[0]), session(dirs[1]), session(dirs[2]), {}, session(dirs[3])}
-	if err := PruneVersions(root, versions); err != nil {
-		t.Fatal(err)
-	}
-	for i, want := range []bool{true, true, false, false} {
-		if exists(dirs[i]) != want {
-			t.Errorf("%s exists = %v, want %v", dirs[i], !want, want)
-		}
-	}
-}
-
-func TestPruneVersionsNeverTouchesOtherPaths(t *testing.T) {
-	root, elsewhere := t.TempDir(), t.TempDir()
-	outside := makeRun(t, elsewhere, agent.RunDirPrefix+"out")
-	unprefixed := makeRun(t, root, "notes")
-	nested := makeRun(t, filepath.Join(root, "sub"), agent.RunDirPrefix+"nested")
-	link := filepath.Join(root, agent.RunDirPrefix+"link")
-	if err := os.Symlink(outside, link); err != nil {
-		t.Fatal(err)
-	}
-	keep := makeRun(t, root, agent.RunDirPrefix+"keep")
-	versions := []store.Metadata{session(keep), session(keep), session(outside), session(unprefixed), session(nested), session(link), session(root)}
-	if err := PruneVersions(root, versions); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{outside, unprefixed, nested, link, keep, root} {
-		if !exists(path) {
-			t.Errorf("%s was removed", path)
-		}
-	}
 }
 
 func TestExpireRemovesOldRunsOnly(t *testing.T) {
@@ -112,32 +67,10 @@ func TestExpireRemovesOldRunsOnly(t *testing.T) {
 	}
 }
 
-func TestCreateMakesAPrivateRunDirectory(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "a", "review-runs")
-	dir, err := Create(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() || !candidate(root, dir) {
-		t.Fatalf("%v %v candidate=%v", info, err, candidate(root, dir))
-	}
-	for _, parent := range []string{root, dir} {
-		if info, err := os.Stat(parent); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
-			t.Fatalf("directory is not private: %v %v", info, err)
-		}
-		path := filepath.Join(parent, "privacy-test")
-		if err := os.WriteFile(path, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(path)
-		if err != nil || !privatefs.PrivateFile(path, info) {
-			t.Errorf("%s did not keep its file private: %v %v", parent, info, err)
-		}
-	}
-}
-
-func TestRunUnderAliasedRoot(t *testing.T) {
+// A root reached through a symlink expires its runs, and their sessions are
+// found under the resolved path the agent CLI recorded.
+func TestExpireUnderAliasedRoot(t *testing.T) {
+	h := fakeHomes(t)
 	root := filepath.Join(t.TempDir(), "runs")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -146,18 +79,16 @@ func TestRunUnderAliasedRoot(t *testing.T) {
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
 	}
-	created, err := Create(alias)
-	if err != nil || !candidate(root, created) {
-		t.Fatalf("Create through alias: %s %v", created, err)
-	}
-	dir := makeRun(t, alias, agent.RunDirPrefix+"alias")
-	if !candidate(root, dir) || !Use(root, dir, time.Now()) {
-		t.Fatal("a run under an aliased parent was rejected")
-	}
-	if err := Remove(root, dir); err != nil {
+	dir := makeRun(t, resolvedRoot(root), agent.RunDirPrefix+"alias")
+	session := h.claudeSession(t, dir, "c-alias")
+	long := time.Now().Add(-15 * 24 * time.Hour)
+	if err := os.Chtimes(dir, long, long); err != nil {
 		t.Fatal(err)
 	}
-	if exists(dir) {
-		t.Fatal("the run under an aliased parent stayed")
+	if err := Expire(alias, time.Now(), MaxAge); err != nil {
+		t.Fatal(err)
+	}
+	if exists(dir) || exists(session) {
+		t.Errorf("left: run %v, session %v", exists(dir), exists(session))
 	}
 }

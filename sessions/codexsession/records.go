@@ -140,6 +140,19 @@ func (f *threadState) responseMessage(line codextranscript.Line, message *codext
 		}
 		return accountMapped, "", nil
 	case "user":
+		// Codex records the daemon's recovery instruction as a user-role
+		// message. Its turn and content kind identify the system input
+		// that owns activity before the next human or agent message.
+		meta := message.InternalMetadata
+		if f.openTurn != "" && meta != nil && meta.TurnID == f.openTurn &&
+			len(meta.ContentItemKinds) == 1 && meta.ContentItemKinds[0] == "daemon_recovery.internal_context" {
+			text, err := messageText(message, "input_text")
+			if err != nil {
+				return accountDiscarded, "", err
+			}
+			f.addInput(line, text, session.KindOther, session.OriginSystem, nil)
+			return accountMapped, "", nil
+		}
 		f.batch = nil
 		return accountDiscarded, "context/model_visible_user_copy", nil
 	case "developer", "system":

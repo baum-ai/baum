@@ -60,6 +60,12 @@ func downscale(content []byte, mime string, width, height int) ([]byte, string, 
 	return out.Bytes(), mime, w, h, true
 }
 
+// Downscale fits an image within MaxSessionImageEdge as a stored session
+// image is: the resized bytes, type and size, or false to keep the original.
+func Downscale(content []byte, mime string, width, height int) ([]byte, string, int, int, bool) {
+	return downscale(content, mime, width, height)
+}
+
 // shrink scales src to w×h with the approximate bilinear filter, which keeps
 // edges crisp and adds the fewest new colours, so PNG compresses the result
 // best. That filter averages a 2×2 neighbourhood, so a larger reduction first

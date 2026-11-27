@@ -31,12 +31,13 @@ import {
   pendingSubmission,
   placeText,
   reviewEvents,
+  type CommentPlace,
   type CommentTarget,
   type PendingComment,
   type PendingReview,
+  type ReviewEvent,
   type SentReview,
 } from "./pending-review-model";
-import type { CommentPlace, ReviewEvent } from "./walkthrough-model";
 
 export const EVENT_LABELS: Record<ReviewEvent, string> = {
   APPROVE: "Approve",
@@ -309,7 +310,7 @@ export function ReviewDialog({
         {event !== "APPROVE" && review.comments.length === 0 ? "Summary" : "Summary (optional)"}
         <textarea
           ref={summary}
-          className="walk-textarea"
+          className="review-textarea"
           value={review.note}
           disabled={busy}
           onChange={(change) => {
@@ -645,7 +646,7 @@ function CommentBox({
         <textarea
           ref={box}
           data-autofocus=""
-          className="walk-textarea"
+          className="review-textarea"
           value={body}
           onChange={(change) => setBody(change.target.value)}
           onKeyDown={(key) => {

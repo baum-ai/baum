@@ -1,0 +1,363 @@
+{
+  "name": "many-routes",
+  "data": {
+    "endpoints": [
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/repositories/{owner}/{repo}/pulls/{number}/reviews/{version}/tiles/{tile}/comments",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              100,
+              100
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/repositories/{owner}/{repo}/pulls/{number}/reviews/{version}/compare/{other}",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              101,
+              101
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/review-groups/{group}/members/{member}/history",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              102,
+              102
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/inbox/items",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              103,
+              103
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "POST",
+        "name": "/api/inbox/items/{id}/read",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              104,
+              104
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "POST",
+        "name": "/api/inbox/items/{id}/snooze",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              105,
+              105
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "PUT",
+        "name": "/api/settings/prompt-overrides/{prompt}",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              106,
+              106
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "DELETE",
+        "name": "/api/settings/prompt-overrides/{prompt}/versions/{version}",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              107,
+              107
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/sessions/{session}/events",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              108,
+              108
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/sessions/{session}/links",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              109,
+              109
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "POST",
+        "name": "/api/webhooks/deliveries/{id}/retry",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85",
+            "lines": [
+              110,
+              110
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/health",
+        "change": "removed",
+        "auth": "session cookie",
+        "request": [],
+        "response": [],
+        "errors": [],
+        "breaking": true,
+        "breaking_reason": "Uptime checks that poll /api/health get 404.",
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_28be2c0c6d85"
+          }
+        ]
+      }
+    ],
+    "consumers": [
+      {
+        "label": "app/src/api.ts",
+        "updated": true,
+        "cites": []
+      }
+    ],
+    "docs": null,
+    "related": [
+      {
+        "type": "risk",
+        "id": "rsk_health_removed"
+      }
+    ]
+  },
+  "hunks": {
+    "h_28be2c0c6d85": {
+      "path": "internal/server/routes.go",
+      "change": "modified",
+      "range": [
+        100,
+        110
+      ],
+      "additions": 11,
+      "deletions": 1,
+      "header": "@@ -100,1 +100,11 @@",
+      "lines": [
+        {
+          "kind": "add",
+          "new": 100,
+          "text": "\tmux.HandleFunc(\"GET /api/repositories/{owner}/{repo}/pulls/{number}/reviews/{version}/tiles/{tile}/comments\", s.h0)"
+        },
+        {
+          "kind": "add",
+          "new": 101,
+          "text": "\tmux.HandleFunc(\"GET /api/repositories/{owner}/{repo}/pulls/{number}/reviews/{version}/compare/{other}\", s.h1)"
+        },
+        {
+          "kind": "add",
+          "new": 102,
+          "text": "\tmux.HandleFunc(\"GET /api/review-groups/{group}/members/{member}/history\", s.h2)"
+        },
+        {
+          "kind": "add",
+          "new": 103,
+          "text": "\tmux.HandleFunc(\"GET /api/inbox/items\", s.h3)"
+        },
+        {
+          "kind": "add",
+          "new": 104,
+          "text": "\tmux.HandleFunc(\"POST /api/inbox/items/{id}/read\", s.h4)"
+        },
+        {
+          "kind": "add",
+          "new": 105,
+          "text": "\tmux.HandleFunc(\"POST /api/inbox/items/{id}/snooze\", s.h5)"
+        },
+        {
+          "kind": "add",
+          "new": 106,
+          "text": "\tmux.HandleFunc(\"PUT /api/settings/prompt-overrides/{prompt}\", s.h6)"
+        },
+        {
+          "kind": "add",
+          "new": 107,
+          "text": "\tmux.HandleFunc(\"DELETE /api/settings/prompt-overrides/{prompt}/versions/{version}\", s.h7)"
+        },
+        {
+          "kind": "add",
+          "new": 108,
+          "text": "\tmux.HandleFunc(\"GET /api/sessions/{session}/events\", s.h8)"
+        },
+        {
+          "kind": "add",
+          "new": 109,
+          "text": "\tmux.HandleFunc(\"GET /api/sessions/{session}/links\", s.h9)"
+        },
+        {
+          "kind": "add",
+          "new": 110,
+          "text": "\tmux.HandleFunc(\"POST /api/webhooks/deliveries/{id}/retry\", s.h10)"
+        },
+        {
+          "kind": "remove",
+          "old": 100,
+          "text": "\tmux.HandleFunc(\"GET /api/health\", s.h11)"
+        }
+      ]
+    }
+  },
+  "items": {
+    "rsk_health_removed": {
+      "label": "Health checks lose their route",
+      "tier": "medium",
+      "text": "Monitoring that polls /api/health will page."
+    }
+  }
+}

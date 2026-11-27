@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/baum-ai/baum/internal/themes"
 )
 
 // The propose_* tools: a chat suggests a change to what the open page edits,
@@ -23,23 +25,32 @@ import (
 //   - settings: TargetAppearance and TargetPlanUsage+provider (General),
 //     TargetReviews and TargetDecisions (Reviews), TargetFixes (Fixes),
 //     TargetTimeLimits, TargetJobConcurrency, TargetCodexApprovals and
-//     TargetAgentEnv+NAME (This computer), TargetPrompt+id (Prompts, the
-//     global prompts).
+//     TargetAgentEnv+NAME (This computer).
+//   - any page (ProposalAnywhere, not a page): TargetTheme, a colour theme
+//     (new, or an edit of one of the person's) and TargetThemeChoice, a switch
+//     to an existing theme and/or the theme mode, which the app previews at
+//     once and the person saves from wherever they are; and TargetPrompt+id,
+//     a global prompt, and RepositoryTarget(repository, TargetPrompt+id), a
+//     repository's, so a prompt can be changed from the review it wrote.
+//     Every page lists propose_theme, propose_theme_choice, propose_prompt
+//     and propose_prompt_reset.
 //   - repositories, showing a repository: RepositoryTarget(repository,
-//     TargetRepositorySettings) (Reviews), RepositoryTarget(repository,
-//     TargetPrompt+id) (Prompts).
+//     TargetRepositorySettings) (Reviews).
 //   - inbox: TargetNewInbox, or TargetInbox+id for a saved inbox.
 //   - group: TargetGroup+id, the group the page shows.
 //   - pull_request: PullRequestTarget(repository, number), the person's
 //     pending review of the pull request the page shows.
 const (
 	TargetAppearance         = "appearance"
+	TargetThemeChoice        = "theme_choice"
+	TargetTheme              = "theme"
 	TargetPlanUsage          = "plan_usage/"
 	TargetReviews            = "reviews"
 	TargetDecisions          = "decisions"
 	TargetFixes              = "fixes"
 	TargetTimeLimits         = "time_limits"
 	TargetJobConcurrency     = "job_concurrency"
+	TargetLabs               = "labs"
 	TargetCodexApprovals     = "codex_approvals"
 	TargetAgentEnv           = "agent_env/"
 	TargetPrompt             = "prompt/"
@@ -86,21 +97,23 @@ func ParsePullRequestTarget(target string) (repository string, number int, ok bo
 var (
 	// proposePageTools are the propose_* tools of each page.
 	proposePageTools = map[string][]string{
-		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
-		PageRepositories: {"propose_repository_settings", "propose_prompt", "propose_prompt_reset"},
+		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
+		PageRepositories: {"propose_repository_settings"},
 		PageInbox:        {"propose_inbox"},
 		PageGroup:        {"propose_group"},
 		PagePullRequest:  {"propose_review_comment"},
 	}
 	// settingsSectionProposals and repositorySectionProposals are the
 	// propose_* tools of each section, which current_page lists with the
-	// section's tools.
+	// section's tools. The prompts' propose_* tools are on every page
+	// (commonToolNames); the Prompts sections name them too.
 	settingsSectionProposals = map[string][]string{
-		"general":  {"propose_appearance", "propose_plan_usage"},
-		"reviews":  {"propose_reviews", "propose_decision_capture"},
-		"fixes":    {"propose_fixes"},
-		"computer": {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
-		"prompts":  {"propose_prompt", "propose_prompt_reset"},
+		"general":    {"propose_appearance", "propose_plan_usage"},
+		"reviews":    {"propose_reviews", "propose_decision_capture", "propose_labs"},
+		"fixes":      {"propose_fixes"},
+		"computer":   {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
+		"prompts":    {"propose_prompt", "propose_prompt_reset"},
+		SectionTiles: {"propose_tile_type"},
 	}
 	repositorySectionProposals = map[string][]string{
 		"reviews": {"propose_repository_settings"},
@@ -135,6 +148,129 @@ func propose(ctx context.Context, c CallContext, page, target string, after any)
 	return string(out), err
 }
 
+// themeAnswer is what propose_theme answers: the usual receipt and status, and
+// the pairs of the proposed colours that are hard to read, so the agent can
+// propose again.
+type themeAnswer struct {
+	proposed
+	ContrastWarnings []themes.Warning `json:"contrast_warnings"`
+}
+
+// themeSeedList names the seeds for propose_theme's description.
+func themeSeedList() string { return strings.Join(themes.Seeds, ", ") }
+
+func proposeThemeTool() Tool {
+	return Tool{
+		Name: "propose_theme",
+		Description: "Proposes a custom colour theme for the baum app: a name, a base (light or dark) and colour overrides of the app's palette tokens. Works on any page. The app previews the proposal at once; nothing is saved until the person saves it, and the preview ends when they dismiss it. A new theme is saved with the name and the light or dark slot the person chooses (the slot the theme's base names unless they pick the other). " +
+			"When you are changing a custom theme the person already has, pass its id as theme_id (from settings_appearance; usually the custom theme in the slot in use): saving then updates that theme in place, keeping its slots, instead of adding another, and name should be its current name unless you are renaming it. Omit theme_id when the person asks for a new theme, or when you start from a built-in theme, which cannot change: a built-in or unknown theme_id is refused. " +
+			"Use settings_appearance to read the person's themes, the tokens a theme may set (theme_tokens) and what each resolves to by default (theme_defaults) in the light and dark themes. Prefer to change seeds, which the rest of the palette derives from: " + themeSeedList() + ". On a dark base the text colour comes from --color-paper (the text ramp mixes it toward --color-shadow) and the surfaces from --color-shadow, so set --color-paper to a light colour; --color-ink does not colour dark-theme text, so setting it there does nothing for text. On a light base --color-ink is the text and --color-paper the page. Set a role (the other tokens) only where a seed cannot reach. Each value is one colour: #rgb, #rrggbb, #rrggbbaa, rgb(), hsl() or oklch(). " +
+			"The answer lists contrast_warnings, the pairs of text and background colours under 4.5:1 contrast; propose again with different colours to fix them.",
+		InputSchema: json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{`+
+			`"theme_id":{"type":"string","maxLength":64,"description":"The id of the custom theme this changes, from settings_appearance. Omit for a new theme."},`+
+			`"name":{"type":"string","maxLength":%d,"description":"The theme's name, as the person will see it in their themes."},`+
+			`"base":{"type":"string","enum":["light","dark"],"description":"The built-in palette the tokens change: light or dark."},`+
+			`"tokens":{"type":"object","maxProperties":%d,"additionalProperties":{"type":"string","maxLength":%d},"description":"Palette token to colour, for example {\"--color-paper\":\"#fdf6e3\"}. Only the tokens settings_appearance lists in theme_tokens."}},`+
+			`"required":["name","base","tokens"],"additionalProperties":false}`, themes.MaxNameRunes, len(themes.Tokens), themes.MaxValue)),
+		Proposes: true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				ThemeID string            `json:"theme_id,omitempty"`
+				Name    string            `json:"name"`
+				Base    string            `json:"base"`
+				Tokens  map[string]string `json:"tokens"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			if a.Tokens == nil {
+				a.Tokens = map[string]string{}
+			}
+			theme := themes.Theme{Name: a.Name, Base: a.Base, Tokens: a.Tokens}
+			if err := themes.Validate(theme); err != nil {
+				return "", err
+			}
+			text, err := propose(ctx, c, ProposalAnywhere, TargetTheme, a)
+			if err != nil {
+				return "", err
+			}
+			var receipt proposed
+			if err := json.Unmarshal([]byte(text), &receipt); err != nil {
+				return "", err
+			}
+			warnings := themes.Contrast(theme)
+			if warnings == nil {
+				warnings = []themes.Warning{}
+			}
+			out, err := json.Marshal(themeAnswer{receipt, warnings})
+			return string(out), err
+		},
+	}
+}
+
+// themeChoiceAnswer is what propose_theme_choice answers: the receipt and
+// status, and which slot the theme goes in.
+type themeChoiceAnswer struct {
+	proposed
+	AppliesTo string `json:"applies_to,omitempty"`
+}
+
+func proposeThemeChoiceTool() Tool {
+	return Tool{
+		Name: "propose_theme_choice",
+		Description: "Proposes switching the baum app to an existing colour theme (a built-in or one of the person's own, by id from settings_appearance) and/or changing the theme mode (theme: system, light or dark). Works on any page. The theme goes in the slot in use right now (the light or the dark theme, whichever the app shows); omit slot unless the person names the other mode, for example \"change my dark theme while I'm in light mode\", and then pass slot dark or light. " +
+			"The app previews the switch at once when it changes what the app shows; nothing is saved until the person saves it, and the preview ends when they dismiss it. A newer theme proposal replaces this one. To make a new theme or change one use propose_theme. You get its id and which slot it is for, never the current values.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+			`"theme_id":{"type":"string","minLength":1,"maxLength":64,"description":"The id of an existing colour theme, from settings_appearance's themes (default-light and default-dark are the built-in defaults)."},` +
+			`"slot":{"type":"string","enum":["light","dark"],"description":"The slot to set. Omit for the slot in use."},` +
+			`"theme":{"type":"string","enum":["system","light","dark"],"description":"The theme mode."}},` +
+			`"additionalProperties":false}`),
+		Proposes: true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				ThemeID string `json:"theme_id,omitempty"`
+				Slot    string `json:"slot,omitempty"`
+				Theme   string `json:"theme,omitempty"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			if a.ThemeID == "" && a.Theme == "" {
+				return "", errors.New("pass a theme_id, a theme mode, or both")
+			}
+			if a.ThemeID == "" && a.Slot != "" {
+				return "", errors.New("slot needs a theme_id")
+			}
+			// Recorded as the slot in use when omitted; the app resolves it.
+			// When the mode is light or dark the answer can name it.
+			applies := ""
+			if a.ThemeID != "" {
+				switch {
+				case a.Slot != "":
+					applies = "the " + a.Slot + " theme"
+				case a.Theme == "light" || a.Theme == "dark":
+					applies = "the " + a.Theme + " theme (the slot in use)"
+				default:
+					applies = "the slot in use"
+				}
+				if a.Slot == "" {
+					a.Slot = SlotInUse
+				}
+			}
+			text, err := propose(ctx, c, ProposalAnywhere, TargetThemeChoice, a)
+			if err != nil {
+				return "", err
+			}
+			var receipt proposed
+			if err := json.Unmarshal([]byte(text), &receipt); err != nil {
+				return "", err
+			}
+			out, err := json.Marshal(themeChoiceAnswer{receipt, applies})
+			return string(out), err
+		},
+	}
+}
+
 // strictArgs decodes a tool's arguments, which its schema already checked.
 func strictArgs(args json.RawMessage, v any) error {
 	d := json.NewDecoder(strings.NewReader(string(args)))
@@ -154,28 +290,30 @@ func present(args json.RawMessage) map[string]bool {
 	return out
 }
 
-// promptTarget is the target of a prompt on the open page: a global prompt on
-// Settings, the page's repository's on a repository's page. A repository
-// named must be the page's.
-func promptTarget(c CallContext, repository, id string) (page, target string, err error) {
-	if !c.HasPage {
-		return "", "", errors.New("no page is open: the person has not opened a page in the baum app for this conversation")
-	}
+// promptTarget is the target of a prompt, which any page proposes (under
+// ProposalAnywhere): the named repository's, else on a repository's page
+// that repository's, else the global one. A repository the open page shows
+// is named as the page names it.
+func promptTarget(c CallContext, repository, id string) (string, error) {
 	repository = strings.TrimSpace(repository)
-	switch {
-	case c.Page.Page == PageSettings:
-		if repository != "" {
-			return "", "", errors.New("a repository's prompts are on its page: the person has Settings open, whose prompts are the global ones")
-		}
-		return PageSettings, TargetPrompt + id, nil
-	case c.Page.Page == PageRepositories && c.Page.Repository != "":
-		if repository != "" && !strings.EqualFold(repository, c.Page.Repository) {
-			return "", "", fmt.Errorf("the person has %s's page open: a proposal is for that repository's prompts", c.Page.Repository)
-		}
-		return PageRepositories, RepositoryTarget(c.Page.Repository, TargetPrompt+id), nil
+	if repository == "" && c.HasPage && c.Page.Page == PageRepositories {
+		repository = c.Page.Repository
 	}
-	return "", "", ErrNotCurrentPage
+	if repository == "" {
+		return TargetPrompt + id, nil
+	}
+	if !validRepository(repository) {
+		return "", errors.New("name the repository as owner/name")
+	}
+	if c.HasPage && strings.EqualFold(repository, c.Page.Repository) {
+		repository = c.Page.Repository
+	}
+	return RepositoryTarget(repository, TargetPrompt+id), nil
 }
+
+// promptToolsNote is what both prompt tools say about where they work.
+const promptToolsNote = "Works on any page, such as a pull request's while the person reads its review: with repository, that repository's prompt (the repository's own text, used before the global one); without, the global prompt, except on a repository's page, where it is that repository's. " +
+	"On a pull request's page the person usually means its repository's prompt: pass that repository unless they ask to change the prompt for every repository. Read the prompt first with prompt or repository_prompts. Nothing changes until the person saves the proposal, which they see as a diff against the text in use."
 
 // proposeTools are the propose_* tools. Each is global (actions never see
 // it) and reads nothing.
@@ -183,18 +321,18 @@ func proposeTools() []Tool {
 	effort := `{"type":"string","maxLength":32,"description":"The reasoning effort: low, medium, high, xhigh, max or ultra; empty for the harness's own."}`
 	return []Tool{{
 		Name:        "propose_appearance",
-		Description: "Proposes a change to the Settings page's General section appearance: the theme, whether key hints show, and the modifier held with 1 to 8 for the sidebar's pages. The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
+		Description: "Proposes a change to the Settings page's General section appearance: whether key hints show, the modifier held with 1 to 8 for the sidebar's pages, and the review page (the full review or tiles). The theme mode and colour themes are propose_theme_choice's. The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
-			`"theme":{"type":"string","maxLength":16,"description":"system, light or dark."},` +
 			`"key_hints":{"type":"boolean"},` +
-			`"page_modifier":{"type":"string","maxLength":16,"description":"meta, ctrl or alt; empty is the platform's command key."}},` +
+			`"page_modifier":{"type":"string","maxLength":16,"description":"meta, ctrl or alt; empty is the platform's command key."},` +
+			`"review_page":{"type":"string","maxLength":16,"description":"full or tiles: the page a review opens on."}},` +
 			`"minProperties":1,"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct {
-				Theme        *string `json:"theme,omitempty"`
 				KeyHints     *bool   `json:"key_hints,omitempty"`
 				PageModifier *string `json:"page_modifier,omitempty"`
+				ReviewPage   *string `json:"review_page,omitempty"`
 			}
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
@@ -223,10 +361,11 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name:        "propose_reviews",
-		Description: "Proposes a change to the Settings page's Reviews section: whether automatic reviews are on, for which pull requests (both: the person's own and those they were asked to review; authored; requested; all), and the harness reviews use (backend: auto, claude or codex), its model (empty for the harness's default) and effort. Only the fields given change. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
+		Description: "Proposes a change to the Settings page's Reviews section: whether automatic reviews are on, how they follow later pushes (updates: always reviews every push; on_open reviews once; on_change reviews once, then again only when the agent finds a push would change the review), for which pull requests (both: the person's own and those they were asked to review; authored; requested; all), and the harness reviews use (backend: auto, claude or codex), its model (empty for the harness's default) and effort. Only the fields given change. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"enabled":{"type":"boolean","description":"Automatic reviews on or off."},` +
-			`"pull_requests":{"type":"string","maxLength":32,"description":"both, authored, requested or all."},` +
+			`"pull_requests":{"type":"string","maxLength":32,"description":"both, authored, requested, all, or inboxes (the pull requests in a saved inbox whose auto_review is on)."},` +
+			`"updates":{"type":"string","maxLength":32,"description":"always, on_open or on_change."},` +
 			`"backend":{"type":"string","maxLength":32,"description":"auto, claude or codex."},` +
 			`"model":{"type":"string","maxLength":256},` +
 			`"effort":` + effort + `},` +
@@ -236,6 +375,7 @@ func proposeTools() []Tool {
 			var a struct {
 				Enabled      *bool   `json:"enabled,omitempty"`
 				PullRequests *string `json:"pull_requests,omitempty"`
+				Updates      *string `json:"updates,omitempty"`
 				Backend      *string `json:"backend,omitempty"`
 				Model        *string `json:"model,omitempty"`
 				Effort       *string `json:"effort,omitempty"`
@@ -306,6 +446,20 @@ func proposeTools() []Tool {
 			return propose(ctx, c, PageSettings, TargetTimeLimits, a)
 		},
 	}, {
+		Name:        "propose_labs",
+		Description: "Proposes turning the experimental setting that generates new reviews as tiles on or off (tile_reviews), on the Settings page's Reviews section: with it on, one more short model call after each new review of a pull request arranges its tile page, and a review may finish up to 90 seconds after its time limit. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"tile_reviews":{"type":"boolean"}},"required":["tile_reviews"],"additionalProperties":false}`),
+		Proposes:    true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				TileReviews bool `json:"tile_reviews"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			return propose(ctx, c, PageSettings, TargetLabs, a)
+		},
+	}, {
 		Name:        "propose_job_concurrency",
 		Description: "Proposes how many jobs baum runs at once (1 to 4), on the Settings page's This computer section. The person must have Settings open at This computer. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"job_concurrency":{"type":"integer","description":"1 to 4."}},"required":["job_concurrency"],"additionalProperties":false}`),
@@ -360,12 +514,12 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name: "propose_prompt",
-		Description: "Proposes a new custom text for one prompt (see prompts for the ids): on the Settings page's Prompts section a global prompt, on a repository page's Prompts section that repository's. The text is validated as the prompt editor does; a text that leaves out a safety rule the prompt in use has is refused. " +
-			"The person must have that Prompts section open. Nothing changes until the person saves the proposal.",
+		Description: "Proposes a new custom text for one prompt (see prompts for the ids), global or a repository's. The text is validated as the prompt editor does; a text that leaves out a safety rule the prompt in use has is refused. " +
+			promptToolsNote,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","minLength":1,"maxLength":64},` +
 			`"text":{"type":"string","minLength":1,"maxLength":65536},` +
-			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name, only to check it is the open page's. Default: the open page's, or the global prompts on Settings."}},` +
+			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name whose prompt this changes. Omit for the global prompt (on a repository's page, for that repository's)."}},` +
 			`"required":["id","text"],"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -377,18 +531,19 @@ func proposeTools() []Tool {
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
 			}
-			page, target, err := promptTarget(c, a.Repository, a.ID)
+			target, err := promptTarget(c, a.Repository, a.ID)
 			if err != nil {
 				return "", err
 			}
-			return propose(ctx, c, page, target, PromptChange{Text: &a.Text})
+			return propose(ctx, c, ProposalAnywhere, target, PromptChange{Text: &a.Text})
 		},
 	}, {
-		Name:        "propose_prompt_reset",
-		Description: "Proposes resetting one customised prompt: on the Settings page's Prompts section back to the built-in text, on a repository page's back to the text it inherits (the global custom text, else the built-in). Refused when the prompt is not customised there, or when the text it goes back to leaves out a safety rule the prompt in use has. The person must have that Prompts section open. Nothing changes until the person saves the proposal.",
+		Name: "propose_prompt_reset",
+		Description: "Proposes resetting one customised prompt: a global prompt back to the built-in text, a repository's back to the text it inherits (the global custom text, else the built-in). Refused when the prompt is not customised there, or when the text it goes back to leaves out a safety rule the prompt in use has. " +
+			promptToolsNote,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","minLength":1,"maxLength":64},` +
-			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name, only to check it is the open page's."}},` +
+			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name whose prompt this resets. Omit for the global prompt (on a repository's page, for that repository's)."}},` +
 			`"required":["id"],"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -399,11 +554,11 @@ func proposeTools() []Tool {
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
 			}
-			page, target, err := promptTarget(c, a.Repository, a.ID)
+			target, err := promptTarget(c, a.Repository, a.ID)
 			if err != nil {
 				return "", err
 			}
-			return propose(ctx, c, page, target, PromptChange{})
+			return propose(ctx, c, ProposalAnywhere, target, PromptChange{})
 		},
 	}, {
 		Name:        "propose_repository_settings",
@@ -444,14 +599,15 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name: "propose_inbox",
-		Description: "Proposes a new saved inbox, or with id a change to a saved one (see inboxes): its name, color, query (the Inbox filter syntax; test it with test_query) and whether the sidebar shows its count. Only the fields given change; a new inbox needs a name, and starts with no filter and a count. " +
+		Description: "Proposes a new saved inbox, or with id a change to a saved one (see inboxes): its name, color, query (the Inbox filter syntax; test it with test_query), whether the sidebar shows its count and whether its pull requests are reviewed automatically (auto_review, which applies while the Reviews setting's pull_requests is inboxes). Only the fields given change; a new inbox needs a name, and starts with no filter, a count and automatic reviews on. " +
 			"The person must have the Inbox open. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","pattern":"^[0-9a-f]{32}$","description":"The saved inbox to change; omit to propose a new one."},` +
 			`"name":{"type":"string","minLength":1,"maxLength":40},` +
 			`"color":{"type":"string","maxLength":16,"description":"blue, green, red, amber, purple or grey."},` +
 			`"query":{"type":"string","maxLength":500},` +
-			`"badge":{"type":"boolean"}},` +
+			`"badge":{"type":"boolean"},` +
+			`"auto_review":{"type":"boolean"}},` +
 			`"minProperties":1,"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -489,11 +645,11 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name: "propose_review_comment",
-		Description: "Proposes a comment for the person's own pending review of the pull request the page shows, which they send from the app: its body, what it is about (target: general, or a section, risk or file of the review by id, with a title), and optionally the diff line it is placed on (path, line, side RIGHT or LEFT, optional start_line) at the commit head. Saving adds it to the review's comments and keeps the person's other drafts. " +
+		Description: "Proposes a comment for the person's own pending review of the pull request the page shows, which they send from the app: its body, what it is about (target: general, or a section, risk, file or tile of the review by id, with a title), and optionally the diff line it is placed on (path, line, side RIGHT or LEFT, optional start_line) at the commit head. Saving adds it to the review's comments and keeps the person's other drafts. " +
 			"The person must have the pull request's page open. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"body":{"type":"string","minLength":1,"maxLength":65536},` +
-			`"target":{"type":"object","properties":{"kind":{"type":"string","maxLength":16,"description":"general, section, risk or file."},"id":{"type":"string","maxLength":4096},"title":{"type":"string","maxLength":1024}},"required":["kind","id","title"],"additionalProperties":false,"description":"Default: the pull request in general."},` +
+			`"target":{"type":"object","properties":{"kind":{"type":"string","maxLength":16,"description":"general, section, risk, file or tile."},"id":{"type":"string","maxLength":4096},"title":{"type":"string","maxLength":1024}},"required":["kind","id","title"],"additionalProperties":false,"description":"Default: the pull request in general."},` +
 			`"place":{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"line":{"type":"integer"},"side":{"type":"string","maxLength":8,"description":"RIGHT or LEFT."},"start_line":{"type":"integer"}},"required":["path","line","side"],"additionalProperties":false},` +
 			`"head":{"type":"string","maxLength":64,"description":"The commit the place is on, as hex; empty when there is no place."}},` +
 			`"required":["body"],"additionalProperties":false}`),
@@ -508,7 +664,7 @@ func proposeTools() []Tool {
 			}
 			return propose(ctx, c, PagePullRequest, PullRequestTarget(c.Page.Repository, c.Page.PullRequest), a)
 		},
-	}}
+	}, proposeThemeTool(), proposeThemeChoiceTool()}
 }
 
 // AgentEnvChange is the After of an agent environment proposal: a name to
@@ -532,6 +688,8 @@ type InboxChange struct {
 	Color *string `json:"color,omitempty"`
 	Query *string `json:"query,omitempty"`
 	Badge *bool   `json:"badge,omitempty"`
+	// AutoReview is the inbox's inboxes.Inbox.AutoReview.
+	AutoReview *bool `json:"auto_review,omitempty"`
 }
 
 // GroupChange is the After of a review group proposal.

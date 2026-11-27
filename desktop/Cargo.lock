@@ -245,6 +245,7 @@ name = "baum-desktop"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "gtk",
  "libc",
  "minisign-verify",
  "notify-rust",
@@ -257,6 +258,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "url",
+ "webkit2gtk",
 ]
 
 [[package]]

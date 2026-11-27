@@ -21,8 +21,10 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 )
 
-// MaxMembers bounds a group's pull requests; MinMembers is the fewest a group
-// keeps, since one pull request is reviewed on its own.
+// MaxMembers bounds the pull requests of a group a person makes, whose
+// combined review reads every member; a stack group has no combined review
+// and no bound. MinMembers is the fewest a group keeps, since one pull
+// request is reviewed on its own.
 const (
 	MinMembers = 2
 	MaxMembers = 8
@@ -33,6 +35,11 @@ const (
 
 // ErrNotFound is a group that does not exist or was deleted.
 var ErrNotFound = errors.New("review group not found")
+
+// ErrStackOverview refuses a combined review of a stack group: a stack has an
+// overview of its members' own reviews instead. It is an ErrNotFound, so a
+// job queued for one before is cancelled like one whose group went away.
+var ErrStackOverview = fmt.Errorf("%w: a stack has an overview instead of a combined review", ErrNotFound)
 
 // ErrConflict is a version that another generation published first.
 var ErrConflict = errors.New("the group review changed during the operation; generate again")
@@ -125,6 +132,10 @@ CREATE TABLE IF NOT EXISTS versions(group_id TEXT NOT NULL, version INTEGER NOT 
 		_ = db.Close()
 		return nil, err
 	}
+	if err = createSummaryTable(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 
@@ -163,14 +174,21 @@ func cleanName(name string) (string, error) {
 	return name, nil
 }
 
-// cleanMembers validates members and returns them ascending.
+// cleanMembers validates a person's group's members and returns them
+// ascending.
 func cleanMembers(members []int) ([]int, error) {
+	return checkMembers(members, MaxMembers)
+}
+
+// checkMembers validates members, at most limit of them, and returns them
+// ascending.
+func checkMembers(members []int, limit int) ([]int, error) {
 	sorted := slices.Clone(members)
 	slices.Sort(sorted)
 	if len(slices.Compact(slices.Clone(sorted))) != len(sorted) {
 		return nil, invalid("A pull request is in the group once.")
 	}
-	if len(sorted) < MinMembers || len(sorted) > MaxMembers {
+	if len(sorted) < MinMembers || len(sorted) > limit {
 		return nil, invalid("A review group has %d to %d pull requests.", MinMembers, MaxMembers)
 	}
 	if sorted[0] <= 0 {
@@ -306,6 +324,12 @@ func (s *Store) UpdateWith(ctx context.Context, id string, edit func(Group) (nam
 	}
 	if members != nil {
 		if g.Members, err = cleanMembers(members); err != nil {
+			return Group{}, err
+		}
+	} else if name != nil && g.Stack {
+		// Taking over a stack group keeps its members, which must fit a
+		// person's group, whose combined review reads at most MaxMembers.
+		if g.Members, err = cleanMembers(g.Members); err != nil {
 			return Group{}, err
 		}
 	}

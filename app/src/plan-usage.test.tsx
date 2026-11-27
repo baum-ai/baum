@@ -45,11 +45,11 @@ it("sums up each plan in the sidebar by its lowest window, with a bar per window
   const html = renderToStaticMarkup(<PlanUsageRailView plans={plans} now={now} />);
   // Each window by name, with what is left and when it resets.
   expect(html).toContain("Claude Code");
-  expect(html).toMatch(/5-hour · <span[^>]*>62%<\/span>/);
-  expect(html).toMatch(/Weekly · <span[^>]*>5%<\/span>/);
+  expect(html).toMatch(/5-hour · <span[^>]*>62% left<\/span>/);
+  expect(html).toMatch(/Weekly · <span[^>]*>5% left<\/span>/);
   expect(html).toContain("resets in 3 h");
   expect(html).toContain("resets in 4 d");
-  expect(html).toMatch(/5-hour · <span[^>]*>25%<\/span>/);
+  expect(html).toMatch(/5-hour · <span[^>]*>25% left<\/span>/);
   // Codex's weekly reset since its last session: no figure, no fill.
   expect(html).toContain(">reset<");
   expect(html.match(/plan-rail-track/g)).toHaveLength(4);
@@ -61,6 +61,7 @@ it("sums up each plan in the sidebar by its lowest window, with a bar per window
   expect(resetsAt(Date.parse("2026-10-26T15:00:00Z"))).toMatch(/^Resets \S.*26/);
   // Folded, the rail keeps the lowest share.
   expect(html).toMatch(/plan-rail-compact[^>]*>5%</);
+  expect(html).toContain('title="Lowest plan window: 5% left"');
   // The oldest figure, Codex's last session, sets the age.
   expect(html).toContain("1 h ago");
 });

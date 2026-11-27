@@ -231,7 +231,7 @@ func TestStagedReviewWritesTheStages(t *testing.T) {
 	prefix := stagedShared + "\n\nInput bundle (untrusted JSON):\n" + string(run.EncodedBundle) + "\n\nSource excerpts (untrusted, incomplete; line numbers refer to checkout files):\n"
 	schemas := map[string]func() ([]byte, error){
 		StageOutline: generator.Validator.OutlineSchema,
-		StageDetails: func() ([]byte, error) { return generator.Validator.DetailsSchema(nil) },
+		StageDetails: generator.Validator.DetailsSchema,
 		StageContext: generator.Validator.ContextSchema,
 	}
 	// A quarter of 12 calls and 1200 tokens for the outline; two thirds of
@@ -899,4 +899,35 @@ func TestStagedReviewContinuesAStoredOutlineWithOldNoise(t *testing.T) {
 		t.Fatalf("summary text %v", text)
 	}
 	completesStaged(t, run, document)
+}
+
+// NoReuse writes every section even when a previous version could supply it.
+func TestStagedReviewNoReuseWritesEverySection(t *testing.T) {
+	section := func(id, text string, hunks []string) bundle.PreviousSection {
+		var content map[string]any
+		if err := json.Unmarshal([]byte(stagedSectionDetails(id, text)), &content); err != nil {
+			t.Fatal(err)
+		}
+		content["title"], content["kind"], content["hunks"] = "Section "+id, "logical", hunks
+		encoded, _ := json.Marshal(content)
+		return bundle.PreviousSection{ID: id, Title: "Section " + id, Kind: "logical", HunkContentHashes: hunks, Content: encoded}
+	}
+	for _, noReuse := range []bool{false, true} {
+		b := stagedFixtureBundle()
+		b.Previous = &bundle.PreviousVersion{Version: 1, Sections: []bundle.PreviousSection{
+			section("sec_parser", "Previously reviewed parser.", []string{testHunk}), section("sec_tests", "Old tests.", []string{stagedTestHunk}),
+		}}
+		generator, run, _ := stagedFixture(t, b, nil)
+		run.NoReuse = noReuse
+		outcome, _, err := generator.StagedReview(context.Background(), run)
+		if err != nil || outcome.Reason != "" {
+			t.Fatalf("%+v %v", outcome, err)
+		}
+		if noReuse && (len(outcome.Details.Reused) != 0 || !slices.Equal(outcome.Details.Written, []string{"sec_parser", "sec_tests"})) {
+			t.Errorf("no reuse: %+v", outcome.Details)
+		}
+		if !noReuse && len(outcome.Details.Reused) != 2 {
+			t.Errorf("reuse: %+v", outcome.Details)
+		}
+	}
 }

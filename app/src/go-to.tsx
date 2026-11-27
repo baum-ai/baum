@@ -2,16 +2,19 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useModal } from "./modal";
 
 /** A place Go to can open: a page, a pull request, a review group or an
- *  agent session. */
+ *  agent session; or something it does (`run`), such as showing the session
+ *  panel. */
 export type GoToItem = {
   id: string;
-  kind: "Page" | "Inbox" | "Pull request" | "Review group" | "Session";
+  kind: "Page" | "Inbox" | "Pull request" | "Review group" | "Session" | "Action";
   label: string;
   /** What tells it apart from others like it: a repository and number. */
   detail?: string;
   /** More words it is found by, not drawn. */
   keywords?: string;
   href: string;
+  /** Done instead of going to `href`. */
+  run?: () => void;
 };
 
 /** How many places Go to draws at once; typing finds the rest. */
@@ -71,7 +74,8 @@ export function GoTo({
   const open = (item: GoToItem | undefined) => {
     if (!item) return;
     close();
-    go(item.href);
+    if (item.run) item.run();
+    else go(item.href);
   };
   return (
     <dialog ref={dialog} data-go-to="" aria-label="Go to" onCancel={close} className="go-to">

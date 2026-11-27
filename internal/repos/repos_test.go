@@ -96,7 +96,7 @@ func TestClonesAndSettings(t *testing.T) {
 	if e = r.Remove(ctx, other.Path); e != nil {
 		t.Fatal(e)
 	}
-	if e = r.Update(ctx, c.ID, Settings{}); e != nil {
+	if e = r.UpdateRepository(ctx, c.Repository, Settings{}); e != nil {
 		t.Fatal(e)
 	}
 	if e = r.Remove(ctx, w.ID); e != nil {
@@ -303,6 +303,8 @@ func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
 		{PullRequestsAuthored, true, false, false},
 		{PullRequestsRequested, false, true, false},
 		{PullRequestsAll, true, true, true},
+		// The saved inboxes decide, not Covers.
+		{PullRequestsInboxes, false, false, false},
 	} {
 		p := Preferences{PullRequests: tc.choice}
 		if p.Validate() != nil {
@@ -404,6 +406,32 @@ func TestPreferencesExtractionBackend(t *testing.T) {
 	}
 	if (Preferences{Backend: &cursor}).ValidateChange(Preferences{}) == nil || (Preferences{Backend: &anthropic}).ValidateChange(Preferences{}) == nil {
 		t.Fatal("a retired review backend was accepted")
+	}
+}
+
+// Fix network access is on unless turned off, and needs no fix agent.
+func TestPreferencesFixNetwork(t *testing.T) {
+	if !(Preferences{}).FixNetworkAllowed() {
+		t.Fatal("nil fix network is off")
+	}
+	off, on := false, true
+	if (Preferences{FixNetwork: &off}).FixNetworkAllowed() || !(Preferences{FixNetwork: &on}).FixNetworkAllowed() {
+		t.Fatal("fix network not read")
+	}
+	if err := (Preferences{FixNetwork: &off}).Validate(); err != nil {
+		t.Fatalf("fix network without a fix agent: %v", err)
+	}
+	r, err := Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if _, err := r.UpdatePreferences(context.Background(), func(p Preferences) Preferences { p.FixNetwork = &off; return p }); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Preferences(context.Background())
+	if err != nil || got.FixNetwork == nil || got.FixNetworkAllowed() {
+		t.Fatalf("round trip %+v %v", got, err)
 	}
 }
 

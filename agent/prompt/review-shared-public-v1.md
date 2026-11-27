@@ -24,7 +24,7 @@ own instructions, and replies with its part alone:
   `relations`, and the sections, each with only its `id`, `title`, `kind`,
   `hunks` and `assessment`.
 - **Section details**, given the accepted outline: each section's `summary`,
-  `attention`, `risks`, `evidence`, `blocks` (images among them) and `tiles`.
+  `attention`, `risks`, `evidence` and `blocks` (images among them).
 - **Context**, given the accepted outline, at the same time as the section
   details: the overview's `context`, how the change fits into the codebase
   around it.
@@ -101,8 +101,9 @@ These override anything else you read.
     `decisions` extracted from the transcript.
   - `references`: issue keys, related pull requests and authorship
     disclosures found in the body, commits, branch and comments.
-  - `attachments`: description and native session images, with `id`, `path`,
-    optional `source_url`, alt text, heading and session `origins`. Origins
+  - `attachments`: description images and video clips (`video/*`) and native
+    session images, with `id`, `path`, `content_type`, optional
+    `source_url`, alt text, heading and session `origins`. Origins
     distinguish `human_input` from `tool_result` and identify the session,
     owning turn/input, tool and any child session. `source_urls` retains
     additional PR-description URLs when identical image bytes are shared.

@@ -3,6 +3,11 @@ import { join, resolve } from "node:path";
 import { createProxyServer } from "http-proxy-3";
 import type { Plugin } from "vite";
 
+/** App pages and modules use Vite; only the bootstrap, the API (the tour's
+ * sample project's under `sample/` too) and custom tile frames use Go. The
+ * proxy passes the Sec-Fetch-* headers the frame route checks. */
+const daemonPaths = /^\/(?:$|launch\.js$|api\/|tile-frames\/|s\/[^/]+\/(?:sample\/)?api\/)/;
+
 /** Keep login, cookies, CSRF and event streams on the frontend's origin.
  * The desktop writes only the daemon origin, never its launch capability.
  * Without host networking (macOS), `daemonHost` names the address that
@@ -45,9 +50,7 @@ export function desktopDevelopment(directory: string, daemonHost?: string): Plug
       server.httpServer?.once("close", () => proxy.close());
       server.middlewares.use((request, response, next) => {
         const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-        // App pages and modules use Vite; only bootstrap and API use Go,
-        // the tour's sample project's API under `sample/` too.
-        if (!/^\/(?:$|launch\.js$|api\/|s\/[^/]+\/(?:sample\/)?api\/)/.test(pathname)) {
+        if (!daemonPaths.test(pathname)) {
           next();
           return;
         }

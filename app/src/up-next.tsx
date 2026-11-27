@@ -8,6 +8,9 @@ import {
   type SaveOption,
 } from "./filter-menu";
 import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
+import { parseSort, sortBy } from "./pr-sort";
+import { SortButton } from "./sort-menu";
+import { useTopLayer } from "./top-layer";
 import {
   Fragment,
   useEffect,
@@ -20,11 +23,14 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { createPortal } from "react-dom";
 import { formatCount } from "@baum/viewer/components/format";
+import { type Activity, activityCount, activityText, sumActivity } from "./pr-activity";
 import {
   BranchIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CircleDashedIcon,
   GitHubIcon,
   MergeIcon,
   StackIcon,
@@ -34,15 +40,11 @@ import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import {
-  RISK_SCORE_MEANING,
-  sectionsInReviewOrder,
-  type ReviewDocument,
-  type RiskScoreLevel,
-} from "@baum/viewer/review-document";
+import { sectionsInReviewOrder, type ReviewDocument } from "@baum/viewer/review-document";
 import {
   appURL,
   documentRequest,
+  readableDocument,
   groupDocumentRequest,
   fixJob,
   fixLabel,
@@ -57,6 +59,7 @@ import {
   navigate,
   openExternal,
   request,
+  groupJob,
   reviewJob,
   sameRepository,
   watchableFix,
@@ -82,11 +85,13 @@ import {
 } from "./inboxes";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./context-menu";
+import { ListPagination, useListPage } from "./list-pagination";
 import { ListSection, type ListTone } from "./list";
 import { useDeadlineNow } from "./live";
-import { peekHref } from "./sessions";
+import { inPanel, peekHref } from "./sessions";
 import {
   canMerge,
+  readyToMerge,
   defaultMergeMethod,
   mergeMethodLabel,
   mergeRefusal,
@@ -95,9 +100,11 @@ import {
 } from "./merge";
 import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
+import { groupDotState, ReviewDot, reviewDotLabel, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
   KeyBar,
+  listStep,
   onBody,
   useGitHubKey,
   useLastRow,
@@ -111,9 +118,10 @@ import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
 import { useToast } from "./toast";
 import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
-import { reviewable } from "./pending-review-model";
-import type { ReviewEvent } from "./walkthrough-model";
+import { reviewable, type ReviewEvent } from "./pending-review-model";
 import { cn } from "@baum/viewer/components/classnames";
+import { scrollToTop } from "@baum/viewer/components/scroller";
+import { minutesText, RiskCard, StackOverview } from "./stack-overview";
 
 /** What the person does next about a pull request: read a review they were
  *  asked for, unblock their own, merge it, bring it up to date with its base,
@@ -137,6 +145,9 @@ export type UpNextItem = {
   minutes: number | null;
   /** The agent sessions working on its branch now. */
   working: LiveSession[];
+  /** The open agent sessions on its branch that wait for the person; not a
+   *  session panel's, whose finished turn waits on the panel. */
+  waitingSessions: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
   /** The latest fix, when it ended without changing anything: not a failure,
@@ -205,7 +216,7 @@ function kindOf(entry: Entry, jobs: Job[]): UpNextKind | null {
   if (blocked(entry)) return "fix";
   // GitHub can call a head just pushed clean before its checks are queued;
   // checks running say the merge is not ready yet, whatever the merge state.
-  if (canMerge(entry) && entry.checks !== "running") return "merge";
+  if (readyToMerge(entry) && entry.checks !== "running") return "merge";
   if (canUpdateBranch(entry)) return "update";
   return null;
 }
@@ -385,7 +396,8 @@ export function upNext(
       continue;
     }
     const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
-    const working = liveFor(live, entry.pull_request).filter((s) => s.state === "running");
+    const sessions = liveFor(live, entry.pull_request);
+    const working = sessions.filter((s) => s.state === "running");
     items.push({
       key,
       kind,
@@ -393,6 +405,7 @@ export function upNext(
       why: why(kind, entry, working.length, now),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
+      waitingSessions: sessions.filter((s) => s.state === "idle" && !inPanel(s)),
       ...(last && changedNothing(last)
         ? { unchangedFix: last }
         : last?.state === "failed"
@@ -755,17 +768,33 @@ export function useUpNext(
     watchable: (entry: Entry) => watchableFix(entry, jobs),
     snoozedUntil: (key: string): SnoozeEnd =>
       key in state.held ? "change" : (state.snoozed[key] ?? 0),
-    snooze: (item: Pick<UpNextItem, "key" | "entry">, until: SnoozeEnd) =>
+    /** Snoozes pull requests together, as a stack's members, in one save. */
+    snooze: (items: Pick<UpNextItem, "key" | "entry">[], until: SnoozeEnd) =>
       update((s) =>
         until === "change"
-          ? { ...s, held: { ...s.held, [item.key]: item.entry.pull_request.head_sha } }
-          : { ...s, snoozed: { ...s.snoozed, [item.key]: until } },
+          ? {
+              ...s,
+              held: {
+                ...s.held,
+                ...Object.fromEntries(
+                  items.map((item) => [item.key, item.entry.pull_request.head_sha]),
+                ),
+              },
+            }
+          : {
+              ...s,
+              snoozed: {
+                ...s.snoozed,
+                ...Object.fromEntries(items.map((item) => [item.key, until])),
+              },
+            },
       ),
-    wake: (key: string) =>
+    wake: (keys: string[]) =>
       update((s) => {
-        const { [key]: _until, ...snoozed } = s.snoozed;
-        const { [key]: _head, ...held } = s.held;
-        return { ...s, snoozed, held };
+        const gone = new Set(keys);
+        const without = <T,>(record: Record<string, T>) =>
+          Object.fromEntries(Object.entries(record).filter(([key]) => !gone.has(key)));
+        return { ...s, snoozed: without(s.snoozed), held: without(s.held) };
       }),
     /** Hides a pull request from every inbox for good. Its record of today
      *  goes, so it is never done; a snooze it had waits, for an unarchive. */
@@ -836,10 +865,6 @@ function prHref(entry: Entry, cloneFor: (entry: Entry) => string, inbox?: Inbox)
   );
 }
 
-function minutesText(minutes: number) {
-  return minutes < 1 ? "<1 min" : `~${formatCount(Math.round(minutes))} min`;
-}
-
 const sumMinutes = (items: { minutes?: number | null }[]) =>
   items.reduce((sum, item) => sum + (typeof item.minutes === "number" ? item.minutes : 0), 0);
 
@@ -865,11 +890,14 @@ const isGroup = (line: Line | undefined): line is GroupRow => !!line && "group" 
 export const groupKey = (group: ReviewGroup) => `group:${group.id}`;
 
 /** A stack follows its first shown open member in base-to-tip order. Other
- *  groups follow their first member in the action list. Each appears once,
- *  with its members nested under it and retaining their own states. */
+ *  groups follow their first member in the action list, as every group does
+ *  in a sorted list (`sorted`), where that is its first-ranked member. Each
+ *  appears once, with its members nested under it and retaining their own
+ *  states. */
 export function withGroups<S extends { rows: Row[] }>(
   sections: S[],
   groups: ReviewGroup[],
+  sorted = false,
 ): (Omit<S, "rows"> & { lines: Line[] })[] {
   const owner = new Map<Row, GroupRow>();
   for (const group of groups) {
@@ -896,7 +924,7 @@ export function withGroups<S extends { rows: Row[] }>(
     for (const row of rows) {
       const group = owner.get(row);
       if (!group) lines.push(row);
-      else if (!placed.has(group) && (!group.group.stack || group.members[0] === row)) {
+      else if (!placed.has(group) && (sorted || !group.group.stack || group.members[0] === row)) {
         placed.add(group);
         lines.push(group);
       }
@@ -954,8 +982,8 @@ function useReviewDocument(entry: Entry | undefined, clone: string, job: Job | u
       abort.signal,
     )
       .then(({ document }) => {
-        if (!abort.signal.aborted && document && Array.isArray(document.sections))
-          setDraft({ job: job.id, doc: document });
+        if (!abort.signal.aborted && document)
+          setDraft({ job: job.id, doc: readableDocument(document) });
       })
       .catch(() => {});
     return () => abort.abort();
@@ -988,13 +1016,19 @@ export function ColourSwatches({
   color: current,
   pick,
   className,
+  raised = false,
 }: {
   color: InboxColor;
   pick: (color: InboxColor) => void;
   className?: string;
+  /** Drawn as a menu over the page, in the top layer (`useTopLayer`). */
+  raised?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useTopLayer(ref, raised);
   return (
     <div
+      ref={ref}
       role="radiogroup"
       aria-label="Colour"
       className={className ? `inbox-swatches ${className}` : "inbox-swatches"}
@@ -1056,6 +1090,7 @@ function InboxHeadEdit({
           <ColourSwatches
             color={inbox.color}
             className="inbox-head-swatches"
+            raised
             pick={(color) => {
               colours.close();
               if (color !== inbox.color) update({ color });
@@ -1068,7 +1103,7 @@ function InboxHeadEdit({
           <button
             type="button"
             className="inbox-head-name"
-            title="Rename"
+            title={`${inbox.name} · Rename`}
             onClick={() => setDraft(inbox.name)}
           >
             {inbox.name}
@@ -1136,9 +1171,13 @@ export function UpNextPage({
   updateInbox,
   inboxSaves = 0,
   repositories = [],
+  activity = () => undefined,
   Link,
 }: {
   inbox: UpNextState;
+  /** What happened on a pull request since its page was last open
+   *  (`usePullActivity`), which its row counts. */
+  activity?: (pr: Entry["pull_request"]) => Activity | undefined;
   /** Every pull request read, open or not, for what a group's panel says of
    *  members the queue does not list, as those merged. */
   entries?: Entry[];
@@ -1189,6 +1228,7 @@ export function UpNextPage({
   const [updating, setUpdating] = useState<Entry | null>(null);
   // Kept for when the inbox is drawn again, back from a pull request.
   const [chosen, setChosen] = useLastRow("inbox");
+  const [restoring, setRestoring] = useState<{ key: string; scope: string } | null>(null);
   const [menu, setMenu] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
@@ -1207,6 +1247,17 @@ export function UpNextPage({
   const quick = useFilterDraft(`inbox:${scope.id}`, saved, inboxSaves);
   const { query, set: setQuery } = quick;
   const filtering = quick.dirty;
+  // The inbox's sort, saved with it at once; kept on the page alone while
+  // the inboxes cannot be saved.
+  const [ownSort, setOwnSort] = useState<{ id: string; sort: string } | null>(null);
+  const sort = ownSort?.id === scope.id ? ownSort.sort : (scope.sort ?? "");
+  const setSort = (next: string) => {
+    if (next === sort) return;
+    if (updateInbox) {
+      setOwnSort(null);
+      updateInbox({ sort: next });
+    } else setOwnSort({ id: scope.id, sort: next });
+  };
   useEffect(() => {
     const create = (event: KeyboardEvent) => {
       if (
@@ -1294,7 +1345,61 @@ export function UpNextPage({
       ),
     },
   ];
-  const groups = withGroups(sections, reviewGroups).filter((group) => group.lines.length > 0);
+  // The sort orders each section's rows, its own order settling any tie; a
+  // group follows its first-ranked member.
+  const sortKeys = parseSort(sort);
+  const allGroups = withGroups(
+    sections.map((section) => ({
+      ...section,
+      rows: sortBy(section.rows, sortKeys, (row) => row.entry),
+    })),
+    reviewGroups,
+    sortKeys.length > 0,
+  );
+  const allLines = allGroups.flatMap((group) => group.lines);
+  const activeCount = allLines.length;
+  const snoozedCount = snoozedOpen ? snoozed.length : 0;
+  const pageScope = JSON.stringify([scope.id, query, sort]);
+  const indexOfLine = (key: string | null) =>
+    allLines.findIndex(
+      (line) => line.key === key || (isGroup(line) && line.members.some((row) => row.key === key)),
+    );
+  const pagination = useListPage(
+    pageScope,
+    activeCount + snoozedCount + (doneOpen ? cleared.length : 0),
+    indexOfLine(chosen),
+  );
+  const restoreIndex = restoring?.scope === pageScope ? indexOfLine(restoring.key) : -1;
+  const { reveal } = pagination;
+  useLayoutEffect(() => {
+    if (restoreIndex < 0) return;
+    reveal(restoreIndex);
+    setRestoring(null);
+  }, [restoreIndex, reveal]);
+  const restoreSelection = (key: string) => {
+    setChosen(key);
+    setRestoring({ key, scope: pageScope });
+  };
+  const openHistory = (
+    open: boolean,
+    setOpen: (open: boolean) => void,
+    offset: number,
+    length: number,
+  ) => {
+    setOpen(!open);
+    if (!open && (offset >= pagination.end || offset + length <= pagination.start)) {
+      pagination.reveal(offset);
+      setChosen(null);
+    }
+  };
+  let offset = 0;
+  const groups = allGroups.flatMap((group) => {
+    const lines = pagination.slice(group.lines, offset);
+    offset += group.lines.length;
+    return lines.length ? [{ ...group, lines, allLines: group.lines }] : [];
+  });
+  const snoozedPage = pagination.slice(snoozed, activeCount);
+  const donePage = pagination.slice(cleared, activeCount + snoozedCount);
   // A group shows its members when opened, or while one of them is chosen.
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const groupOpen = (line: GroupRow) =>
@@ -1311,9 +1416,9 @@ export function UpNextPage({
   // others' pull requests alone (as Unclaimed) opens on its first.
   const last = useRef(0);
   const found = chosen ? rows.findIndex((row) => row.key === chosen) : -1;
-  const actionable = rows.filter(
-    (row) => !(isGroup(row) ? row.members.every((member) => member.waiting) : row.waiting),
-  ).length;
+  const isActionable = (row: Line) =>
+    isGroup(row) ? row.members.some((member) => !member.waiting) : !row.waiting;
+  const actionable = rows.filter(isActionable).length;
   const firstOther = rows.findIndex((row) =>
     isGroup(row) ? row.members.some((member) => member.other) : row.other,
   );
@@ -1356,7 +1461,9 @@ export function UpNextPage({
     const element = Array.from(
       list.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [],
     ).find((element) => element.dataset.row === line.key);
-    element?.scrollIntoView?.({ block: "nearest" });
+    // The first row takes the list back to the top, with the page's bar.
+    if (line.key === rows[0]?.key) scrollToTop(element);
+    else element?.scrollIntoView?.({ block: "nearest" });
     if (list.current?.contains(document.activeElement))
       element?.querySelector<HTMLElement>(".upnext-row")?.focus({ preventScroll: true });
   }, [line?.key]);
@@ -1386,17 +1493,24 @@ export function UpNextPage({
       : undefined;
   // Read when rendered: `now` only moves when a snooze ends or the day rolls over.
   const options = snoozeOptions(Date.now());
+  // A selected stack or group snoozes the members its row shows, together.
   const snooze = (until: SnoozeEnd) => {
-    const item = selected;
-    if (!item) return;
-    inbox.snooze(item, until);
+    const line = selected ?? selectedGroup;
+    if (!line) return;
+    const members = isGroup(line) ? line.members : [line];
+    const keys = members.map((member) => member.key);
+    inbox.snooze(members, until);
     setMenu(false);
     setToast({
       id: Date.now(),
-      text: `Snoozed #${item.entry.pull_request.number} until ${snoozeText(until, now)}`,
+      text: `Snoozed ${
+        isGroup(line)
+          ? `${line.group.name} (${plural(members.length, "pull request")})`
+          : `#${line.entry.pull_request.number}`
+      } until ${snoozeText(until, now)}`,
       undo: () => {
-        inbox.wake(item.key);
-        setChosen(item.key);
+        inbox.wake(keys);
+        restoreSelection(line.key);
       },
     });
   };
@@ -1411,7 +1525,7 @@ export function UpNextPage({
       text: `Archived #${row.entry.pull_request.number}`,
       undo: () => {
         inbox.unarchive(row.key);
-        setChosen(row.key);
+        restoreSelection(row.key);
       },
     });
   };
@@ -1433,11 +1547,17 @@ export function UpNextPage({
     if (key === "Escape" && menu) {
       event.preventDefault();
       setMenu(false);
-    } else if (key === "j" || key === "ArrowDown" || key === "k" || key === "ArrowUp") {
+    } else if (listStep(key) !== null) {
       if (rows.length === 0) return;
       event.preventDefault();
-      const step = key === "j" || key === "ArrowDown" ? 1 : -1;
-      select(rows[Math.min(rows.length - 1, Math.max(0, index + step))]!.key);
+      const step = listStep(key)!;
+      const to =
+        step === "first"
+          ? 0
+          : step === "last"
+            ? rows.length - 1
+            : Math.min(rows.length - 1, Math.max(0, index + step));
+      select(rows[to]!.key);
     } else if (key === " ") {
       // Space on a link or button presses it, except on a row, where it opens
       // or closes the row's group: from a member, back to its group, which
@@ -1474,7 +1594,7 @@ export function UpNextPage({
       event.preventDefault();
       primary.click();
     } else if (key === "s") {
-      if (!selected) return;
+      if (!selected && !selectedGroup) return;
       event.preventDefault();
       setMenu((open) => !open);
     } else if (key === "e") {
@@ -1489,7 +1609,7 @@ export function UpNextPage({
       setMenu(false);
       button.click();
     } else if (key === "m") {
-      if (selected?.item?.kind !== "merge") return;
+      if (!selected || selected.job || !canMerge(selected.entry)) return;
       event.preventDefault();
       setMenu(false);
       setMerging(selected.entry);
@@ -1513,7 +1633,7 @@ export function UpNextPage({
   const minutes = Math.round(sumMinutes(queue));
   const summary = loading
     ? "Loading your inbox…"
-    : actionable === 0
+    : !allLines.some(isActionable)
       ? cleared.length
         ? `Nothing left. ${formatCount(cleared.length)} handled today.`
         : "Nothing waiting."
@@ -1550,12 +1670,12 @@ export function UpNextPage({
         hint: watchable ? "t" : undefined,
         onSelect: () => navigate(jobHref(run)),
       });
+    if (!job && canMerge(entry))
+      items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
     if (!job && !waiting) {
       const label = fixLabel(entry);
-      if (item?.kind === "merge")
-        items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
-      else if (item?.kind === "update")
-        items.push({ label: "Update the branch…", onSelect: () => setUpdating(entry) });
+      if (item?.kind === "update")
+        items.push({ label: "Update branch…", onSelect: () => setUpdating(entry) });
       else if (item?.kind === "fix" && label && cloneFor(entry) && !fixState(entry).starting)
         items.push({ label, hint: "f", onSelect: () => fix(entry) });
     }
@@ -1600,6 +1720,14 @@ export function UpNextPage({
       hint: "Space",
       onSelect: () => toggleGroup(line),
     },
+    {
+      label: "Snooze…",
+      hint: "s",
+      onSelect: () => {
+        select(line.key);
+        setMenu(true);
+      },
+    },
   ];
   // A done one's page while the app still lists it, and its GitHub page.
   const doneActions = ({ entry, url }: (typeof cleared)[number]): MenuItem[] => [
@@ -1610,7 +1738,7 @@ export function UpNextPage({
     {
       label: "Bring back",
       onSelect: () => {
-        inbox.wake(item.key);
+        inbox.wake([item.key]);
         select(item.key);
       },
     },
@@ -1691,10 +1819,11 @@ export function UpNextPage({
               ) : (
                 <>
                   <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                  <h1>{scope.name}</h1>
+                  <h1 title={scope.name}>{scope.name}</h1>
                 </>
               )}
               {filterButton}
+              <SortButton sort={sort} onChange={setSort} />
               {refreshButton}
             </div>
             <p className="upnext-list-summary">{summary}</p>
@@ -1716,7 +1845,7 @@ export function UpNextPage({
               // members stay out of Merge all.
               const ready =
                 group.id === "merge"
-                  ? group.lines
+                  ? group.allLines
                       .flatMap((line) =>
                         isGroup(line) ? (line.group.stack ? [] : line.members) : [line],
                       )
@@ -1729,9 +1858,10 @@ export function UpNextPage({
                   data-row={row.key}
                   data-focused={row.key === line?.key || undefined}
                   className={`list-row upnext-item${group ? " upnext-member" : ""}`}
-                  onContextMenu={(event) =>
-                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request))
-                  }
+                  onContextMenu={(event) => {
+                    select(row.key);
+                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request));
+                  }}
                 >
                   <ListRow
                     row={row}
@@ -1739,6 +1869,8 @@ export function UpNextPage({
                     tabbable={row.key === tabbable}
                     pick={select}
                     inGroup={!!group}
+                    now={now}
+                    activity={activity(row.entry.pull_request)}
                   />
                 </li>
               );
@@ -1746,7 +1878,7 @@ export function UpNextPage({
                 <ListSection
                   key={group.id}
                   title={group.title}
-                  count={rowsOf(group.lines).length}
+                  count={rowsOf(group.allLines).length}
                   tone={GROUP_TONES[group.id]}
                   action={
                     ready.length > 1 ? (
@@ -1767,17 +1899,22 @@ export function UpNextPage({
                           data-row={entry.key}
                           data-focused={entry.key === line?.key || undefined}
                           className="list-row upnext-item"
-                          onContextMenu={(event) =>
-                            actionsMenu.open(event, groupActions(entry), entry.group.name)
-                          }
+                          onContextMenu={(event) => {
+                            select(entry.key);
+                            actionsMenu.open(event, groupActions(entry), entry.group.name);
+                          }}
                         >
                           <GroupListRow
                             line={entry}
+                            review={groupJob(entry.group, jobs)}
                             open={groupOpen(entry)}
                             toggle={() => toggleGroup(entry)}
                             on={entry.key === line?.key}
                             tabbable={entry.key === tabbable}
                             pick={select}
+                            activity={sumActivity(
+                              entry.members.map((member) => activity(member.entry.pull_request)),
+                            )}
                           />
                         </li>
                         {groupOpen(entry) ? entry.members.map((row) => member(row, entry)) : null}
@@ -1794,10 +1931,10 @@ export function UpNextPage({
                 title="Snoozed"
                 count={snoozed.length}
                 collapsed={!snoozedOpen}
-                toggle={() => setSnoozedOpen((open) => !open)}
+                toggle={() => openHistory(snoozedOpen, setSnoozedOpen, activeCount, snoozed.length)}
                 listClassName="upnext-snoozed"
               >
-                {snoozed.map((item) => (
+                {snoozedPage.map((item) => (
                   <li
                     key={item.key}
                     className="list-row"
@@ -1826,10 +1963,12 @@ export function UpNextPage({
                 count={cleared.length}
                 tone="positive"
                 collapsed={!doneOpen}
-                toggle={() => setDoneOpen((open) => !open)}
+                toggle={() =>
+                  openHistory(doneOpen, setDoneOpen, activeCount + snoozedCount, cleared.length)
+                }
                 listClassName="upnext-done"
               >
-                {cleared.map((item) => (
+                {donePage.map((item) => (
                   <li
                     key={item.key}
                     title={`${item.repository} #${item.number}`}
@@ -1865,9 +2004,18 @@ export function UpNextPage({
               </ListSection>
             ) : null}
           </div>
+          <ListPagination
+            label="Inbox pagination"
+            pagination={pagination}
+            onMove={() => {
+              setChosen(null);
+              last.current = 0;
+              if (list.current) list.current.scrollTop = 0;
+            }}
+          />
           <KeyBar place="inbox" className="upnext-keys" />
         </div>
-        <div ref={detail} className="upnext-detail">
+        <div key={line?.key} ref={detail} className="upnext-detail">
           {loading ? (
             <div className="upnext-panel">
               <LoadingStatus block>Loading your inbox…</LoadingStatus>
@@ -1908,11 +2056,21 @@ export function UpNextPage({
                 href={appURL(
                   `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
                 )}
+                memberHref={(entry) => prHref(entry, cloneFor, scope)}
                 pick={(key) => {
                   toggleGroup(selectedGroup, true);
                   select(key);
                 }}
                 Link={Link}
+                snooze={
+                  <SnoozeMenu
+                    menu={menu}
+                    setMenu={setMenu}
+                    options={options}
+                    snooze={snooze}
+                    now={now}
+                  />
+                }
               />
             </ReviewHunksProvider>
           ) : filtering &&
@@ -1984,6 +2142,8 @@ function ListRow({
   tabbable,
   pick,
   inGroup = false,
+  now,
+  activity,
 }: {
   row: Row;
   on: boolean;
@@ -1991,6 +2151,9 @@ function ListRow({
   pick: (key: string) => void;
   /** The row is a member nested under its review group's row. */
   inGroup?: boolean;
+  /** For whether its pull request's data is too old to call a review current. */
+  now: number;
+  activity?: Activity;
 }) {
   const pr = row.entry.pull_request;
   // The section heading already names the kind, so the line starts with the
@@ -2017,6 +2180,11 @@ function ListRow({
     .filter(Boolean)
     .join(" · ");
   const hot = (row.entry.risk_score?.score ?? 0) >= 5;
+  // As a review row's panel says (why): a current review over data too old to
+  // trust covers an earlier commit.
+  const dot = reviewDotState(
+    row.entry.status === "current" && metadataStale(row.entry, now) ? "outdated" : row.entry.status,
+  );
   return (
     <button
       type="button"
@@ -2026,9 +2194,13 @@ function ListRow({
       onClick={() => pick(row.key)}
     >
       <span className="upnext-row-text">
-        <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
+        <span className="upnext-row-title" title={pr.title || undefined}>
+          {pr.title || "Untitled pull request"}
+        </span>
         <span className="upnext-row-line">
+          <ReviewDot state={dot} detail={row.entry.failure_reason} labelled={false} compact />
           <span
+            title={sub}
             className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
           >
             {row.job ? (
@@ -2042,10 +2214,27 @@ function ListRow({
           </span>
         </span>
       </span>
+      {dot ? <span className="sr-only">, {reviewDotLabel(dot)}</span> : null}
       {hot ? (
         <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
       ) : null}
+      <UnreadBadge activity={activity} />
     </button>
+  );
+}
+
+/** How many things happened on a pull request since its page was last open,
+ *  in the row's top right corner as a messaging app counts unread messages;
+ *  what they were is its tooltip and is read after the row. */
+function UnreadBadge({ activity }: { activity?: Activity }) {
+  const count = activityCount(activity);
+  if (!activity || count === 0) return null;
+  const text = `${activityText(activity)} since you last opened it`;
+  return (
+    <span className="upnext-unread" title={text}>
+      <span aria-hidden="true">{count > 99 ? "99+" : formatCount(count)}</span>
+      <span className="sr-only">, {text}</span>
+    </span>
   );
 }
 
@@ -2073,21 +2262,28 @@ function memberKinds(members: Row[]) {
 /** A review group's row: it opens to its members, nested under it. */
 function GroupListRow({
   line,
+  review,
   open,
   toggle,
   on,
   tabbable,
   pick,
+  activity,
 }: {
   line: GroupRow;
+  /** The group's latest review job. */
+  review: Job | undefined;
   open: boolean;
   toggle: () => void;
   on: boolean;
   tabbable: boolean;
   pick: (key: string) => void;
+  /** Its members' activity, added up. */
+  activity?: Activity;
 }) {
   const { group, members } = line;
   const hot = members.some((member) => (member.entry.risk_score?.score ?? 0) >= 5);
+  const groupDot = groupDotState(group, review?.state);
   return (
     <div className="upnext-group-line">
       <button
@@ -2113,10 +2309,14 @@ function GroupListRow({
             {group.stack ? <StackIcon size={13} className="upnext-stack-icon" /> : null}
             {group.name}
           </span>
-          <span className="upnext-row-sub">
-            {[groupName(group), group.repository, memberKinds(members)].join(" · ")}
+          <span className="upnext-row-line">
+            <ReviewDot state={groupDot} labelled={false} compact />
+            <span className="upnext-row-sub">
+              {[groupName(group), group.repository, memberKinds(members)].join(" · ")}
+            </span>
           </span>
         </span>
+        {groupDot ? <span className="sr-only">, {reviewDotLabel(groupDot)}</span> : null}
         {hot ? (
           <span
             className="upnext-hot"
@@ -2125,6 +2325,7 @@ function GroupListRow({
             title="Critical risk"
           />
         ) : null}
+        <UnreadBadge activity={activity} />
       </button>
     </div>
   );
@@ -2360,16 +2561,6 @@ function Panel({
   const pr = entry.pull_request;
   const kind = item?.kind ?? "fix";
   const pending = usePendingReview(entry);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuFocus = useMenuFocus(menu, () => setMenu(false));
-  useEffect(() => {
-    if (!menu) return;
-    const close = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [menu]);
   const who = pr.review_requested_from_me
     ? `${pr.author ?? "Someone"} asked for your review`
     : pr.authored_by_me
@@ -2378,8 +2569,8 @@ function Panel({
         ? `${pr.author ?? "Someone"}'s, assigned to you`
         : `By ${pr.author ?? "someone else"}`;
   // Opening the pull request is always the default; what the kind asks for
-  // follows it. A merge or branch update opens its confirmation; a fix starts
-  // at once.
+  // follows it, then Merge whenever GitHub can merge it. A merge or branch
+  // update opens its confirmation; a fix starts at once.
   const actions = (
     <>
       <Link href={href} className={cn("upnext-primary", PRIMARY)}>
@@ -2397,27 +2588,9 @@ function Panel({
             </kbd>
           ) : null}
         </Link>
-      ) : waiting ? (
-        pr.url ? (
-          <a
-            href={pr.url}
-            target="_blank"
-            rel="noreferrer"
-            className={cn("upnext-secondary", SECONDARY)}
-          >
-            Open on GitHub
-          </a>
-        ) : null
-      ) : kind === "merge" ? (
-        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
-          Merge
-          <kbd aria-hidden="true" className="key-hint">
-            m
-          </kbd>
-        </button>
-      ) : kind === "update" ? (
+      ) : waiting ? null : kind === "update" ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={update}>
-          Update the branch
+          Update branch…
         </button>
       ) : kind === "fix" && fix ? (
         <button
@@ -2436,6 +2609,14 @@ function Panel({
               </kbd>
             </>
           )}
+        </button>
+      ) : null}
+      {!job && canMerge(entry) ? (
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
+          Merge…
+          <kbd aria-hidden="true" className="key-hint">
+            m
+          </kbd>
         </button>
       ) : null}
     </>
@@ -2508,37 +2689,7 @@ function Panel({
             className="upnext-secondary"
           />
         ) : null}
-        <div className="upnext-snooze" ref={menuRef}>
-          <button
-            type="button"
-            className={cn("upnext-secondary", SECONDARY)}
-            aria-haspopup="menu"
-            aria-expanded={menu}
-            onClick={() => setMenu((open) => !open)}
-          >
-            Snooze
-            <ChevronDownIcon size={14} className="text-tertiary" />
-            <kbd aria-hidden="true" className="key-hint">
-              s
-            </kbd>
-          </button>
-          {menu ? (
-            <div role="menu" className="upnext-menu" {...menuFocus}>
-              {options.map((option, index) => (
-                <button
-                  key={option.label}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => snooze(option.until)}
-                >
-                  <span className="upnext-menu-key">{index + 1}</span>
-                  <span className="upnext-menu-label">{option.label}</span>
-                  <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <SnoozeMenu menu={menu} setMenu={setMenu} options={options} snooze={snooze} now={now} />
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={archive}>
           Archive
           <kbd aria-hidden="true" className="key-hint">
@@ -2591,28 +2742,57 @@ function Panel({
           {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
         </section>
       ))}
-      {item && item.working.length > 0 ? (
-        <p className="upnext-agents">
-          <LiveDot className="text-status-positive" />
-          {/* Each opens on Sessions with that session selected. */}
-          {item.working.length === 1 ? (
-            <Link href={peekHref(item.working[0]!)}>
-              1 agent session working on its branch right now
-            </Link>
-          ) : (
-            <span>
-              {plural(item.working.length, "agent session")} working on its branch right now:{" "}
-              {item.working.map((session, index) => (
-                <Fragment key={peekHref(session)}>
-                  {index > 0 ? " · " : ""}
-                  <Link href={peekHref(session)}>{agentName(session.agent)}</Link>
-                </Fragment>
-              ))}
-            </span>
-          )}
-        </p>
+      {item ? (
+        <AgentSessions
+          sessions={item.working}
+          Link={Link}
+          what="working on its branch right now"
+          mark={<LiveDot className="text-status-positive" />}
+        />
+      ) : null}
+      {item ? (
+        <AgentSessions
+          sessions={item.waitingSessions}
+          Link={Link}
+          what="waiting for you on its branch"
+          mark={<CircleDashedIcon size={12} className="flex-none text-status-caution" />}
+        />
       ) : null}
     </article>
+  );
+}
+
+/** A line under the review naming the agent sessions on its branch in one
+ *  state; each opens on Sessions with that session selected. */
+function AgentSessions({
+  sessions,
+  what,
+  mark,
+  Link,
+}: {
+  sessions: LiveSession[];
+  what: string;
+  mark: ReactNode;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  if (sessions.length === 0) return null;
+  return (
+    <p className="upnext-agents">
+      {mark}
+      {sessions.length === 1 ? (
+        <Link href={peekHref(sessions[0]!)}>1 agent session {what}</Link>
+      ) : (
+        <span>
+          {plural(sessions.length, "agent session")} {what}:{" "}
+          {sessions.map((session, index) => (
+            <Fragment key={peekHref(session)}>
+              {index > 0 ? " · " : ""}
+              <Link href={peekHref(session)}>{agentName(session.agent)}</Link>
+            </Fragment>
+          ))}
+        </span>
+      )}
+    </p>
   );
 }
 
@@ -2801,41 +2981,6 @@ function BlockRow({ line, entry }: { line: PanelRow; entry: Entry }) {
   );
 }
 
-/** The risk card of a pull request's or a group's panel: its score as five
- *  blocks, in words, and what the review says of it below (`children`). */
-function RiskCard({
-  score,
-  text,
-  children,
-}: {
-  score: number;
-  /** The score in words: "3 of 5", or "at least 3 of 5". */
-  text: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="upnext-risk">
-      <div className="upnext-risk-head">
-        <span className="upnext-label">Risk</span>
-        <span className="upnext-risk-blocks" aria-hidden="true">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <span
-              key={n}
-              className={
-                n <= score ? `upnext-risk-on upnext-risk-${Math.min(score, 5)}` : undefined
-              }
-            />
-          ))}
-        </span>
-        <span className="upnext-risk-text">
-          {text} · {RISK_SCORE_MEANING[score as RiskScoreLevel]}
-        </span>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 /** The last fix ended without changing anything, which is the agent's
  *  judgement, not an error: said in neutral words, with the agent's reason
  *  (the first paragraph of what it said) and the way to the rest. */
@@ -2881,17 +3026,115 @@ function memberState(row: Row): { text: string; tone: string } {
   };
 }
 
+/** The panel's Snooze button and its menu of when, which `s` opens and
+ *  `1`–`4` choose from. */
+function SnoozeMenu({
+  menu,
+  setMenu,
+  options,
+  snooze,
+  now,
+}: {
+  menu: boolean;
+  setMenu: (open: boolean | ((open: boolean) => boolean)) => void;
+  options: { label: string; until: SnoozeEnd }[];
+  snooze: (until: SnoozeEnd) => void;
+  now: number;
+}) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const { ref: popup, onKeyDown } = useMenuFocus(menu, () => setMenu(false));
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const anchor = trigger.current;
+    const panel = popup.current;
+    const floating = panel?.parentElement;
+    if (!anchor || !panel || !floating) return;
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const height = panel.offsetHeight;
+      const gap = panel.offsetTop;
+      const below = rect.bottom + gap;
+      const top = below + height <= window.innerHeight - 4 ? below : rect.top - height - gap;
+      floating.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - panel.offsetWidth - 4))}px`;
+      floating.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4)) - gap}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [menu, popup]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setMenu(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menu, popup]);
+  return (
+    <>
+      <button
+        ref={trigger}
+        type="button"
+        className={cn("upnext-secondary", SECONDARY)}
+        aria-haspopup="menu"
+        aria-expanded={menu}
+        onClick={() => setMenu((open) => !open)}
+      >
+        Snooze
+        <ChevronDownIcon size={14} className="text-tertiary" />
+        <kbd aria-hidden="true" className="key-hint">
+          s
+        </kbd>
+      </button>
+      {menu
+        ? createPortal(
+            <div className="fixed top-0 left-0 z-30">
+              <div
+                role="menu"
+                aria-label="Snooze"
+                className="upnext-menu"
+                ref={popup}
+                onKeyDown={onKeyDown}
+              >
+                {options.map((option, index) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => snooze(option.until)}
+                  >
+                    <span className="upnext-menu-key">{index + 1}</span>
+                    <span className="upnext-menu-label">{option.label}</span>
+                    <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
 /** A review group's panel, laid out as a pull request's: its base and facts
  *  summed, its review's state, its risk, and its shown members in order, a
  *  stack's from its base up, each with what it waits on. Picking a member
- *  previews it. */
+ *  previews it. A stack's panel is its overview (`StackOverview`). */
 function GroupPanel({
   line,
   doc,
   entries,
   href,
+  memberHref,
   pick,
   Link,
+  snooze,
 }: {
   line: GroupRow;
   /** Its latest group review, once read. */
@@ -2899,8 +3142,12 @@ function GroupPanel({
   /** Every pull request read, for the members the queue does not list. */
   entries: Entry[];
   href: string;
+  /** A member's review page. */
+  memberHref: (entry: Entry) => string;
   pick: (key: string) => void;
   Link: ComponentType<ViewerLinkProps>;
+  /** Snoozes its shown members together. */
+  snooze: ReactNode;
 }) {
   const { group, members } = line;
   const [listOpen, setListOpen] = useState(true);
@@ -2945,6 +3192,24 @@ function GroupPanel({
     }),
   ];
   const unread = total - rows.length;
+  // A stack has no combined review: its panel is its overview.
+  if (group.stack)
+    return (
+      <StackOverview
+        group={group}
+        members={rows.map(({ number, row, entry, state }) => ({
+          number,
+          entry,
+          state,
+          pick: row ? () => pick(row.key) : undefined,
+        }))}
+        entries={entries}
+        href={href}
+        memberHref={memberHref}
+        Link={Link}
+        actions={snooze}
+      />
+    );
   const reason = doc?.summary.risk_score?.reasons[0];
   const reasonTitle = reason
     ? (doc?.sections.find((section) => section.id === reason.section)?.title ?? "")
@@ -3024,6 +3289,7 @@ function GroupPanel({
             ↵
           </kbd>
         </Link>
+        {snooze}
       </div>
       {score != null ? (
         <RiskCard

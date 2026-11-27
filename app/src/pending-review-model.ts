@@ -1,19 +1,74 @@
-import type { ReviewDocument } from "@baum/viewer/review-document";
+import {
+  hunkLine,
+  type Anchor,
+  type IndexedHunk,
+  type ReviewDocument,
+} from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
 import type { PR } from "./api";
 import { uiState } from "./ui-state";
-import {
-  firstSentence,
-  placeOf,
-  type CommentPlace,
-  type ReviewEvent,
-  type ReviewSubmission,
-} from "./walkthrough-model";
+import { tileCommentTarget } from "./tiles/comments";
 
-/** What a comment is about: the item being read when it was written. */
+/** Where a comment lands on GitHub: a line of the reviewed diff, or a range
+ *  ending on it. */
+export type CommentPlace = {
+  path: string;
+  line: number;
+  side: "RIGHT" | "LEFT";
+  start_line?: number;
+};
+
+export type ReviewEvent = "APPROVE" | "COMMENT" | "REQUEST_CHANGES";
+
+export type ReviewSubmission = {
+  repository: string;
+  pr: number;
+  head_sha: string;
+  event: ReviewEvent;
+  body: string;
+  comments: (CommentPlace & { body: string })[];
+};
+
+/** A headline taken from a longer text: its first sentence, cut at its
+ *  first clause when the sentence strings several together with semicolons. */
+export function firstSentence(value: string): string {
+  const match = /^(.+?[.!?])(\s|$)/.exec(value);
+  const sentence = (match ? match[1]! : value).replace(/[.!?]$/, "");
+  const clause = sentence.indexOf("; ");
+  return clause > 0 ? sentence.slice(0, clause) : sentence;
+}
+
+/** Where a comment on code cited by `anchors` lands: the first hunk it can
+ *  place, on its cited lines or else its first changed line. */
+export function placeOf(anchors: Anchor[], hunks: Map<string, IndexedHunk>): CommentPlace | null {
+  for (const anchor of anchors) {
+    if (anchor.type !== "hunk") continue;
+    const hunk = hunks.get(anchor.id);
+    if (!hunk) continue;
+    const [start, end] = Array.isArray(anchor.lines) ? anchor.lines : [];
+    if (typeof start === "number" && typeof end === "number" && start > 0 && end >= start)
+      return start < end
+        ? { path: hunk.path, line: end, side: "RIGHT", start_line: start }
+        : { path: hunk.path, line: end, side: "RIGHT" };
+    const added = hunk.diff?.lines.find((line) => line.kind === "add");
+    if (added && added.kind === "add")
+      return { path: hunk.path, line: added.new_line, side: "RIGHT" };
+    const line = hunkLine(hunk);
+    if (line) return { path: hunk.path, line, side: "RIGHT" };
+    const removed = hunk.diff?.lines.find((line) => line.kind === "remove");
+    if (removed && removed.kind === "remove")
+      return { path: hunk.path, line: removed.old_line, side: "LEFT" };
+  }
+  return null;
+}
+
+/** What a comment is about: the item being read when it was written. A tile
+ *  of the tiles page that is no section, risk or file is a target of its
+ *  own. */
 export type CommentTarget = {
-  kind: "general" | "section" | "risk" | "file";
-  /** The section's or risk's id, or the file's path; empty for general. */
+  kind: "general" | "section" | "risk" | "file" | "tile";
+  /** The section's, risk's or tile's id, or the file's path; empty for
+   *  general. */
   id: string;
   title: string;
 };
@@ -72,8 +127,8 @@ export function placeText(place: CommentPlace | null): string {
   return place ? `${basename(place.path)}:${place.line}` : "";
 }
 
-/** What `c` comments on: the section, risk or file being read, placed on the
- *  first line of code it cites; anything else is a general comment. */
+/** What `c` comments on: the section, risk, file or tile being read, placed
+ *  on the first line of code it cites; anything else is a general comment. */
 export function commentTarget(
   document: ReviewDocument | null,
   selection: Selection,
@@ -100,6 +155,10 @@ export function commentTarget(
       const place = placeOf(cited.length ? cited : firstHunk(section.hunks), hunks);
       return { target: { kind: "section", id: section.id, title: section.title }, place, head };
     }
+  }
+  if (selection.kind === "tile") {
+    const tile = tileCommentTarget(document, selection.id);
+    if (tile) return { target: tile.target, place: placeOf(tile.anchors, hunks), head };
   }
   if (selection.kind === "file") {
     const ids = document.index.hunks.filter((h) => h.path === selection.id).map((h) => h.id);

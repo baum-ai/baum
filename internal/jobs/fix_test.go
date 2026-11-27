@@ -308,8 +308,12 @@ func TestFixJobPushesAndReportsTheCommit(t *testing.T) {
 	if job.Calls != 1 || job.Accounting == nil {
 		t.Fatalf("usage not reported: %+v", job)
 	}
-	if entries, _ := os.ReadDir(local.FixDirectory); len(entries) != 0 {
-		t.Fatalf("fix checkouts remain: %v", entries)
+	// The clone's directory of fixes stays; the fix's own is removed.
+	clones, _ := os.ReadDir(local.FixDirectory)
+	for _, clone := range clones {
+		if entries, _ := os.ReadDir(filepath.Join(local.FixDirectory, clone.Name())); len(entries) != 0 {
+			t.Fatalf("fix checkouts remain in %s: %v", clone.Name(), entries)
+		}
 	}
 }
 
