@@ -38,7 +38,10 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The race-enabled tests alone take about 8.5 minutes with no cache;
+    # v0.3.1's first run passed 10 and was cancelled, leaving the draft
+    # unpublished.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
