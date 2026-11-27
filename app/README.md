@@ -1829,8 +1829,9 @@ and ⌘. (Ctrl+.) with the radio focused open the same menu
 have no menu. The six built-ins fit one row at the usual desktop width.
 Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
-`key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
-`full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
+`key_hints`, `page_modifier`, the sidebar's `sidebar`, `review_page`, which is
+`full` (the default) or `tiles`, and `how_it_works`, which is `pages` (the
+default) or `one_page`), in the daemon’s SQLite registry, so they survive daemon restarts
 and loopback port changes. The same document carries the custom colour themes:
 `light_theme` and `dark_theme` are the ids of the themes the Light and Dark
 slots use (`theme` still picks which slot is active; any theme may sit in
@@ -1903,7 +1904,12 @@ and keep the previous choice;
 returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
-the global review settings, one per row: whether reviews run automatically,
+the global review settings in three groups, so the agent and its model are
+not read as part of what gets reviewed: **Automatic reviews** (whether, and
+for which pull requests), **Agent and model** (the agent, its model and
+effort, and its account) and **Review page** (tile reviews, and **How it
+works**: a page per section, the default, or one scrolling page; see the
+review page below). Its rows: whether reviews run automatically,
 for which pull requests (a select of authored, requested, both, all open
 pull requests in the repository, or "In my inboxes": those held by an inbox
 whose own **Review automatically** switch is on), the **Agent** (Claude Code or Codex) and the
@@ -3116,6 +3122,33 @@ builds the rail's model (the sections and the file list) from it.
   the dialog. An address that names the section, a risk or a tile of it shows
   the Overview. There is no setting: a review that stops qualifying (a second
   section, a higher risk, more lines) reads in the full layout again.
+- **How it works as one scrolling page** is the reader's choice (Settings,
+  Reviews, Review page; `how_it_works: one_page`). The default stays a page
+  per section, which suits reading with the keys; the one page suits a mouse.
+  When chosen, the pane holds one document (`review-view/how-it-works.tsx`):
+  "Where this fits", then every section in the rail's order, each drawn as
+  its own page draws it, with a rule between them.
+  - The rail is its outline. A row scrolls to its section, and the row of the
+    section being read is marked and follows the scroll (`scroll-spy.ts`: of
+    the sections whose top is in the upper third of the pane, the one nearest
+    the top; the first before any reaches it and the last at the page's end).
+    A section the reader was taken to stays marked until they scroll.
+  - The address names the section being read. A jump adds a history entry;
+    scrolling replaces the current one.
+  - j and k run on across sections. After a jump to a section (its row, or
+    Shift+J and Shift+K) the next j marks that section's first block and k
+    the block above it, whatever was marked before: the page names the part
+    with `data-review-keys-from`, which the viewer's item keys use up. h, l
+    and `]` act on the section being read.
+  - Each section keeps its own side column, which stays within its section.
+    Its fold and width are shared, so opening one opens all. A column draws
+    its code only near what is on screen, once the page rests.
+  - A section is read (its row ticked) once it was the one being read for the
+    usual time and the reader moved on.
+  - Two versions compared, a brief and a `baum.review/1` version keep their
+    pages.
+- Each part of "Where this fits" is a stop of j and k and is washed while they
+  are on it, as a section's blocks are, in both layouts.
 - **How it works** lists "Where this fits" first in the rail (the review's
   context, its files as chips, and the tiles `context` owns) and opens on the
   first real section. A file chip there opens the whole file at the review's

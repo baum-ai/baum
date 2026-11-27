@@ -167,8 +167,6 @@ function useViewTileContext(
       words.set(hunk.id, hunk.path.slice(hunk.path.lastIndexOf("/") + 1));
     return words;
   }, [snapshot]);
-  // Not the whole context, which changes with the reader's place: a tile
-  // reads only these, so moving between sections keeps them.
   const { select, hunkPatches } = place;
   return useMemo(
     () =>
@@ -188,6 +186,9 @@ function useViewTileContext(
         idPrefix: historical ? `history-v${snapshot.review.version}-` : "",
         labels,
       }) satisfies TileContext,
-    [snapshot, review, historical, select, hunkPatches, labels],
+    // Made anew whenever the place's context changes, as it always was: a
+    // custom tile's frame takes its new height (after the window is resized,
+    // say) from the update this sends it.
+    [snapshot, review, historical, select, hunkPatches, labels, place],
   );
 }
