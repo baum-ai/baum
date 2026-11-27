@@ -39,8 +39,8 @@ const STOP =
  *  viewer's parts read.
  *
  *  A brief (a small, low-risk change with one section; see `isBrief`) is the
- *  whole review on this page: under the risk come the change's own diff and
- *  what its section says, and "Where this fits" closes the page, folded. */
+ *  whole review on this page: under the risk come what its section says and
+ *  then the change's own diff, and "Where this fits" closes the page, folded. */
 export function OverviewTab({
   document,
   review,
@@ -85,9 +85,6 @@ export function OverviewTab({
       <DecisionPart review={review} listed={!brief} titleOf={titleOf} select={context.select} />
       {section ? (
         <>
-          <Part label="The change">
-            <SectionFiles document={document} files={viewFiles(review)} context={context} />
-          </Part>
           <div data-brief-section="">
             <SectionOverview
               bare
@@ -108,6 +105,9 @@ export function OverviewTab({
               onRetryDetails={historical ? undefined : context.onRetryDetails}
             />
           </div>
+          <Part label="The change">
+            <SectionFiles document={document} files={viewFiles(review)} context={context} />
+          </Part>
         </>
       ) : null}
       {videos.length > 0 ? (
