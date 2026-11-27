@@ -38,8 +38,8 @@ Several calls write it, each with its own instructions after these:
 - **One section agent per section**, at the same time as each other: the
   section's body (text blocks and where its tiles go) and its risks, and
   what each of its tiles shows.
-- **The context agent**, beside them: where the change fits in the code
-  around it.
+- **The context agent**, once the sections are written, with their text:
+  where the change fits in the code around it.
 - **One tile agent per tile**, once its section is written: the tile's
   title, caption and data.
 - **The overview**, last, by the map's agent: the summary, the verdict, why
