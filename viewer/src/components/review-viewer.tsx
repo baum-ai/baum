@@ -388,6 +388,11 @@ export type ReviewPlaces = {
    *  risk, evidence or a decision), takes the reader; null leaves it to the
    *  viewer, which opens the section. */
   jump?: (section: string, item?: string) => Selection | null;
+  /** Which of the host's selections share one pane: moving between two with
+   *  the same key keeps the pane, its scroll and its state rather than
+   *  drawing a new one at its top, for a host that draws several places on
+   *  one scrolling page. Null keeps the viewer's own key. */
+  paneKey?: (selection: Selection, context: ReviewPlaceContext) => string | null;
   /** Whether the rail starts folded to a strip for a selection, once wide. The
    *  answer is applied whenever it changes, as the reader moves between
    *  places; the reader can unfold or fold the rail in between. */
@@ -667,6 +672,25 @@ function RailBody({ fold, children }: { fold?: boolean; children: ReactNode }) {
  *  selected, so a change of selection replays the arrival and a re-render of
  *  the same selection does not. A flex column, because what it wraps is a
  *  header and a scroller that expect to be laid out by one. */
+/** The part of the window in which the reader sees the pane's place: under
+ *  the sticky bars of what scrolls it (its scroll padding, or the review's
+ *  bar where the page itself scrolls), down to that scroller's bottom. */
+function sightOf(pane: HTMLElement | null): { top: number; bottom: number } {
+  const scroller = scrollerOf(pane);
+  const page = scroller === (document.scrollingElement ?? document.documentElement);
+  const box = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+  const padding = Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
+  return { top: box.top + (padding || (page ? REVIEW_BAR_PX : 0)), bottom: box.bottom };
+}
+
+/** Whether a box has been laid out (a block's box in a test has no size). */
+const laidOut = (box: DOMRect) => box.width > 0 || box.height > 0;
+
+/** When the keys marked each block, and how long a marked block out of
+ *  sight is still taken as scrolling into it rather than left behind. */
+const markedAt = new WeakMap<Element, number>();
+const MARK_SETTLES_MS = 1500;
+
 function PaneIn({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-pane-in motion-reduce:animate-none">
@@ -1355,13 +1379,16 @@ function ReviewWorkspace<F extends ReviewFile>({
   // An item of a tile is an anchor inside its pane, and a host's view of a
   // section is a tab inside it, so moving between items or views keeps the
   // pane, its scroll, its state and the keys.
+  const hostPaneKey = hostOwned ? (places?.paneKey?.(selection, hostContext) ?? null) : null;
   const paneKey = filesSelected
     ? "files"
-    : selection.kind === "tile"
-      ? JSON.stringify({ kind: "tile", id: selection.id })
-      : selection.kind === "section"
-        ? JSON.stringify({ ...selection, view: undefined })
-        : selectionKey;
+    : hostPaneKey !== null
+      ? hostPaneKey
+      : selection.kind === "tile"
+        ? JSON.stringify({ kind: "tile", id: selection.id })
+        : selection.kind === "section"
+          ? JSON.stringify({ ...selection, view: undefined })
+          : selectionKey;
   // A new place starts at its top. The pane shares the page's scroll, so
   // one read far down would otherwise open the next part way through; the
   // page only moves when the pane's top has gone under the bar. Where the
@@ -1514,15 +1541,40 @@ function ReviewWorkspace<F extends ReviewFile>({
           block.getClientRects().length > 0 &&
           !block.querySelector('[data-review-block], [data-message="human"], [data-agent-text]'),
       );
-      const at = blocks.findIndex((block) => block.hasAttribute("data-review-block-active"));
-      if (blocks.length === 0 || (at < 0 && direction < 0)) return;
+      const marked = blocks.findIndex((block) => block.hasAttribute("data-review-block-active"));
+      if (blocks.length === 0 || (marked < 0 && direction < 0)) return;
+      // On a long place the reader may have scrolled away from the block the
+      // keys are on, or never marked one: the keys then go on from what is in
+      // sight, j to the first block that starts in it, k to the one above. A
+      // block marked a moment ago may still be on its way into sight.
+      const sight = sightOf(reviewPane.current);
+      const markedBox = marked < 0 ? null : blocks[marked]!.getBoundingClientRect();
+      const settled =
+        marked >= 0 && performance.now() - (markedAt.get(blocks[marked]!) ?? 0) > MARK_SETTLES_MS;
+      let at = marked;
+      if (
+        !markedBox ||
+        (settled &&
+          laidOut(markedBox) &&
+          (markedBox.bottom <= sight.top || markedBox.top >= sight.bottom))
+      ) {
+        const below = blocks.findIndex((block) => {
+          const box = block.getBoundingClientRect();
+          return laidOut(box) && box.top >= sight.top - 1;
+        });
+        if (markedBox || below > 0) {
+          const first = below < 0 ? blocks.length : below;
+          at = direction > 0 ? first - 1 : first;
+        }
+      }
       const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
       // A block taller than the pane (a long file's diff) is read through
       // before the keys leave it.
-      if (at >= 0 && readThrough(blocks[at]!, direction > 0, !reduced)) return;
+      if (at >= 0 && at === marked && readThrough(blocks[at]!, direction > 0, !reduced)) return;
       const target = blocks[Math.max(0, Math.min(blocks.length - 1, at + direction))]!;
       for (const block of blocks) block.removeAttribute("data-review-block-active");
       target.setAttribute("data-review-block-active", "");
+      markedAt.set(target, performance.now());
       if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
       target.focus({ preventScroll: true });
       // The first block goes back to the top, so the review's header shows.

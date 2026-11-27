@@ -4,6 +4,7 @@ import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { reviewRefs, type ReviewDocument } from "@baum/viewer/review-document";
 import { tileSourceOf, type TileContext } from "../tiles/types";
 import { CodeTab } from "./code-tab";
+import { HowItWorks } from "./how-it-works";
 import {
   listedSections,
   placeOf,
@@ -66,16 +67,17 @@ export function ViewPane({
   // A code link on the page (a hunk chip, a file in "Where this fits", a
   // diff's file name) opens the file in Files changed rather than the viewer's
   // Files pane.
+  const { select } = context;
   const reviewFiles = useMemo(
     () => ({
       has: (path: string) => files.some((each) => each.path === path),
       open: (path: string) => {
         if (!files.some((each) => each.path === path)) return false;
-        context.select(selectionOf({ tab: "code", file: path }));
+        select(selectionOf({ tab: "code", file: path }));
         return true;
       },
     }),
-    [files, context],
+    [files, select],
   );
   // A baum.review/1 version keeps its own Summary and section pages (the
   // viewer's), in this rail; the Files changed list is the same for both.
@@ -99,6 +101,21 @@ export function ViewPane({
             idPrefix={prefix}
             historical={historical}
             context={context}
+          />
+        ) : place.tab === "sections" && !context.comparing ? (
+          // How it works is one scrolling page; two versions compared keep
+          // a page per section, so the two panes stay side by side.
+          <HowItWorks
+            document={snapshot}
+            review={review}
+            list={list}
+            section={place.section}
+            item={place.item}
+            sectionView={place.view}
+            ctx={ctx}
+            idPrefix={prefix}
+            context={context}
+            historical={historical}
           />
         ) : place.tab === "sections" ? (
           <SectionsTab
@@ -147,26 +164,27 @@ function useViewTileContext(
       words.set(hunk.id, hunk.path.slice(hunk.path.lastIndexOf("/") + 1));
     return words;
   }, [snapshot]);
+  // Not the whole context, which changes with the reader's place: a tile
+  // reads only these, so moving between sections keeps them.
+  const { select, hunkPatches } = place;
   return useMemo(
     () =>
       ({
         source: tileSourceOf(snapshot, review.tiles),
         review: snapshot,
         open: (tile) =>
-          place.select(
-            sectionOfTile(review, tile) ? { kind: "tile", id: tile } : { kind: "summary" },
-          ),
+          select(sectionOfTile(review, tile) ? { kind: "tile", id: tile } : { kind: "summary" }),
         openChange: (change, item) =>
-          place.select(
+          select(
             item && review.sections.some((s) => s.risks.some((risk) => risk.id === item))
               ? { kind: "risk", section: change, id: item }
               : { kind: "section", id: change },
           ),
-        openPane: (pane) => place.select({ kind: pane }),
-        patches: place.hunkPatches,
+        openPane: (pane) => select({ kind: pane }),
+        patches: hunkPatches,
         idPrefix: historical ? `history-v${snapshot.review.version}-` : "",
         labels,
       }) satisfies TileContext,
-    [snapshot, review, historical, place, labels],
+    [snapshot, review, historical, select, hunkPatches, labels],
   );
 }

@@ -64,12 +64,15 @@ afterEach(() => {
 });
 
 let search = new URLSearchParams();
+/** How the address was last written: in place of the history entry or not. */
+let lastWrite: { replace?: boolean } | undefined;
 
 function Host({ initial = "", children }: { initial?: string; children: ReactNode }) {
   const [state, setState] = useState(() => new URLSearchParams(initial));
   search = state;
-  const update = (change: SearchUpdate) =>
+  const update = (change: SearchUpdate, options?: { replace?: boolean }) =>
     setState((value) => {
+      lastWrite = options;
       const next = change(new URLSearchParams(value));
       search = next;
       return next;
@@ -120,6 +123,10 @@ const railRow = (container: HTMLElement, name: string) =>
   railRows(container).find((each) => rowLabel(each) === name)!;
 /** The review pane's body: the place the address names. */
 const panel = (container: HTMLElement) => pane(container);
+/** On How it works, one page of every part: the part the address names,
+ *  which is the one being read. */
+const reading = (container: HTMLElement) =>
+  pane(container).querySelector<HTMLElement>("article[data-part][data-reading]")!;
 const button = (scope: HTMLElement, text: string) =>
   [...scope.querySelectorAll<HTMLButtonElement>("button")].find((each) =>
     each.textContent?.includes(text),
@@ -425,7 +432,7 @@ describe("How it works", () => {
     expect(view.querySelector('nav[aria-label="Sections"]')).toBeNull();
     expect(railRows(container).map(rowLabel)).toContain("Where this fits");
     expect(railRow(container, "What a phone can do").getAttribute("aria-pressed")).toBe("true");
-    const body = view.querySelector<HTMLElement>("article")!;
+    const body = reading(container);
     expect(body.querySelector("h2")?.textContent).toBe("What a phone can do");
     expect(body.textContent).toContain("lists 37 routes by method and exact path");
     // Its tiles, each titled, then its behaviour and its risks; its code is
@@ -457,7 +464,7 @@ describe("How it works", () => {
 
   it("draws Where this fits from the context, its files opening the Code tab", async () => {
     const container = await page("pane=section&section=context");
-    const body = panel(container).querySelector<HTMLElement>("article")!;
+    const body = reading(container);
     expect(body.querySelector("h2")?.textContent).toBe("Where this fits");
     expect(body.textContent).toContain("Phones don't get a new API.");
     expect(body.querySelector('[role="figure"] h3')?.textContent).toBe(
@@ -471,9 +478,144 @@ describe("How it works", () => {
 
   it("opens a risk's section from a link to the risk", async () => {
     const container = await page("pane=risk&risk_section=sec_allowlist&risk_id=rsk_always_allow");
-    const body = panel(container).querySelector<HTMLElement>("article")!;
+    const body = reading(container);
     expect(body.querySelector("h2")?.textContent).toBe("What a phone can do");
     expect(body.querySelector("#sec_allowlist-rsk_always_allow")).not.toBeNull();
+  });
+});
+
+describe("How it works as one page", () => {
+  /** A frame, for what waits for the next one (a jump, the spy). */
+  const frame = () =>
+    act(async () => {
+      await new Promise((done) => requestAnimationFrame(() => done(undefined)));
+    });
+  const parts = (container: HTMLElement) =>
+    [...pane(container).querySelectorAll<HTMLElement>("article[data-part]")].map(
+      (each) => each.dataset.part,
+    );
+  let scrolled: ReturnType<typeof vi.fn>;
+  let reduced: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    scrolled = vi.fn();
+    Element.prototype.scrollTo = scrolled as unknown as typeof Element.prototype.scrollTo;
+    // At once, so a jump scrolls on its frame.
+    reduced = vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes("reduce"),
+          media: query,
+          addEventListener() {},
+          removeEventListener() {},
+        }) as unknown as MediaQueryList,
+    );
+  });
+  afterEach(() => {
+    delete (Element.prototype as { scrollTo?: unknown }).scrollTo;
+    reduced.mockRestore();
+  });
+
+  it("draws Where this fits and every section in the rail's order, each with its title", async () => {
+    const container = await page("pane=section&section=sec_relay");
+    const rows = railRows(container)
+      .map(rowLabel)
+      .filter((label) => !["Overview", "How it works", "Files changed"].includes(label));
+    const articles = [...pane(container).querySelectorAll<HTMLElement>("article[data-part]")];
+    expect(articles.map((each) => each.getAttribute("aria-label"))).toEqual(rows);
+    expect(parts(container)[0]).toBe("context");
+    // Each part is drawn as its own page draws it: its title, and a section's
+    // level and views.
+    expect(articles.map((each) => each.querySelector("h2")?.textContent)).toEqual(rows);
+    const allowlist = articles.find((each) => each.dataset.part === "sec_allowlist")!;
+    expect(allowlist.querySelector('[role="tablist"][aria-label="Section views"]')).not.toBeNull();
+    // The one the address names is the one being read.
+    expect(reading(container).dataset.part).toBe("sec_relay");
+    expect(reading(container).getAttribute("aria-current")).toBe("location");
+  });
+
+  it("scrolls to a section from its rail row and the keys, keeping the page", async () => {
+    const container = await page("pane=section&section=sec_pairing");
+    const document = pane(container).querySelector("[data-how-it-works]");
+    scrolled.mockClear();
+    await click(railRow(container, "Requests"));
+    await frame();
+    // The same page, not another one in its place, scrolled to the section.
+    expect(pane(container).querySelector("[data-how-it-works]")).toBe(document);
+    expect(search.get("section")).toBe("sec_requests");
+    expect(reading(container).dataset.part).toBe("sec_requests");
+    expect(railRow(container, "Requests").getAttribute("aria-pressed")).toBe("true");
+    expect(scrolled).toHaveBeenCalled();
+    // Shift+J and Shift+K go to the next and previous section the same way.
+    scrolled.mockClear();
+    await act(async () => steps.current?.rail?.next?.go());
+    await frame();
+    expect(search.get("section")).toBe("sec_allowlist");
+    expect(pane(container).querySelector("[data-how-it-works]")).toBe(document);
+    expect(scrolled).toHaveBeenCalled();
+    // A row already being read scrolls back to its top too.
+    scrolled.mockClear();
+    await click(railRow(container, "What a phone can do"));
+    await frame();
+    expect(scrolled).toHaveBeenCalled();
+  });
+
+  it("keeps each section's view to itself, the address carrying the one read", async () => {
+    const container = await page("pane=section&section=sec_allowlist");
+    await click(viewTab(container, "Tests"));
+    expect(search.get("section_view")).toBe("tests");
+    expect(lastWrite?.replace).toBe(true);
+    const relay = pane(container).querySelector<HTMLElement>('article[data-part="sec_relay"]')!;
+    expect(
+      relay
+        .querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent?.startsWith("Overview"),
+    ).toBe(true);
+  });
+
+  it("names the section being read in the address as the page scrolls, and ticks the one left", async () => {
+    const now = vi.spyOn(Date, "now");
+    const box = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    const page_ = window.document.documentElement;
+    Object.defineProperty(page_, "scrollHeight", { configurable: true, value: 20_000 });
+    Object.defineProperty(page_, "clientHeight", { configurable: true, value: 900 });
+    let scrollTop = 0;
+    Object.defineProperty(page_, "scrollTop", { configurable: true, get: () => scrollTop });
+    let order: (string | undefined)[] = [];
+    // Each part 800 high, Pairing at the top before any scrolling.
+    box.mockImplementation(function (this: HTMLElement) {
+      const part = this.dataset.part;
+      const at = part ? (order.indexOf(part) - order.indexOf("sec_pairing")) * 800 - scrollTop : 0;
+      return { top: at, bottom: at + 800, left: 0, right: 0, height: 800, width: 0 } as DOMRect;
+    });
+    try {
+      now.mockReturnValue(1_000_000);
+      const container = await page("pane=section&section=sec_pairing");
+      order = parts(container);
+      // Landed on Pairing.
+      await frame();
+      scrolled.mockClear();
+      now.mockReturnValue(1_000_000 + READ_AFTER_MS);
+      // The reader scrolls on (by any means: nothing but the scroll says so)
+      // until the part after Pairing has just reached the top.
+      scrollTop = 820;
+      await act(async () => void window.dispatchEvent(new Event("scroll")));
+      await frame();
+      expect(search.get("section")).toBe("sec_relay");
+      // In place of the history entry, and without scrolling the page back.
+      expect(lastWrite?.replace).toBe(true);
+      expect(scrolled).not.toHaveBeenCalled();
+      expect(reading(container).dataset.part).toBe("sec_relay");
+      expect(railRow(container, "Relay connection").getAttribute("aria-pressed")).toBe("true");
+      // Pairing was read long enough and left: its row is ticked.
+      expect(railRow(container, "Pairing").querySelector("[data-rail-read]")).not.toBeNull();
+      expect(railRow(container, "Relay connection").querySelector("[data-rail-read]")).toBeNull();
+    } finally {
+      now.mockRestore();
+      box.mockRestore();
+      delete (page_ as { scrollHeight?: number }).scrollHeight;
+      delete (page_ as { clientHeight?: number }).clientHeight;
+      delete (page_ as { scrollTop?: number }).scrollTop;
+    }
   });
 });
 
@@ -528,7 +670,7 @@ describe("Where this fits with a host that reads repository files", () => {
 
   it("opens a file whole in a dialog when the section is narrow, a changed one too", async () => {
     const container = await filePage("pane=section&section=context");
-    const body = panel(container).querySelector<HTMLElement>("article")!;
+    const body = reading(container);
     expect(body.querySelector("[data-context-split]")).toBeNull();
     await click(button(body, "remote.go"));
     // Not its diff: the Code tab stays shut.
@@ -544,7 +686,7 @@ describe("Where this fits with a host that reads repository files", () => {
   it("shows the file in a column beside the context when the section is wide", async () => {
     width = 2000;
     const container = await filePage("pane=section&section=context");
-    const body = panel(container).querySelector<HTMLElement>("article")!;
+    const body = reading(container);
     // Folded at first, like a section's views.
     expect(body.querySelector("[data-context-file]")).toBeNull();
     await click(button(body, "daemon.go"));
@@ -568,15 +710,15 @@ describe("Where this fits with a host that reads repository files", () => {
 });
 
 const views = (container: HTMLElement) => [
-  ...pane(container).querySelectorAll<HTMLButtonElement>(
+  ...(reading(container) ?? pane(container)).querySelectorAll<HTMLButtonElement>(
     '[role="tablist"][aria-label="Section views"] [role="tab"]',
   ),
 ];
 const viewTab = (container: HTMLElement, label: string) =>
   views(container).find((each) => each.textContent?.startsWith(label))!;
 const viewPanel = (container: HTMLElement) =>
-  pane(container).querySelector<HTMLElement>(
-    'article [role="tabpanel"][id^="section-views-panel"]:not([hidden])',
+  reading(container).querySelector<HTMLElement>(
+    '[role="tabpanel"][id*="-views-panel-"]:not([hidden])',
   )!;
 
 /** A key pressed on `target`, as a real key reaches the page. */
@@ -1559,7 +1701,7 @@ describe("pending cards", () => {
   ];
   const withDrafts = () => review1303({ ...REVIEW_1303, drafts });
   const cards = (container: HTMLElement) =>
-    [...panel(container).querySelectorAll<HTMLElement>("[data-tile-draft]")].map(
+    [...reading(container).querySelectorAll<HTMLElement>("[data-tile-draft]")].map(
       (each) => each.dataset.tileDraft,
     );
 
@@ -1654,12 +1796,12 @@ const withBody = (): ReviewDocument => {
 describe("a section's body", () => {
   const bodyOf = async () => {
     const container = await page("pane=section&section=sec_pairing", withBody());
-    return panel(container).querySelector<HTMLElement>("[data-section-body]")!;
+    return reading(container).querySelector<HTMLElement>("[data-section-body]")!;
   };
 
   it("draws the blocks in order between the gist and the risks", async () => {
     const container = await page("pane=section&section=sec_pairing", withBody());
-    const article = panel(container).querySelector<HTMLElement>("article")!;
+    const article = reading(container);
     const body = article.querySelector<HTMLElement>("[data-section-body]")!;
     const blocks = [...body.children].map(
       (each) => (each as HTMLElement).dataset.block ?? (each as HTMLElement).dataset.tile,
@@ -1732,7 +1874,7 @@ describe("a section's body", () => {
 
   it("marks each point of a block with tones, and draws a note's kind with its icon", async () => {
     const container = await page("pane=section&section=sec_encryption");
-    const body = panel(container).querySelector<HTMLElement>("[data-section-body]")!;
+    const body = reading(container).querySelector<HTMLElement>("[data-section-body]")!;
     const rows = [...body.querySelectorAll<HTMLElement>("[data-point]")];
     expect(rows.map((row) => row.dataset.tone ?? "plain")).toEqual(["good", "bad", "muted"]);
     // Every line leads with a marker, and a toned one says what it means.
@@ -1748,7 +1890,7 @@ describe("a section's body", () => {
 
   it("draws a section's prose and points blocks", async () => {
     const container = await page("pane=section&section=sec_allowlist");
-    const body = panel(container).querySelector<HTMLElement>("[data-section-body]")!;
+    const body = reading(container).querySelector<HTMLElement>("[data-section-body]")!;
     expect(
       [...body.querySelectorAll<HTMLElement>("[data-block]")].map((each) => each.dataset.block),
     ).toEqual(["prose", "points"]);

@@ -42,6 +42,8 @@ export function SectionSplit({
   tablist,
   select,
   body,
+  keys = true,
+  draw = true,
 }: {
   overview: ReactNode;
   views: SectionViews;
@@ -49,6 +51,12 @@ export function SectionSplit({
   tablist: string;
   select: (view: SectionView) => void;
   body: (view: SideView, reveal: Reveal | null) => ReactNode;
+  /** Whether h, l and ] act on this column: on a page of several sections,
+   *  only the one being read takes them. */
+  keys?: boolean;
+  /** False while the section is far from the reader: its code waits until
+   *  it comes near. */
+  draw?: boolean;
 }) {
   const grid = useRef<HTMLDivElement>(null);
   const left = useRef<HTMLDivElement>(null);
@@ -92,17 +100,21 @@ export function SectionSplit({
   useBracketKey(() => {
     setReveal(null);
     collapse(!collapsed);
-  });
+  }, keys);
   // h and l move through the column's views, unfolding it if it was folded.
-  useSectionViewKeys((key) => {
-    if (collapsed) collapse(false);
-    const next = viewKeyStep(key, side, steppableViews(views.counts, false));
-    if (next && next !== side) {
-      setReveal(null);
-      select(next);
-    }
-    return true;
-  }, grid);
+  useSectionViewKeys(
+    (key) => {
+      if (collapsed) collapse(false);
+      const next = viewKeyStep(key, side, steppableViews(views.counts, false));
+      if (next && next !== side) {
+        setReveal(null);
+        select(next);
+      }
+      return true;
+    },
+    grid,
+    keys,
+  );
   return (
     <div
       ref={grid}
@@ -193,7 +205,7 @@ export function SectionSplit({
                     {...tabPanelProps(tablist, value, value === side)}
                     className="min-w-0"
                   >
-                    {value === side && drawn ? body(value, reveal) : null}
+                    {value === side && drawn && draw ? body(value, reveal) : null}
                   </div>
                 ),
               )}

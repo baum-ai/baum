@@ -163,11 +163,14 @@ export function SectionsTab({
   );
 }
 
-function SectionBody({
+export function SectionBody({
   document,
   review,
   section,
   asked,
+  onView,
+  keys = true,
+  near = true,
   ctx,
   idPrefix,
   drafts,
@@ -178,6 +181,14 @@ function SectionBody({
   review: ReviewV2;
   section: V2Section;
   asked?: SectionView;
+  /** Shows another of the section's views; by default through the address. */
+  onView?: (view: SectionView) => void;
+  /** Whether h, l and ] act on this section: on a page of several sections,
+   *  only on the one being read. */
+  keys?: boolean;
+  /** Whether the section is near enough to the reader for its side column's
+   *  code to be drawn. */
+  near?: boolean;
   ctx: TileContext;
   idPrefix: string;
   drafts: DraftCard[];
@@ -189,9 +200,11 @@ function SectionBody({
   const wide = useWideSection(root);
   const side = wide ? sideSectionView(asked, views.counts) : null;
   const shown = side ?? shownSectionView(asked, views.counts);
-  const tablist = `${idPrefix}section-views`;
-  const select = (next: SectionView) =>
-    context.select(selectionOf({ tab: "sections", section: section.id, view: next }));
+  const tablist = `${idPrefix}${section.id}-views`;
+  const select =
+    onView ??
+    ((next: SectionView) =>
+      context.select(selectionOf({ tab: "sections", section: section.id, view: next })));
   // Once wide the side column takes h and l itself, since it can fold.
   useSectionViewKeys(
     (key) => {
@@ -201,7 +214,7 @@ function SectionBody({
       return true;
     },
     root,
-    !side,
+    keys && !side,
   );
   const overview = (
     <SectionOverview
@@ -249,6 +262,8 @@ function SectionBody({
           tablist={tablist}
           select={select}
           body={viewBody}
+          keys={keys}
+          draw={near}
         />
       ) : (
         <>
@@ -758,8 +773,15 @@ export function WhereThisFits({
   drafts,
   pending,
   plain = false,
+  keys = true,
+  near = true,
 }: {
   plain?: boolean;
+  /** Whether ] folds its file column: on How it works as one page, only
+   *  while it is the part being read. */
+  keys?: boolean;
+  /** Whether it is near enough to the reader for its file to be read. */
+  near?: boolean;
   document: ReviewDocument;
   review: ReviewV2;
   ctx: TileContext;
@@ -779,7 +801,7 @@ export function WhereThisFits({
   const [picked, setPicked] = useState<string | null>(null);
   const [dialog, setDialog] = useState<string | null>(null);
   const shown = picked !== null && named.includes(picked) ? picked : (named[0] ?? null);
-  useBracketKey(() => store(String(!collapsed)), split);
+  useBracketKey(() => store(String(!collapsed)), split && keys);
   const open = source
     ? (path: string) => {
         if (!split) return setDialog(path);
@@ -843,6 +865,7 @@ export function WhereThisFits({
           collapse={(next) => store(String(next))}
           path={shown}
           source={source}
+          draw={near}
         >
           {body}
         </ContextFileSplit>
@@ -881,12 +904,15 @@ function ContextFileSplit({
   collapse,
   path,
   source,
+  draw,
   children,
 }: {
   collapsed: boolean;
   collapse: (next: boolean) => void;
   path: string;
   source: RepositoryFileSource;
+  /** False while far from the reader: the file is read once it comes near. */
+  draw: boolean;
   children: ReactNode;
 }) {
   const grid = useRef<HTMLDivElement>(null);
@@ -973,12 +999,14 @@ function ContextFileSplit({
               </div>
             </div>
             <div className="flex min-h-0 flex-1 flex-col pt-3">
-              <RepositoryFileView
-                key={path}
-                reference={{ path, symbol: null }}
-                source={source.source}
-                fill
-              />
+              {draw ? (
+                <RepositoryFileView
+                  key={path}
+                  reference={{ path, symbol: null }}
+                  source={source.source}
+                  fill
+                />
+              ) : null}
             </div>
           </div>
         </>

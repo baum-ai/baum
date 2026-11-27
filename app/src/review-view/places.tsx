@@ -24,6 +24,7 @@ import {
   placeOf,
   reviewOf,
   selectionOf,
+  servedReview,
   shownFile,
   viewFiles,
   type FileGrouping,
@@ -32,6 +33,7 @@ import {
   type ViewPlace,
 } from "./model";
 import { readFileGrouping } from "./file-grouping";
+import { askJump } from "./scroll-spy";
 import { ViewPane } from "./view-pane";
 
 const TAB_LABEL = {
@@ -75,6 +77,15 @@ export function useViewPlaces(): ReviewPlaces {
         if (owner && item && owner.risks.some((risk) => risk.id === item))
           return { kind: "risk", section, id: item };
         return { kind: "section", id: section };
+      },
+      // How it works is one scrolling page: moving between its sections
+      // keeps the page (and its scroll), which scrolls to the section
+      // itself. Two compared versions keep a page per section.
+      paneKey: (selection, context) => {
+        const document = context.document;
+        if (context.comparing || !document || !servedReview(document)) return null;
+        if (!["section", "risk", "changes", "tile"].includes(selection.kind)) return null;
+        return placeOf(selection, reviewOf(document)).tab === "sections" ? "how-it-works" : null;
       },
       // The side pane starts folded on the review's own places, which want
       // the width; on a session, the commits or the decisions it is as the
@@ -155,7 +166,10 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
             tint="accent"
             active={false}
             controls="review-section"
-            onSelect={go({ tab: "sections", section: first })}
+            onSelect={() => {
+              askJump(first);
+              context.select(selectionOf({ tab: "sections", section: first }));
+            }}
           />
           <SideNavNest id="review-sections">
             {list.map((section, at) => (
@@ -197,7 +211,12 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
                       .filter(Boolean)
                       .join(". ") || undefined
                   }
-                  onSelect={go({ tab: "sections", section: section.id })}
+                  onSelect={() => {
+                    // On the one page the row scrolls to its section, also
+                    // when the address already names it.
+                    askJump(section.id);
+                    context.select(selectionOf({ tab: "sections", section: section.id }));
+                  }}
                 />
               </div>
             ))}
