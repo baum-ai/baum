@@ -1,3 +1,4 @@
+import { PullRequestIssueLinks } from "./integrations";
 import { SavedStateNotice } from "./ui-state";
 import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
 import { TileCheckPage } from "./tiles/custom/check-runner";
@@ -59,7 +60,8 @@ import {
   progressParts,
   type ReloadPart,
 } from "./reload-events";
-import { queueItems, UpNextPage, useUpNext } from "./up-next";
+import { queueItems, UpNextPage, upNextKey, useUpNext } from "./up-next";
+import { usePullActivity } from "./pr-activity";
 import {
   FilterBar,
   FilterButton,
@@ -121,6 +123,7 @@ import {
   publishConsoleResync,
   sessionPanel,
   SessionPanelHost,
+  useConversations,
   useSessionPanel,
 } from "./session-panel";
 import { SampleGuard } from "./sample";
@@ -305,10 +308,12 @@ function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
           !e.metaKey &&
           !e.ctrlKey &&
           !e.shiftKey &&
-          href.startsWith(appBase())
+          (href.startsWith(appBase()) || href.startsWith("?"))
         ) {
+          // A link the viewer writes as a query of the page it is on, such
+          // as a quote's session, stays in the app too.
           e.preventDefault();
-          navigate(href);
+          navigate(href.startsWith("?") ? appURL(href) : href);
         }
       }}
     />
@@ -976,6 +981,23 @@ function Workspace({ url }: { url: UrlState }) {
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
   const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error, groups);
+  // What happened on each pull request since its page was last open, which
+  // its row counts; the page open now has read all of it.
+  const conversations = useConversations();
+  // Pull requests are counted on the pages that show them: counting compares
+  // reads, so what changes meanwhile is counted on coming back.
+  const pullPage = page === "inbox" || page === "pulls";
+  const openGroup = pullPage && groupId ? groups.find((group) => group.id === groupId) : undefined;
+  const activity = usePullActivity(
+    snapshot.entries,
+    conversations.loaded && !conversations.error ? conversations.list : null,
+    openGroup
+      ? openGroup.members.map((number) => upNextKey({ repository: openGroup.repository, number }))
+      : pullPage && selectedEntry
+        ? [upNextKey(selectedEntry.pull_request)]
+        : [],
+    pullPage && revision > 0 && !error,
+  );
   // What the sidebar highlights is the page that shows the queue, with the
   // inbox the address names, when the daemon still has it.
   const railPage: Page =
@@ -1205,9 +1227,13 @@ function Workspace({ url }: { url: UrlState }) {
   });
   // One notice for every repository GitHub could not refresh, whichever
   // refresh failed: the cause and the fix are usually the same connection.
+  // One pull request's details failing to read is not the repository failing
+  // to refresh: that read backs off on its own while the polls go on.
   const unsynced = [
     ...new Set([
-      ...background.filter((s) => s.error).map((s) => s.repository),
+      ...background
+        .filter((s) => s.error && s.error !== "metadata_unavailable")
+        .map((s) => s.repository),
       ...rates.filter((r) => r.error).map((r) => r.repository),
     ]),
   ];
@@ -1385,6 +1411,9 @@ function Workspace({ url }: { url: UrlState }) {
   useEffect(() => {
     document.title = `${windowTitle} · baum`;
   }, [windowTitle]);
+  // The prompt a link opened the session at, `&turn=<n>`.
+  const turnParam = url.search.get("turn");
+  const openTurn = turnParam && /^\d+$/.test(turnParam) ? Number(turnParam) : undefined;
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -1617,6 +1646,7 @@ function Workspace({ url }: { url: UrlState }) {
         if (backToOpener()) return;
         url.update((current) => {
           current.delete("session");
+          current.delete("turn");
           return current;
         });
       }
@@ -1805,6 +1835,7 @@ function Workspace({ url }: { url: UrlState }) {
               key={openSession}
               agent={openAgent}
               id={openID}
+              focusTurn={openTurn}
               session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
               queued={agentRequests.messages.find(
                 (m) => m.agent === openAgent && m.session_id === openID,
@@ -2002,6 +2033,7 @@ function Workspace({ url }: { url: UrlState }) {
                 ) : (
                   <LocalLink href={backTo(url.search).href}>Inbox</LocalLink>
                 )}
+                <PullRequestIssueLinks pr={selectedEntry.pull_request} />
                 <h2>Needs a local clone</h2>
                 <p>
                   Pull requests are available from GitHub. Choose a local folder before generating a
@@ -2095,6 +2127,7 @@ function Workspace({ url }: { url: UrlState }) {
                   : undefined
               }
               entries={indexedEntries}
+              activity={activity}
               Link={LocalLink}
             />
           ) : page === "pulls" ? (
@@ -2460,6 +2493,7 @@ function Workspace({ url }: { url: UrlState }) {
             page={pageContext}
             title={pageTitle}
             liveTick={liveTick}
+            conversations={conversations}
             go={navigate}
           />
         </Profiled>

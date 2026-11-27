@@ -515,6 +515,62 @@ box.append(more);
 }
 return node;
 }
+function keptWords(a,b){
+const words = (pieces) => pieces.flatMap((piece, at) => (/^\s+$/.test(piece) ? [] : [at]));
+const[wa,wb]=[words(a),words(b)];
+const lengths=Array.from({length:wa.length+1},()=>new Array(wb.length+1).fill(0));
+for(let i=wa.length-1;i>=0;i--)
+for(let j=wb.length-1;j>=0;j--)
+lengths[i][j]=
+a[wa[i]]===b[wb[j]]
+?lengths[i+1][j+1]+1
+:Math.max(lengths[i+1][j],lengths[i][j+1]);
+const keptA=new Set();
+const keptB=new Set();
+for(let i=0,j=0;i<wa.length&&j<wb.length;){
+if(a[wa[i]]===b[wb[j]]){
+keptA.add(wa[i++]);
+keptB.add(wb[j++]);
+}else if(lengths[i+1][j]>=lengths[i][j+1])i++;
+else j++;
+}
+const common=keptA.size>0&&keptA.size*2>=Math.min(wa.length,wb.length);
+return{common,keptA,keptB};
+}
+function markedText(pieces,kept,marking,tag,className){
+const node=el("span");
+const marked=(at)=>
+marking && at >= 0 && at < pieces.length && !kept.has(at) && !/^\s+$/.test(pieces[at]);
+let run=null;
+for(const[at,text]of pieces.entries()){
+if(marked(at)||(marked(at-1)&&marked(at+1))){
+if(!run){
+run=el(tag,className);
+node.append(run);
+}
+run.append(text);
+}else{
+run=null;
+node.append(text);
+}
+}
+return node;
+}
+function compare(was,now){
+const before=str(was);
+const after=str(now);
+const split = (text) => text.match(/\s+|\S+/g) ?? [];
+const[a,b]=[split(before),split(after)];
+const{common,keptA,keptB}=
+a.length*b.length<=40000?keptWords(a,b):{common:false,keptA:new Set(),keptB:new Set()};
+const same=before===after;
+const marking=common&&!same&&before!==""&&after!=="";
+return{
+was:markedText(a,keptA,marking,"del","kit-del"),
+now:markedText(b,keptB,marking,"ins","kit-ins"),
+same,
+};
+}
 function empty(text){
 state.emptyUsed=true;
 const node=el("p","kit-empty",typeof text==="string"&&text?text:"Nothing to show.");
@@ -1175,6 +1231,23 @@ overflow_y:state.face==="glance"&&root.scrollHeight>root.clientHeight+2,
 render_ms:state.renderMS,
 };
 }
+function disclosuresOf(root){
+return[...root.querySelectorAll("details")].map((node)=>({
+label:summaryText(node),
+open:node.open,
+}));
+}
+function summaryText(node){
+const summary=node.querySelector(":scope > summary");
+return summary?summary.textContent.trim():"";
+}
+function keepDisclosures(root,before){
+const after=root.querySelectorAll("details");
+for(let i=0;i<after.length&&i<before.length;i++){
+const node=after[i];
+if(summaryText(node)===before[i].label&&node.open!==before[i].open)node.open=before[i].open;
+}
+}
 async function render(){
 const seq=++renderSeq;
 const began=performance.now();
@@ -1182,6 +1255,7 @@ Object.assign(state,{emptyUsed:false,failed:false,unresolved:new Set()});
 const root=el("div");
 root.id="baum-root";
 const old=docCall("getElementById","baum-root");
+const disclosures=old?disclosuresOf(old):null;
 if(old)old.replaceWith(root);
 else docGet("body").prepend(root);
 const draw=spec[state.face];
@@ -1211,6 +1285,7 @@ if(seq!==renderSeq)return;
 if(result!==root&&!(result instanceof Node&&result.parentNode===root)){
 insert(root,null,result,0);
 }
+if(disclosures)keepDisclosures(root,disclosures);
 state.renderMS=Math.round(performance.now()-began);
 }catch(error){
 if(seq===renderSeq)report("script_error",describeError(error),stackPosition(error));
@@ -1292,6 +1367,7 @@ html:Object.freeze(html),
 cite,
 diff,
 md,
+compare,
 empty,
 fail,
 refs:Object.freeze({

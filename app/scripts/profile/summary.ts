@@ -13,6 +13,15 @@ export type Run = {
    *  in a unit of its own (`_count`, `_bytes`, `_px`). */
   metrics: Record<string, number>;
   snapshot: Snapshot;
+  /** In a comparison (--baseline): which side ran it, and its place in the
+   *  order both sides' runs took, from 0. */
+  side?: "base" | "head";
+  order?: number;
+  /** What the machine was doing: the 1-minute load average as the run
+   *  began, the milliseconds it waited for its instance to go quiet first,
+   *  and the CPU its container used during it. */
+  /** web_memory: MiB the WebKit page process held before the run. */
+  conditions?: { load: number; settle: number; cpu?: number; web_memory?: number };
 };
 
 export type Chunk = {
@@ -35,6 +44,8 @@ export type Profile = {
   warmup: Run;
   runs: Run[];
   chunks: Chunk[];
+  /** In a comparison (--baseline), the side this profile is. */
+  side?: "base" | "head";
 };
 
 export type Stats = { n: number; median: number; p95: number; min: number; max: number };

@@ -23,6 +23,8 @@ export function sessionsSlot(
     renderSession?: (session: SessionView, focusTurn?: number) => ReactNode;
     hosted?: HostSessionView[];
     empty?: ReactNode;
+    /** Opens a session on the host's own page instead of in the pane. */
+    open?: ReviewListSlot["open"];
   } = {},
 ): ReviewListSlot {
   const hosted = options.hosted ?? [];
@@ -46,6 +48,7 @@ export function sessionsSlot(
           }
         : { status: state.status },
     indicator: groupIndicator,
+    open: options.open,
     renderPane: (selected, actions, focusTurn) => (
       <SessionList
         state={state}

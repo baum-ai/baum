@@ -41,6 +41,8 @@ import {
   SessionWhere,
 } from "./sessions";
 import { PageBar, pageScroll } from "./shell";
+import { startConversation } from "./console-api";
+import { useToast } from "./toast";
 
 /** How often an open transcript is read again without a `live` event: a
  *  transcript grows between hook events (the agent's replies are written
@@ -132,7 +134,7 @@ export type LiveTranscriptState =
   | { kind: "unavailable"; message: string }
   | { kind: "failed"; message: string };
 
-const transcriptPath = (agent: string, id: string, version: string | null) =>
+export const transcriptPath = (agent: string, id: string, version: string | null) =>
   `api/live-sessions/${encodeURIComponent(agent)}/${encodeURIComponent(id)}/transcript${
     version ? `?version=${encodeURIComponent(version)}` : ""
   }`;
@@ -252,21 +254,50 @@ function atBottom() {
  *  `version` keeps them there; once they scroll up, their place is kept.
  *  `follow` is where a reader starts: at the end, on the latest turn, unless
  *  it is false. The reader's position counts only once the first version is
- *  shown, since the page around a loading transcript scrolls by itself. */
+ *  shown, since the page around a loading transcript scrolls by itself.
+ *  What grows after a version is shown, on its own (a reply measured and
+ *  folded), keeps a reader at the
+ *  end too, until the reader clicks or types: what they open grows the page
+ *  where they are reading. */
 export function useFollowScroll(version: string | undefined, follow = true) {
   const pinned = useRef(follow);
   const shown = useRef(false);
+  const growing = useRef(false);
+  const grown = useRef<ResizeObserver | undefined>(undefined);
   useEffect(() => {
     const onScroll = () => {
       if (shown.current) pinned.current = atBottom();
     };
+    const onInput = () => {
+      growing.current = false;
+    };
     // Captured: the panel's scroll does not bubble.
     addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => removeEventListener("scroll", onScroll, { capture: true });
+    addEventListener("pointerdown", onInput, { capture: true, passive: true });
+    addEventListener("keydown", onInput, { capture: true, passive: true });
+    // Growing scrolls nothing, so it is watched: before the frame is drawn.
+    grown.current =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(() => {
+            if (!growing.current || !pinned.current) return;
+            const page = pageScroll();
+            if (page.top + page.view < page.height) page.to(page.height);
+          });
+    return () => {
+      removeEventListener("scroll", onScroll, { capture: true });
+      removeEventListener("pointerdown", onInput, { capture: true });
+      removeEventListener("keydown", onInput, { capture: true });
+      grown.current?.disconnect();
+    };
   }, []);
   useLayoutEffect(() => {
     if (!version) return;
     shown.current = true;
+    growing.current = true;
+    // What the page holds now: a transcript replaces its loader.
+    const main = document.querySelector<HTMLElement>(".local-main");
+    for (const child of (main ?? document.body).children) grown.current?.observe(child);
     if (pinned.current) {
       const page = pageScroll();
       page.to(page.height);
@@ -291,12 +322,25 @@ export function useMessageKeys(
   top: RefObject<HTMLElement | null>,
 ) {
   const current = useRef<HTMLElement | null>(null);
+  // Where the last j or k is scrolling the page to, and how far it still
+  // is: until the page gets there, the marked message counts as shown, so
+  // the next press goes on from it rather than from what the scroll has not
+  // reached yet. Arriving, or a scroll away from it (the reader's own, or
+  // the page stopping short at its end), forgets it.
+  const aim = useRef<{ to: number; left: number } | null>(null);
   const [reading, setReading] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const mark = (target: HTMLElement) => {
+      if (target !== current.current) aim.current = null;
       current.current?.classList.remove("local-message-current");
       target.classList.add("local-message-current");
       current.current = target;
+    };
+    const onScroll = () => {
+      const scroll = aim.current;
+      if (!scroll) return;
+      const left = Math.abs(pageScroll().top - scroll.to);
+      aim.current = left <= 1 || left > scroll.left + 1 ? null : { to: scroll.to, left };
     };
     const onKey = (event: KeyboardEvent) => {
       if (!["j", "k", " ", "Enter"].includes(event.key)) return;
@@ -307,8 +351,9 @@ export function useMessageKeys(
       const marked = current.current;
       const shown =
         marked?.isConnected &&
-        marked.getBoundingClientRect().bottom > edge &&
-        marked.getBoundingClientRect().top < innerHeight;
+        (aim.current !== null ||
+          (marked.getBoundingClientRect().bottom > edge &&
+            marked.getBoundingClientRect().top < innerHeight));
       const at = shown ? messages.indexOf(marked) : -1;
       if (event.key === " " || event.key === "Enter") {
         const target =
@@ -341,10 +386,17 @@ export function useMessageKeys(
       mark(target);
       const reduced = matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       const page = pageScroll();
-      page.to(page.top + target.getBoundingClientRect().top - edge, reduced ? "instant" : "smooth");
+      const to = page.top + target.getBoundingClientRect().top - edge;
+      aim.current = { to, left: Math.abs(page.top - to) };
+      page.to(to, reduced ? "instant" : "smooth");
     };
     addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
+    // Captured: the panel's scroll does not bubble.
+    addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      removeEventListener("keydown", onKey);
+      removeEventListener("scroll", onScroll, { capture: true });
+    };
   }, [body, top]);
   const close = useCallback(() => setReading(null), []);
   return { reading, close };
@@ -439,9 +491,12 @@ export function SessionTranscriptPage({
   prHref,
   Link,
   openInPanel,
+  focusTurn,
 }: {
   agent: string;
   id: string;
+  /** The turn whose prompt is marked and scrolled into view. */
+  focusTurn?: number;
   session: LiveSession | null;
   /** The message queued for the session's next stop, if any. */
   queued?: AgentMessage;
@@ -474,7 +529,8 @@ export function SessionTranscriptPage({
   useEffect(() => {
     pageScroll().to(0);
   }, [agent, id]);
-  useFollowScroll(state.kind === "ready" ? state.version : undefined);
+  // Opened at a prompt, it stays there rather than at the end.
+  useFollowScroll(state.kind === "ready" ? state.version : undefined, focusTurn == null);
   const top = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const { reading, close } = useMessageKeys(body, top);
@@ -496,8 +552,10 @@ export function SessionTranscriptPage({
                   Open in panel
                 </Button>
               ) : null
-            ) : session ? (
+            ) : session && session.state !== "ended" ? (
               <FocusSession session={session} hotkey />
+            ) : openInPanel && (agent === "claude-code" || agent === "codex") ? (
+              <ContinueSession agent={agent} id={id} openInPanel={openInPanel} />
             ) : null
           }
         />
@@ -532,11 +590,47 @@ export function SessionTranscriptPage({
           retry={retry}
           live={session !== null && session.state !== "ended"}
           title={session?.title}
+          focusTurn={focusTurn}
         />
       </div>
       {session ? <SessionReplyBar session={session} queued={queued} /> : null}
       {reading ? <MessageReader message={reading} onClose={close} /> : null}
     </>
+  );
+}
+
+/** Continues a session that ended, such as one from the person's terminal,
+ *  in the session panel: a conversation resumes it in the directory it
+ *  worked in, and the panel opens on it. */
+function ContinueSession({
+  agent,
+  id,
+  openInPanel,
+}: {
+  agent: "claude-code" | "codex";
+  id: string;
+  openInPanel: (conversation: string) => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const resume = async () => {
+    setBusy(true);
+    try {
+      openInPanel((await startConversation({ agent, resume: id })).id);
+    } catch (error) {
+      toast({
+        title: "The session could not be continued",
+        detail: error instanceof LocalRequestError ? error.message : undefined,
+        error: true,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button size="compact" disabled={busy} onClick={() => void resume()}>
+      Continue in panel
+    </Button>
   );
 }
 
@@ -547,9 +641,11 @@ const TranscriptBody = memo(function TranscriptBody({
   retry,
   live,
   title,
+  focusTurn,
 }: {
   state: LiveTranscriptState;
   retry: () => void;
+  focusTurn?: number;
   /** The session still runs, so it has no outcome yet. */
   live: boolean;
   /** The listed session's title, for a transcript that holds none, such as
@@ -576,45 +672,10 @@ const TranscriptBody = memo(function TranscriptBody({
       summary={state.summary}
       live={live}
       title={title}
+      focusTurn={focusTurn}
     />
   );
 });
-
-/** A listed session's transcript inside the PR page's Sessions pane, read
- *  through the daemon's live record as the Sessions page reads it, and
- *  reread while the session runs. */
-export function EmbeddedLiveTranscript({ session }: { session: LiveSession }) {
-  const poll =
-    session.state === "running" ? POLL_RUNNING : session.state === "idle" ? POLL_IDLE : null;
-  // The session's record changing (a new event, or its end) reads the
-  // transcript again, as the app's live events do for the Sessions page:
-  // polling stops once it ends, and its last turn must still be read.
-  const signal = `${session.state}\n${session.last_activity_at}\n${session.last_event}`;
-  const [seen, setSeen] = useState({ signal, tick: 0 });
-  if (seen.signal !== signal) setSeen({ signal, tick: seen.tick + 1 });
-  const { state, retry } = useLiveTranscript(session.agent, session.session_id, {
-    tick: seen.tick,
-    poll,
-  });
-  switch (state.kind) {
-    case "loading":
-      return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
-    case "unavailable":
-      return <p className="local-transcript-note">{state.message}</p>;
-    case "failed":
-      return <ReadFailed what="the transcript" message={state.message} retry={retry} />;
-  }
-  return (
-    <TranscriptCard
-      transcript={state.transcript}
-      version={state.version}
-      summary={state.summary}
-      live={session.state !== "ended"}
-      title={session.title}
-      embedded
-    />
-  );
-}
 
 /** The transcript's loader, answering from the transcript shown. */
 function useLocalSource(transcript: LocalTranscript, version: string | undefined) {
@@ -658,9 +719,12 @@ export function TranscriptReader({
   live,
   title,
   openLastReply = false,
+  focusTurn,
 }: {
   transcript: LocalTranscript;
   version: string;
+  /** The turn whose prompt is marked and scrolled into view. */
+  focusTurn?: number;
   summary?: string;
   live: boolean;
   title?: string;
@@ -679,6 +743,7 @@ export function TranscriptReader({
           source={source}
           layout="log"
           openLastReply={openLastReply}
+          focusTurn={focusTurn}
         />
       ) : (
         <p className="local-transcript-note">

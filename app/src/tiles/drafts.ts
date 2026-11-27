@@ -11,6 +11,9 @@ export type DraftCard = {
   reason?: string;
 };
 
+/** The Overview tab, where a card naming no section stands. */
+const OVERVIEW = "overview";
+
 const PHASES = new Set(["writing", "checking", "failed", "unfinished"]);
 
 /** The tile route's pending cards; a card that is not well formed is left
@@ -47,17 +50,17 @@ export function draftLine(draft: DraftCard): string {
   }
 }
 
-/** The pending cards on a section, in the route's order: a card stands on the
- *  section it names, and one naming a section the page does not list on the
- *  first section listed. */
+/** The pending cards on a section (or `overview`, the Overview tab), in the
+ *  route's order: a card stands on the section it names, one naming none or
+ *  the overview on the Overview, and one naming a section the page does not
+ *  list on the first section listed. */
 export function draftsOn(
   drafts: readonly DraftCard[],
   section: string,
   listed: readonly string[],
 ): DraftCard[] {
-  return drafts.filter((draft) =>
-    draft.section && listed.includes(draft.section)
-      ? draft.section === section
-      : section === listed[0],
-  );
+  return drafts.filter((draft) => {
+    if (!draft.section || draft.section === OVERVIEW) return section === OVERVIEW;
+    return listed.includes(draft.section) ? draft.section === section : section === listed[0];
+  });
 }

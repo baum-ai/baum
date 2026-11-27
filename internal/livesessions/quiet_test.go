@@ -290,3 +290,44 @@ func TestACodexPromptTheAppFramedOnceIsTheUsersText(t *testing.T) {
 		t.Fatalf("activity %+v", a)
 	}
 }
+
+func TestAQuestionTurnedDownOutsideBaumEndsTheWait(t *testing.T) {
+	f := newTranscriptFixture(t)
+	stamp := func(at time.Time) string { return at.Format("2006-01-02T15:04:05.000Z") }
+	f.clock.advance(time.Minute)
+	asked := f.clock.now
+	appendLines(t, f.path, toolUse(stamp(asked), "AskUserQuestion", `{"questions":[]}`))
+	wait := notification("s1", "permission_prompt", "Claude needs your permission to use AskUserQuestion", asked)
+	wait.Session.TranscriptPath = f.path
+	apply(f.tracker, wait)
+	if s := served(t, f)["claude-code/s1"]; s.WaitingReason != WaitPermission {
+		t.Fatalf("while asking: %+v", s)
+	}
+	// Turned down in the terminal or the Claude app: Claude Code notes it in
+	// the transcript and sends no hook event.
+	f.clock.advance(30 * time.Second)
+	denied := f.clock.now
+	appendLines(t, f.path,
+		`{"type":"user","timestamp":"`+stamp(denied)+`","sessionId":"s1","message":{"role":"user","content":[{"tool_use_id":"t","type":"tool_result","content":"Denied by user","is_error":true}]}}`,
+		`{"type":"user","timestamp":"`+stamp(denied)+`","sessionId":"s1","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}`,
+	)
+	f.clock.advance(TitleRecheckEvery)
+	s := served(t, f)["claude-code/s1"]
+	if s.WaitingReason != WaitTurnFinished || !s.WaitingSince.Equal(denied) || s.WaitingMessage != "" {
+		t.Fatalf("after the denial: %+v", s)
+	}
+	// The tracker holds it too, so the tray and announcements agree.
+	if got, _, _ := f.tracker.Lookup("claude-code", "s1"); got.WaitingReason != WaitTurnFinished {
+		t.Fatalf("tracked: %+v", got)
+	}
+
+	// An interruption older than a new question leaves that question waiting.
+	f.clock.advance(time.Minute)
+	again := notification("s1", "permission_prompt", "Claude needs your permission to use Bash", f.clock.now)
+	again.Session.TranscriptPath = f.path
+	apply(f.tracker, again)
+	f.clock.advance(TitleRecheckEvery)
+	if s := served(t, f)["claude-code/s1"]; s.WaitingReason != WaitPermission {
+		t.Fatalf("a newer question: %+v", s)
+	}
+}

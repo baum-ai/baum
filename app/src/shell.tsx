@@ -25,6 +25,7 @@ import { useMedia } from "./media";
 import { usePreferences, type SidebarChoice } from "./preferences";
 import { NineDots } from "./nine-dots";
 import { SessionPanelButton } from "./session-panel";
+import { useTopLayer } from "./top-layer";
 import {
   pageKeyLabel,
   pageKeyShortcut,
@@ -547,6 +548,7 @@ function InboxRows({
     if (restoreFocus) more()?.focus();
     setOpen(null);
   };
+  useTopLayer(popup, open);
   // The menu is placed against the window, under its row or above it when
   // the row is near the bottom, so the sidebar's scrolling list cannot clip it.
   useLayoutEffect(() => {

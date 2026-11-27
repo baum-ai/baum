@@ -46,6 +46,7 @@ import {
 import { SHELL } from "./declaration.ts";
 import { developmentDir, frontend, isSetupPage, setupPage } from "./development.ts";
 import { EventStreamReader } from "./events.ts";
+import { forward, forwardedArgs } from "./forward-cli.ts";
 import {
   claimSingleInstance,
   hideOnClose,
@@ -73,9 +74,9 @@ import { createPanel, type PanelWindow, registerPanel } from "./panel-electron.t
 import { configDir, IDENTIFIER, localDataDir, sessionDataDir } from "./paths.ts";
 import { registerAppScheme, serveAppScheme } from "./protocol.ts";
 import { Quitter, STOP_TIMEOUT } from "./quit.ts";
-import type { AppProcess } from "./run-baum.ts";
+import { type AppProcess, dropForeignMounts, inForeignMount } from "./run-baum.ts";
 import { FILE as DESKTOP_JSON } from "./settings.ts";
-import { registerThemeCommands, ThemeStore, themeBootstrap } from "./theme.ts";
+import { registerThemeCommands, ThemeStore, themeBootstrap, windowBackground } from "./theme.ts";
 import { registerTileFileCommands } from "./tile-files.ts";
 import { closeAction, type TrayController } from "./tray.ts";
 import { startTray } from "./tray-electron.ts";
@@ -117,6 +118,11 @@ const thisApp: AppProcess = {
   env: process.env,
   execPath: process.execPath,
 };
+// Before anything runs a child: an AppImage started by another (the Tauri
+// app's updater starting this one) inherits its mount on the PATH and in its
+// working directory.
+const foreignVariables = dropForeignMounts(thisApp);
+if (inForeignMount(thisApp, process.cwd())) process.chdir(homedir());
 /** Where the stable copy of baum and the menu entry's icon go. */
 const LOCAL_DATA_DIR = localDataDir(platform);
 let main: BrowserWindow | null = null;
@@ -228,7 +234,8 @@ function showSetup(): void {
   main.loadURL(setupUrl()).catch((e) => log(`cannot show setup: ${errorMessage(e)}`));
 }
 
-/** The origins whose pages may ask for notifications and clipboard writes. */
+/** The origins whose pages may ask for notifications, clipboard writes and
+ *  full screen. */
 function isAppOrigin(origin: string): boolean {
   return (
     origin === BUNDLED_ORIGIN ||
@@ -268,6 +275,9 @@ async function confirm(title: string, text: string, yes: string): Promise<boolea
 }
 
 function start(): void {
+  if (foreignVariables.length > 0) {
+    log(`dropped another AppImage's mount from ${foreignVariables.join(", ")}`);
+  }
   serveAppScheme(protocol, join(app.getAppPath(), "dist"), () => setup.isOpen());
   guardPermissions(session.defaultSession, isAppOrigin);
   guardFrameRequests(session.defaultSession);
@@ -357,7 +367,15 @@ function start(): void {
       if (window instanceof BrowserWindow) applyZoom(window.webContents, level);
     },
   });
-  const themes = new ThemeStore(desktopJson);
+  // The main window's background follows the theme its screens paint, so a
+  // dark theme opens and navigates without a white flash.
+  const background = () =>
+    windowBackground(themeBootstrap(themes.get(), nativeTheme.shouldUseDarkColors));
+  const repaintBackground = () => {
+    if (main && !main.isDestroyed()) main.setBackgroundColor(background());
+  };
+  const themes = new ThemeStore(desktopJson, repaintBackground);
+  nativeTheme.on("updated", repaintBackground);
   registerThemeCommands(themes);
   ipcMain.on(THEME_CHANNEL, (event) => {
     event.returnValue =
@@ -493,6 +511,10 @@ function start(): void {
   // copy of baum where it keeps one (refreshed from the bundled one first).
   const page = setup.start();
   if (setup.managedCopy() !== null) cli.stable = async () => setup.cliPath();
+  // macOS: the command links the Tauri app made name this app's executable;
+  // those the user can write are moved now, before anything runs baum, and
+  // one in a system directory after the password prompt.
+  void setup.moveTauriLinks();
   const url = page === onboarding.SETUP_PAGE ? setupUrl() : bundledUrl(`/${page}`);
 
   main = new BrowserWindow({
@@ -502,6 +524,7 @@ function start(): void {
     minWidth: 720,
     minHeight: 480,
     show: !hidden,
+    backgroundColor: background(),
     webPreferences: securePreferences(join(__dirname, "preload.cjs"), SHELL),
   });
   const window = main;
@@ -610,7 +633,12 @@ function screenshots(window: BrowserWindow): void {
   });
 }
 
-if (!claimSingleInstance(app, () => main, nativeUpdater)) {
+// Started as baum (the Tauri app's path of it, see forward-cli.ts): run the
+// bundled baum instead, before claiming the single instance.
+const forwarded = forwardedArgs(process.argv, process.platform, app.isPackaged);
+if (forwarded !== null) {
+  forward(cli.bundled, forwarded, (code) => app.exit(code), log);
+} else if (!claimSingleInstance(app, () => main, nativeUpdater)) {
   // Another instance runs: it shows its window, and this one quits.
   app.quit();
 } else {

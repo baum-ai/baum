@@ -17,7 +17,10 @@ import { Badge, Button, CloseButton, LiveDot, SegmentedControl } from "@baum/vie
 import { cn } from "@baum/viewer/components/classnames";
 import { agentName, homePath, LocalRequestError } from "./api";
 import {
+  archiveConversation,
   closeConversation,
+  uncleanDirectory,
+  type UncleanDirectory,
   confirmProposal,
   dismissProposal,
   listConversations,
@@ -26,6 +29,8 @@ import {
   readPanelSettings,
   reportPage,
   saveProposal,
+  removeQueued,
+  sendQueued,
   sendTurn,
   sessionOf,
   startConversation,
@@ -38,6 +43,7 @@ import {
   type PanelSettings,
   type Progress,
   type Proposal,
+  type QueuedMessage,
   type SummaryField,
   type ThemeSave,
 } from "./console-api";
@@ -180,9 +186,35 @@ export function usePageReport(context: PageContext, enabled: boolean) {
   }, [key, enabled, epoch]);
 }
 
+/** What a refused archive would lose, in words for the person to weigh. */
+export function uncleanText(unclean: UncleanDirectory): string {
+  const held: string[] = [];
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  if (unclean.changed > 0)
+    held.push(
+      unclean.worktree
+        ? count(unclean.changed, "uncommitted change", "uncommitted changes")
+        : count(unclean.changed, "file", "files"),
+    );
+  if (unclean.unpushed)
+    held.push(
+      `${count(unclean.unpushed, "commit", "commits")} on ${unclean.branch ?? "its branch"} that no remote has`,
+    );
+  if (unclean.detached) held.push(`${count(unclean.detached, "commit", "commits")} on no branch`);
+  if (unclean.unreadable) held.push(`work that could not be checked (${unclean.unreadable})`);
+  const where = unclean.worktree ? "worktree" : "directory";
+  let text = `Archiving removes this session's ${where}, which holds ${held.join(" and ")}.`;
+  const named = (unclean.paths ?? []).slice(0, 5);
+  if (named.length > 0) {
+    const rest = unclean.changed - named.length;
+    text += ` ${named.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}.`;
+  }
+  return `${text} It cannot be brought back.`;
+}
+
 /** The daemon's conversations, newest first, and whether it runs the panel
  *  at all; read when the app starts and again on each change. */
-function useConversations() {
+export function useConversations() {
   const [list, setList] = useState<ConversationSummary[]>([]);
   const [error, setError] = useState("");
   // Whether a read answered, or failed, at least once.
@@ -191,7 +223,9 @@ function useConversations() {
     try {
       const answer = await listConversations();
       sessionPanel.setAvailable(answer !== null);
-      setList(answer ?? []);
+      const next = answer ?? [];
+      // An unchanged list keeps its value, so nothing renders again for it.
+      setList((list) => (JSON.stringify(list) === JSON.stringify(next) ? list : next));
       setError("");
     } catch (e) {
       // A daemon too old for the panel answers 404: it has none.
@@ -352,18 +386,22 @@ export function SessionPanelHost({
   page,
   title,
   liveTick,
+  conversations,
   go,
 }: {
   page: PageContext;
   title?: string;
   liveTick: number;
+  /** The daemon's conversations (`useConversations`), which the app reads
+   *  once for the panel and for what each pull request's rows count. */
+  conversations: ReturnType<typeof useConversations>;
   /** Goes to a page of the app, as its links do. */
   go: (href: string) => void;
 }) {
   const panel = useSessionPanel();
-  const conversations = useConversations();
   const settings = usePanelSettings();
   usePageReport(page, panel.available !== false);
+  useKeysStayOnReturn();
   // The panel's key works anywhere, a text field included, so it is not one
   // of the page's keys (`useShortcuts`): from the composer it hides the
   // panel, from anywhere else it shows the panel, or puts the keys in the
@@ -404,6 +442,77 @@ export function SessionPanelHost({
       go={go}
     />
   );
+}
+
+/** Keys that only modify another, as a window manager's shortcut back to the
+ *  app may leave held. */
+const MODIFIER_ONLY = new Set([
+  "Control",
+  "Shift",
+  "Alt",
+  "Meta",
+  "OS",
+  "Super",
+  "Hyper",
+  "AltGraph",
+]);
+
+/** Going back to the app leaves the keys where they were: the session panel
+ *  does not take them unless it had them when the window lost them. The
+ *  window may put them back somewhere else (Electron restores the webview's
+ *  focus as it is activated), so until the person clicks or presses a key in
+ *  the window, the panel taking the keys gives them back to what had them,
+ *  or to the page. */
+function useKeysStayOnReturn() {
+  useEffect(() => {
+    const inPanel = (element: Element | null) => !!element?.closest(".session-panel");
+    // What had the keys as the window lost them, and whether the panel is
+    // to be kept from taking them.
+    let before: Element | null = null;
+    let guarded = false;
+    const away = () => {
+      before = document.activeElement;
+      // A tile's frame taking the keys blurs the window too, but the window
+      // still has them.
+      guarded = !inPanel(before) && !(before instanceof HTMLIFrameElement);
+    };
+    const settle = () => {
+      if (!guarded) return;
+      const focused = document.activeElement;
+      if (!(focused instanceof HTMLElement) || !inPanel(focused)) return;
+      focused.blur();
+      if (before instanceof HTMLElement && before.isConnected && !inPanel(before))
+        before.focus({ preventScroll: true });
+    };
+    // The window's activation may land after its `focus` event.
+    let frame = 0;
+    const back = () => {
+      settle();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(settle);
+    };
+    const onFocusIn = () => queueMicrotask(settle);
+    // The person's own click or key decides where the keys go.
+    const done = () => {
+      guarded = false;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!MODIFIER_ONLY.has(event.key)) done();
+    };
+    addEventListener("blur", away);
+    addEventListener("focus", back);
+    document.addEventListener("focusin", onFocusIn, true);
+    addEventListener("pointerdown", done, true);
+    addEventListener("keydown", onKeyDown, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      removeEventListener("blur", away);
+      removeEventListener("focus", back);
+      document.removeEventListener("focusin", onFocusIn, true);
+      removeEventListener("pointerdown", done, true);
+      removeEventListener("keydown", onKeyDown, true);
+    };
+  }, []);
 }
 
 /** The panel's composer, where its key hides the panel. */
@@ -459,6 +568,9 @@ function SessionPanel({
   const position = (chosen === "left" || chosen === "right") && !sideFits ? "bottom" : chosen;
   const side = position === "left" || position === "right";
   const id = panel.conversation;
+  // The session shown when a close or archive answers, which may be another.
+  const shownId = useRef(id);
+  shownId.current = id;
   const { conversation, error: readError, update } = useConversation(id);
   const { proposals, read: readProposals } = useProposals(id);
   const [mode, setMode] = useState<PanelMode | null>(null);
@@ -494,6 +606,32 @@ function SessionPanel({
   useLayoutEffect(() => {
     composer.current?.focus({ preventScroll: true });
   }, [panel.focus]);
+  // The composer grows with its text up to its CSS max-height, then scrolls.
+  // WebKit, the desktop app's webview, ignores `field-sizing: content`. Its
+  // text re-wraps when the panel's width changes, so that measures it too.
+  const fitComposer = () => {
+    const box = composer.current;
+    if (!box) return;
+    // Measured without a scrollbar, which would narrow it and wrap more.
+    box.style.overflow = "hidden";
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
+    box.style.overflow = "";
+  };
+  useLayoutEffect(fitComposer, [panel.draft]);
+  useEffect(() => {
+    const box = composer.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    // Its first call fits it too: a remounted composer keeps its draft.
+    let width = -1;
+    const observer = new ResizeObserver(() => {
+      if (box.clientWidth === width) return;
+      width = box.clientWidth;
+      fitComposer();
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [panel.available]);
   // Hidden while the keys were in it, they go back to what had them before
   // it opened, or to the page.
   // Measured as it unmounts, before its elements leave the page and the focus
@@ -587,23 +725,58 @@ function SessionPanel({
   // The model the session runs, once its transcript names it.
   const [usedModel, setUsedModel] = useState("");
   useEffect(() => setUsedModel(""), [id]);
-  const [closing, setClosing] = useState(false);
+  // A close or archive that asks first: of a session whose agent works, or
+  // an archive that would lose the work in its directory.
+  const [asking, setAsking] = useState<
+    | { kind: "close" | "archive"; session: ConversationSummary }
+    | { kind: "discard"; session: ConversationSummary; unclean: UncleanDirectory }
+    | null
+  >(null);
   const latestPage = useRef(page);
   latestPage.current = page;
 
+  const queued = (!closed && conversation?.queued) || [];
+  const [queueing, setQueueing] = useState<string | null>(null);
+  const queue = async (target: string, text: string) => {
+    setQueueing("message");
+    setSendError("");
+    sessionPanel.setDraft("");
+    try {
+      update(await sendTurn(target, text, latestPage.current));
+    } catch (e) {
+      if (!sessionPanel.draft()) sessionPanel.setDraft(text);
+      setSendError(sendErrorText(e));
+    } finally {
+      setQueueing(null);
+    }
+  };
+  const changeQueue = async (change: () => Promise<Conversation>, what: string) => {
+    setQueueing(what);
+    setSendError("");
+    try {
+      update(await change());
+    } catch (e) {
+      // Send now's prompt went nowhere.
+      if (what === "send") setTurn(null);
+      setSendError(sendErrorText(e));
+    } finally {
+      setQueueing(null);
+    }
+  };
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     const text = panel.draft.trim();
-    if (!text || sending || !available) return;
-    // A message while the agent answers waits in the composer.
-    if (running) {
-      setSendError("The agent is still answering: wait for the turn to finish, or Stop it.");
+    if (!text || sending || queueing || !available) return;
+    // A message while the agent answers is queued for when it finishes.
+    if (running && id) {
+      await queue(id, text);
       return;
     }
-    // Shown at once: the prompt, the composer emptied and the button working.
+    // Shown at once: the prompt (after the messages still queued, which go
+    // first), the composer emptied and the button working.
     setSending(id && !closed ? "sending" : "starting");
     setSendError("");
-    setTurn({ text, prompts: prompts.current });
+    setTurn({ text: [...queued.map((q) => q.text), text].join("\n\n"), prompts: prompts.current });
     sessionPanel.setDraft("");
     try {
       let target = id && !closed ? id : null;
@@ -657,25 +830,61 @@ function SessionPanel({
           .filter(Boolean)
           .join(" · "),
         onSelect: () => sessionPanel.select(c.id),
+        actions: () => sessionActions(c, false),
       });
-    if (id && conversation && !closed)
-      items.push({
-        label: "Close this session",
-        danger: true,
-        note: running ? "Stops the turn running; its directory stays" : "Its directory stays",
-        // While the agent works, closing it stops the turn: asked first.
-        onSelect: () => (running ? setClosing(true) : close()),
-      });
+    if (id && conversation) items.push(...sessionActions(conversation, true));
     return items;
   };
-  const close = () => {
-    if (!id) return;
-    void closeConversation(id).then(update, (e: unknown) =>
-      toast({
-        title: "Could not close the session",
-        detail: e instanceof Error ? e.message : undefined,
-        error: true,
-      }),
+  /** Closing and archiving a session: from the picker's foot for the one
+   *  shown, and from a right click on any session in it. */
+  const sessionActions = (c: ConversationSummary, shown: boolean): MenuItem[] => {
+    const working = c.state === "running";
+    const items: MenuItem[] = [];
+    if (c.state !== "closed")
+      items.push({
+        label: shown ? "Close this session" : "Close session",
+        danger: true,
+        note: working ? "Stops the turn running; its directory stays" : "Its directory stays",
+        // While the agent works, closing it stops the turn: asked first.
+        onSelect: () => (working ? setAsking({ kind: "close", session: c }) : close(c)),
+      });
+    items.push({
+      label: shown ? "Archive this session" : "Archive session",
+      danger: true,
+      note: "Leaves the list; the worktree or directory baum made goes",
+      onSelect: () => (working ? setAsking({ kind: "archive", session: c }) : archive(c)),
+    });
+    return items;
+  };
+  const close = (c: ConversationSummary) => {
+    void closeConversation(c.id).then(
+      (closedOne) => {
+        if (closedOne.id === shownId.current) update(closedOne);
+      },
+      (e: unknown) =>
+        toast({
+          title: "Could not close the session",
+          detail: e instanceof Error ? e.message : undefined,
+          error: true,
+        }),
+    );
+  };
+  const archive = (c: ConversationSummary, discard = false) => {
+    void archiveConversation(c.id, discard).then(
+      () => {
+        if (c.id === shownId.current) sessionPanel.select(null);
+        toast({ title: "Archived the session", detail: c.title || "Untitled session" });
+      },
+      (e: unknown) => {
+        const unclean = uncleanDirectory(e);
+        if (unclean) setAsking({ kind: "discard", session: c, unclean });
+        else
+          toast({
+            title: "Could not archive the session",
+            detail: e instanceof Error ? e.message : undefined,
+            error: true,
+          });
+      },
     );
   };
   // The message the panel's keys are on, marked as the transcript page marks
@@ -873,20 +1082,49 @@ function SessionPanel({
       }}
     >
       {menu.menu}
-      {closing ? (
+      {asking?.kind === "close" ? (
         <ConfirmDialog
           title="Close this session while the agent works?"
           action="Close session"
           danger
           pending={false}
-          close={() => setClosing(false)}
+          close={() => setAsking(null)}
           confirm={() => {
-            setClosing(false);
-            close();
+            setAsking(null);
+            close(asking.session);
           }}
         >
           Closing it stops the turn running now. Its directory and what the agent changed there
           stay.
+        </ConfirmDialog>
+      ) : asking?.kind === "archive" ? (
+        <ConfirmDialog
+          title="Archive this session while the agent works?"
+          action="Archive session"
+          danger
+          pending={false}
+          close={() => setAsking(null)}
+          confirm={() => {
+            setAsking(null);
+            archive(asking.session);
+          }}
+        >
+          Archiving it stops the turn running now. If the agent left work in the session's worktree
+          or directory, you are asked again before it goes.
+        </ConfirmDialog>
+      ) : asking?.kind === "discard" ? (
+        <ConfirmDialog
+          title="Archive and discard this session's work?"
+          action="Discard and archive"
+          danger
+          pending={false}
+          close={() => setAsking(null)}
+          confirm={() => {
+            setAsking(null);
+            archive(asking.session, true);
+          }}
+        >
+          {uncleanText(asking.unclean)}
         </ConfirmDialog>
       ) : null}
       {position !== "top" ? (
@@ -1025,6 +1263,22 @@ function SessionPanel({
               This session is closed. Choose New session in the panel's Sessions menu to go on.
             </p>
           ) : null}
+          {id && queued.length > 0 ? (
+            <QueuedList
+              queued={queued}
+              running={running}
+              working={queueing ?? (sending ? "message" : null)}
+              remove={(q) => void changeQueue(() => removeQueued(id, q), q)}
+              sendNow={() => {
+                // Shown at once, as a sent message is.
+                setTurn({
+                  text: queued.map((q) => q.text).join("\n\n"),
+                  prompts: prompts.current,
+                });
+                void changeQueue(() => sendQueued(id), "send");
+              }}
+            />
+          ) : null}
           {picked ? (
             <p className="session-panel-focus">
               <span>
@@ -1049,7 +1303,7 @@ function SessionPanel({
               aria-label="Message to the agent"
               placeholder={
                 running
-                  ? "The agent is working; write your next message…"
+                  ? "The agent is working; queue your next message…"
                   : conversation
                     ? "Reply to the agent…"
                     : "Ask the agent to do something…"
@@ -1066,15 +1320,30 @@ function SessionPanel({
               }}
             />
             {running ? (
-              <Button
-                variant="secondary"
-                size="compact"
-                disabled={stopping}
-                onClick={() => void stop()}
-              >
-                {stopping ? <NineDots size={12} /> : null}
-                Stop
-              </Button>
+              <>
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  size="compact"
+                  title="Sent when the agent finishes this turn"
+                  disabled={!!queueing || !panel.draft.trim()}
+                >
+                  {queueing === "message" ? <NineDots size={12} /> : null}
+                  Queue
+                  <kbd aria-hidden="true" className="key-hint">
+                    ↵
+                  </kbd>
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  disabled={stopping}
+                  onClick={() => void stop()}
+                >
+                  {stopping ? <NineDots size={12} /> : null}
+                  Stop
+                </Button>
+              </>
             ) : (
               <Button
                 type="submit"
@@ -1108,6 +1377,58 @@ function SessionPanel({
         </span>
       </footer>
       {position === "top" ? <Grip position={position} size={panel.height} /> : null}
+    </section>
+  );
+}
+
+/** The messages waiting for the agent, above the composer: sent together
+ *  once the running turn answers, or, when it stopped or failed, kept until
+ *  the person sends them (or another message, which they go before). */
+function QueuedList({
+  queued,
+  running,
+  working,
+  remove,
+  sendNow,
+}: {
+  queued: QueuedMessage[];
+  running: boolean;
+  /** What is being changed: a queued message's id, "send" or "message". */
+  working: string | null;
+  remove: (id: string) => void;
+  sendNow: () => void;
+}) {
+  return (
+    <section aria-label="Queued messages" className="session-panel-queued">
+      <p className="session-panel-queued-head">
+        <span className="inline-flex items-center gap-1.5">
+          {running ? "Queued for when the agent finishes" : "Queued, not sent yet"}
+          <Badge>{queued.length}</Badge>
+        </span>
+        {!running ? (
+          <Button variant="secondary" size="compact" disabled={!!working} onClick={sendNow}>
+            {working === "send" ? <NineDots size={12} /> : null}
+            Send now
+          </Button>
+        ) : null}
+      </p>
+      <ol>
+        {queued.map((q) => (
+          <li key={q.id}>
+            <span className="session-panel-queued-text">{q.text}</span>
+            <Button
+              variant="secondary"
+              size="compact"
+              aria-label={`Remove queued message: ${q.text.slice(0, 60)}`}
+              disabled={!!working}
+              onClick={() => remove(q.id)}
+            >
+              {working === q.id ? <NineDots size={12} /> : null}
+              Remove
+            </Button>
+          </li>
+        ))}
+      </ol>
     </section>
   );
 }

@@ -75,7 +75,7 @@ func (r *Repo) AuthoredCommits(ctx context.Context, since time.Time, email strin
 		"%cI" + commitFieldSep + "%s" + commitFieldSep + "%(trailers:only,unfold)" + commitFieldSep + "%B"
 	// --fixed-strings keeps an address's "+" or "." literal; the match is a
 	// substring, so the exact address is checked below.
-	args := []string{"log", "--no-merges", "--no-color", "--no-ext-diff", "-z", "--fixed-strings",
+	args := []string{"log", "--no-merges", "--no-color", "--no-ext-diff", "-z", "--fixed-strings", "--regexp-ignore-case",
 		"--author=" + email, "--since=" + since.UTC().Format("2006-01-02 15:04:05 +0000"), "--format=" + format}
 	out, err := r.read(ctx, maxCommitLogBytes, append(append(args, tips...), "--")...)
 	if err != nil {

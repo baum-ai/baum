@@ -1,6 +1,6 @@
 //go:build !linux
 
-package githubauth
+package credentialstore
 
 import "os"
 

@@ -394,6 +394,17 @@
   position: relative;
   overflow-x: auto;
 }
+.analytics-breakdown-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.analytics-breakdown-scroll::-webkit-scrollbar-thumb {
+  background: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+}
+.analytics-breakdown-scroll:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
 .analytics-table {
   width: 100%;
   border-collapse: collapse;

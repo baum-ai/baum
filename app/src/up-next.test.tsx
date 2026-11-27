@@ -476,7 +476,7 @@ const row = (title: string) =>
     r.textContent?.includes(title),
   )!;
 const snoozeFor = (label: string) =>
-  Array.from(node.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((item) =>
+  Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((item) =>
     item.textContent?.includes(label),
   )!;
 const press = (key: string) =>
@@ -759,7 +759,7 @@ it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
   await render();
   button("Snooze").focus();
   await act(async () => button("Snooze").click());
-  const choices = [...node.querySelectorAll<HTMLElement>('.upnext-menu [role="menuitem"]')];
+  const choices = [...document.querySelectorAll<HTMLElement>('.upnext-menu [role="menuitem"]')];
   expect(document.activeElement).toBe(choices[0]);
   for (const [key, ctrlKey, index] of [
     ["ArrowDown", false, 1],
@@ -783,7 +783,7 @@ it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
   });
-  expect(node.querySelector(".upnext-menu")).toBeNull();
+  expect(document.querySelector(".upnext-menu")).toBeNull();
   expect(document.activeElement).toBe(button("Snooze"));
 });
 

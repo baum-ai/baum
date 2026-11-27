@@ -762,7 +762,7 @@ it("shows failed background refresh without hiding cached reviews", async () => 
           Response.json([
             {
               repository: "acme/demo",
-              error: "metadata_unavailable",
+              error: "discovery_unavailable",
               next_refresh: "2026-10-15T12:01:00Z",
             },
           ]),
@@ -804,6 +804,36 @@ it("folds every repository GitHub could not refresh into one notice with one act
   expect(notices[0]!.textContent).toContain("could not refresh 2 repositories from GitHub");
   expect(notices[0]!.querySelector("a")!.textContent).toBe("Open settings");
   expect(notices[0]!.querySelector("a")!.getAttribute("href")).toContain("page=settings");
+});
+
+it("leaves one pull request's failed read out of the refresh notice", async () => {
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/background"
+      ? Promise.resolve(
+          Response.json([
+            {
+              repository: "acme/demo",
+              error: "metadata_unavailable",
+              next_refresh: "2026-10-15T12:01:00Z",
+            },
+          ]),
+        )
+      : String(args[0]) === "/s/test-ns/api/github-auth"
+        ? Promise.resolve(
+            Response.json({
+              state: "connected",
+              host: "github.com",
+              saved: true,
+              login: "octocat",
+              override: false,
+            }),
+          )
+        : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).not.toContain("could not refresh");
 });
 
 const diagnosticsReport = {
@@ -1800,7 +1830,7 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
   await key("5");
-  expect(location.search).toBe("?page=settings&section=connections");
+  expect(location.search).toBe("?page=settings&section=panel");
   await key("K", true);
   await key("ArrowUp", true);
   expect(location.search).toBe("?page=settings&section=reviews");

@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import {
   frameReady,
   open,
@@ -23,12 +23,33 @@ const PR13 = "repository=acme%2Fdemo&pr=13";
 const WIDTHS = [1440, 900, 390] as const;
 const SCHEMES = ["light", "dark"] as const;
 
+/** The patch of the Go file the interface change cites (an added file of 56
+ *  lines), so its detail has code to show. */
+async function serveGoPatch(page: Page) {
+  const body = [
+    "package api",
+    "",
+    "// DeadLetters lists the jobs that ran out of retries.",
+    "func DeadLetters(store Store) ([]Job, error) {",
+    '\treturn store.List("dead")',
+    "}",
+  ];
+  const lines = Array.from({ length: 56 }, (_, at) => body[at % body.length]!);
+  const patch = ["@@ -0,0 +1,56 @@", ...lines.map((line) => `+${line}`)].join("\n");
+  await page.route(
+    (url) =>
+      url.pathname.endsWith("/api/patch") && url.searchParams.get("path") === "api/deadletters.go",
+    (route) => route.fulfill({ json: { patch } }),
+  );
+}
+
 /** The section a tile stands on, scrolled to the tile. */
 const at = (tile: string) => `${PR13}&pane=tile&tile=${tile}`;
 
 test("library and authored tiles on their sections", async ({ page }) => {
   const errors = watchErrors(page);
   await servePatch(page);
+  await serveGoPatch(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, at("schema_change"));
   await expect(sectionRow(page)).toHaveCount(1);
@@ -45,6 +66,16 @@ test("library and authored tiles on their sections", async ({ page }) => {
   await expect(api.getByRole("heading", { name: "Interface changes" })).toBeVisible();
   await frameReady(page, "api_change");
   await expect(page.getByText("Custom · Interface changes")).toHaveCount(0);
+  // The code it cites starts closed; opened, it is coloured as the review's
+  // diffs are.
+  const frame = page.frameLocator('[data-custom-tile="api_change"] iframe');
+  const code = frame.locator(".baum-code");
+  await expect(code.first()).toBeHidden();
+  await frame.locator("details.kit-details > summary", { hasText: "Code" }).first().click();
+  await expect(code.first()).toBeVisible();
+  await expect(
+    code.filter({ hasText: "func DeadLetters" }).first().locator("span").first(),
+  ).toHaveAttribute("style", /--syntax-token-keyword/);
 
   // The authored table shows its rows and the code it cites.
   await open(page, at("table_retry_states"));

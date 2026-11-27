@@ -149,11 +149,11 @@ func TestSessionOptionsAreRefused(t *testing.T) {
 		fix     bool
 		want    string
 	}{
-		{"isolated persist", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{PersistSession: true}, false, "only a User profile"},
-		{"isolated resume", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{ResumeSession: testSession}, false, "only a User profile"},
+		{"isolated persist", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{PersistSession: true}, false, "only the User profile"},
+		{"isolated resume", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{ResumeSession: testSession}, false, "only the User profile"},
 		{"leading dash", &Backend{Binary: script}, agent.Request{ResumeSession: "--help"}, false, "must be a UUID"},
 		{"name, not UUID", &Backend{Binary: script}, agent.Request{ResumeSession: "my-session"}, false, "must be a UUID"},
-		{"fix", &Backend{Binary: script}, agent.Request{PersistSession: true}, true, "only a User profile"},
+		{"fix resume", &Backend{Binary: script}, agent.Request{ResumeSession: testSession}, true, "a fix cannot resume"},
 	} {
 		dir := t.TempDir()
 		c.request.Directory, c.request.Prompt, c.request.Schema, c.request.MaxCalls, c.request.MaxTokens = dir, "p", []byte(`{}`), 2, 100

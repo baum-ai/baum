@@ -14,13 +14,19 @@ import {
   resetSessionPanel,
   sessionPanel,
   SessionPanelButton,
-  SessionPanelHost,
+  SessionPanelHost as PanelHost,
   shown,
+  useConversations,
   useSessionPanel,
 } from "./session-panel";
 import { PreferencesProvider } from "./preferences";
 import { SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
+
+/** The host as the app mounts it, with the conversations it reads. */
+function SessionPanelHost(props: Omit<Parameters<typeof PanelHost>[0], "conversations">) {
+  return <PanelHost {...props} conversations={useConversations()} />;
+}
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({ ReviewViewer: () => null }));
 // The transcript is the viewer's; here it shows each prompt and its replies.
@@ -187,7 +193,24 @@ beforeEach(() => {
                 message: "Its file is not on this computer any more.",
               },
         );
-      if (path === "api/console/conversations/c1/messages") {
+      if (path === "api/console/conversations/c1/messages" && conversation?.state === "running") {
+        const queued = [...(conversation.queued ?? [])];
+        queued.push({ id: `q${queued.length + 1}`, text: call.body.text, queued_at: "" });
+        conversation = { ...conversation, queued };
+        return Response.json(conversation, { status: 202 });
+      }
+      if (path.startsWith("api/console/conversations/c1/queued/") && call.method === "DELETE") {
+        const gone = path.split("/").pop();
+        conversation = {
+          ...conversation!,
+          queued: (conversation!.queued ?? []).filter((q) => q.id !== gone),
+        };
+        return Response.json(conversation);
+      }
+      if (
+        path === "api/console/conversations/c1/messages" ||
+        path === "api/console/conversations/c1/queued/send"
+      ) {
         conversation = made({
           state: "running",
           title: "Why?",
@@ -196,7 +219,11 @@ beforeEach(() => {
         return Response.json(conversation, { status: 202 });
       }
       if (path === "api/console/conversations/c1/cancel") {
-        conversation = made({ state: "idle", error: "Stopped before the agent finished." });
+        conversation = made({
+          state: "idle",
+          error: "Stopped before the agent finished.",
+          queued: conversation?.queued ?? [],
+        });
         return Response.json(conversation);
       }
       if (path === "api/console/conversations/c1/close") {
@@ -355,6 +382,40 @@ it("takes two Escapes to give the page its keys back, never letting it have one 
   }
 });
 
+it("leaves the keys where they were when the window comes back", async () => {
+  await host(pr);
+  const opener = button("Opener")!;
+  opener.focus();
+  await key(opener, "`", { ctrlKey: true });
+  expect(document.activeElement).toBe(composer());
+  await key(composer(), "Escape");
+  await key(panel()!, "Escape");
+  expect(document.activeElement).toBe(opener);
+  const leave = () => act(async () => void dispatchEvent(new Event("blur")));
+  const come = () => act(async () => void dispatchEvent(new Event("focus")));
+  // Coming back, the window puts the keys in the panel, which did not have
+  // them: they go back to the page.
+  await leave();
+  composer().focus();
+  await come();
+  expect(document.activeElement).toBe(opener);
+  // Landing there after the window's focus event, too.
+  await leave();
+  await come();
+  await act(async () => composer().focus());
+  expect(document.activeElement).toBe(opener);
+  // The person's own click puts them in the panel.
+  await act(async () => void composer().dispatchEvent(new Event("pointerdown", { bubbles: true })));
+  await act(async () => composer().focus());
+  expect(document.activeElement).toBe(composer());
+  // The panel that had them keeps them.
+  await leave();
+  composer().blur();
+  composer().focus();
+  await come();
+  expect(document.activeElement).toBe(composer());
+});
+
 it("keeps the page's keys while it has them, and reads its session with them", async () => {
   // A page's own key, as k moves a list's selection.
   const pageKey = vi.fn();
@@ -471,21 +532,53 @@ it("starts a session from the page, showing the prompt at once, and stops it", a
   ]);
   expect(posts()[0]!.body).toEqual({ mode: "workspace", page: pr });
   expect(posts()[1]!.body).toEqual({ text: "Why is the delay capped?", page: pr });
-  // While it runs: the tool, Working, and Stop instead of Send.
+  // While it runs: the tool, Working, and Queue and Stop instead of Send.
   await until(() => expect(panel()!.textContent).toContain("Read docs/guide.md"));
   expect(panel()!.textContent).toContain("Working");
   expect(panel()!.textContent).toContain("Why is the delay capped?");
-  // Enter while it runs keeps what is typed and says why.
+  expect(button("Send")).toBeUndefined();
+  // Enter while it runs queues the message for when the turn ends.
   await type(composer(), "And the jitter?");
   await key(composer(), "Enter");
-  expect(composer().value).toBe("And the jitter?");
-  expect(panel()!.textContent).toContain("wait for the turn to finish, or Stop it");
-  expect(posts()).toHaveLength(2);
+  await until(() => expect(posts()).toHaveLength(3));
+  expect(posts()[2]!.body).toEqual({ text: "And the jitter?", page: pr });
+  expect(composer().value).toBe("");
+  const queuedList = () => panel()!.querySelector('[aria-label="Queued messages"]');
+  await until(() => expect(queuedList()!.textContent).toContain("And the jitter?"));
+  expect(queuedList()!.textContent).toContain("Queued for when the agent finishes1");
+  await type(composer(), "And the cap?");
+  await act(async () => button("Queue")!.click());
+  await until(() => expect(queuedList()!.querySelectorAll("li")).toHaveLength(2));
+  // One is removed.
+  await act(async () => button("Remove queued message: And the cap?")!.click());
+  await until(() => expect(queuedList()!.querySelectorAll("li")).toHaveLength(1));
+  expect(
+    calls.some((c) => c.method === "DELETE" && c.path === "api/console/conversations/c1/queued/q2"),
+  ).toBe(true);
+  // Stopped, the turn leaves the queue to be sent now.
   const stop = button("Stop")!;
   await act(async () => stop.click());
   await until(() => expect(button("Send")).toBeDefined());
   expect(calls.some((c) => c.path === "api/console/conversations/c1/cancel")).toBe(true);
   expect(panel()!.textContent).toContain("Stopped before the agent finished.");
+  expect(queuedList()!.textContent).toContain("Queued, not sent yet1");
+  // Refused, Send now leaves no prompt behind, only why.
+  answer = (call) =>
+    call.path === "api/console/conversations/c1/queued/send"
+      ? Response.json({ code: "busy", message: "busy" }, { status: 409 })
+      : undefined;
+  await act(async () => button("Send now")!.click());
+  await until(() =>
+    expect(panel()!.textContent).toContain("The agent is still answering the last message."),
+  );
+  expect(panel()!.querySelector(".session-panel-prompt")?.textContent ?? "").not.toContain(
+    "And the jitter?",
+  );
+  expect(queuedList()).not.toBeNull();
+  answer = () => undefined;
+  await act(async () => button("Send now")!.click());
+  await until(() => expect(queuedList()).toBeNull());
+  expect(calls.some((c) => c.path === "api/console/conversations/c1/queued/send")).toBe(true);
 });
 
 it("sends the first message with the page open once the session has started", async () => {
@@ -615,6 +708,60 @@ it("asks before closing a session while its agent works", async () => {
   expect(calls.some((c) => c.path.endsWith("/close"))).toBe(false);
   await act(async () => button("Close session")!.click());
   await until(() => expect(calls.some((c) => c.path.endsWith("/close"))).toBe(true));
+});
+
+it("archives a session from a right click in the picker, asking before it loses work", async () => {
+  conversation = made({ title: "Done with it" });
+  sessionPanel.select("c1");
+  const discarding = (call: Call) =>
+    (call.body as { discard?: boolean } | undefined)?.discard === true;
+  answer = (call) => {
+    if (call.path !== "api/console/conversations/c1/archive") return undefined;
+    if (!discarding(call))
+      return Response.json(
+        {
+          code: "unclean_directory",
+          message: "Archiving removes this session's worktree.",
+          unclean: {
+            changed: 7,
+            paths: ["a.txt", "b.txt"],
+            branch: "baum/pr-7",
+            unpushed: 1,
+            worktree: true,
+          },
+        },
+        { status: 409 },
+      );
+    conversation = null;
+    return Response.json(made({ state: "closed", archived_at: new Date().toISOString() }));
+  };
+  await host(pr);
+  await act(async () => sessionPanel.show());
+  await until(() => expect(panel()!.textContent).toContain("Done with it"));
+  await act(async () => button("Sessions")!.click());
+  const choice = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((b) =>
+      b.textContent?.startsWith(label),
+    );
+  // The keyboard's menu key on the session opens what can be done with it.
+  await act(async () => {
+    choice("Done with it")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+  });
+  expect(choice("Close session")).toBeDefined();
+  // The list of sessions stays open under its actions.
+  expect(choice("New session")).toBeDefined();
+  await act(async () => choice("Archive session")!.click());
+  await until(() => expect(document.querySelector("dialog[open]")).not.toBeNull());
+  expect(document.querySelector("dialog[open]")!.textContent).toContain(
+    "which holds 7 uncommitted changes and 1 commit on baum/pr-7 that no remote has. a.txt, b.txt and 5 more.",
+  );
+  await act(async () => button("Discard and archive")!.click());
+  await until(() =>
+    expect(calls.some((c) => c.path.endsWith("/archive") && discarding(c))).toBe(true),
+  );
+  await until(() => expect(panel()!.textContent).not.toContain("Done with it"));
 });
 
 const operation = (over: Partial<Proposal> = {}): Proposal => ({
@@ -904,10 +1051,12 @@ it("saves the session panel's setting as it changes", async () => {
     mode: "auto",
     position: "bottom",
   });
-  await act(async () => button("Top")!.click());
-  await until(() => expect(puts().at(-1)!.body).toMatchObject({ position: "top" }));
   await act(async () => button("Workspace")!.click());
   await until(() => expect(puts().at(-1)!.body).toMatchObject({ mode: "workspace" }));
+  // The edge it opens from is in the same section.
+  expect(button("Bottom")!.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => button("Top")!.click());
+  await until(() => expect(puts().at(-1)!.body).toMatchObject({ position: "top" }));
 });
 
 it("picks the pull request's own open conversation for an Ask, else a new one", () => {

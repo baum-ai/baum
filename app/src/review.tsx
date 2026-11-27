@@ -63,6 +63,7 @@ import {
   fixLabel,
   jobHref,
   navigate,
+  redirect,
   type LiveSession,
   type Provenance,
 } from "./api";
@@ -72,8 +73,8 @@ import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useVersionLoader } from "./version-cache";
-import { LiveSessionCard, liveSessionLabel } from "./sessions";
-import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
+import { LiveSessionCard, liveSessionLabel, transcriptHref } from "./sessions";
+import { parseLiveTranscript, TranscriptCard, transcriptPath } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
   PullRequestDecisionsPane,
@@ -81,12 +82,15 @@ import {
   type PullRequestDecisionsRead,
 } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
+import { useIssueLinks } from "./integrations";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
+import { type RepositoryFileSources, RepositoryFileSourceContext } from "./repository-file-source";
 import { canMerge, MergeDialog } from "./merge";
 import {
   openActiveBlock,
   reviewKeyStep,
+  SIDE_PANE_KEY,
   toggleActiveBlock,
   useGitHubKey,
   useShortcuts,
@@ -188,6 +192,47 @@ export function Transcript({
   return <TranscriptCard transcript={load} title={title} focusTurn={focusTurn} embedded />;
 }
 
+/** The live sessions' agent for a linked session's vendor. */
+const LIVE_AGENTS: Record<string, string> = {
+  claude_code: "claude-code",
+  codex: "codex",
+  cursor: "cursor",
+};
+
+/** Linked sessions whose transcript the daemon has on this computer, by
+ *  `agent:id`, and those it is being asked about: where the answer should go,
+ *  the latest opening's page and address. */
+const onComputer = new Set<string>();
+const asking = new Map<string, { href: string; from: string }>();
+
+/** Opens a linked session on its page when its transcript is on this
+ *  computer, which only the daemon knows: one linked from another computer,
+ *  such as a teammate's, stays in the pane. Until the daemon answers, the
+ *  pane shows it, and the page replaces it if it is still the one open. A
+ *  session that is not here is asked about again the next time. */
+function openLinked(agent: string, id: string, focusTurn?: number): boolean {
+  const key = `${agent}:${id}`;
+  const href = transcriptHref({ agent, session_id: id }, focusTurn);
+  if (onComputer.has(key)) {
+    redirect(href);
+    return true;
+  }
+  const pending = asking.has(key);
+  asking.set(key, { href, from: location.href });
+  if (pending) return false;
+  void request<unknown>(transcriptPath(agent, id, null))
+    .then((body) => parseLiveTranscript(body)?.available === true)
+    .catch(() => false)
+    .then((here) => {
+      const latest = asking.get(key);
+      asking.delete(key);
+      if (!here) return;
+      onComputer.add(key);
+      if (latest && location.href === latest.from) redirect(latest.href);
+    });
+  return false;
+}
+
 /** The pull request's Sessions group: one list of the sessions linked to it
  *  through its commits (`linked`) and the sessions the daemon lists on it
  *  (`listed`: working, waiting, or ended and still listed). A listed session
@@ -202,6 +247,19 @@ export function pullRequestSessions(
   return sessionsSlot(linked, {
     renderSession,
     hosted: listedSessionRows(listed, linked, decisions),
+    // A session opens on its own page, where it can be continued.
+    open: (id, focusTurn) => {
+      const listedAgent = listed.find((s) => s.session_id === id)?.agent;
+      if (listedAgent) {
+        redirect(transcriptHref({ agent: listedAgent, session_id: id }, focusTurn));
+        return true;
+      }
+      const agent =
+        linked.status === "ready"
+          ? LIVE_AGENTS[linked.sessions.find((s) => s.id === id)?.vendor ?? ""]
+          : undefined;
+      return agent ? openLinked(agent, id, focusTurn) : false;
+    },
     empty:
       "Sessions on this computer show here while they work on this pull request, and once one of their commits is in it.",
   });
@@ -231,14 +289,8 @@ export function listedSessionRows(
       renderCard: (open) => (
         <LiveSessionCard session={s} open={open} Link={ViewerLink} decisions={decisions} />
       ),
-      renderPane: () => (
-        <>
-          <div className="pb-3">
-            <LiveSessionCard session={s} titled={false} Link={ViewerLink} decisions={decisions} />
-          </div>
-          <EmbeddedLiveTranscript session={s} />
-        </>
-      ),
+      // Opened, it leaves for its page on Sessions (`open` above).
+      renderPane: () => null,
     }));
 }
 /** The hosted PR page's shared viewer, with local sources for its slots. */
@@ -300,6 +352,7 @@ export function LocalReview({
   fixRuns?: Job[];
 }) {
   const pr = entry.pull_request;
+  const linkedIssues = useIssueLinks(pr);
   const url = useUrlState();
   // The page reads a baum.review/2 version with its tile document, and a
   // baum.review/1 one as stored.
@@ -584,6 +637,22 @@ export function LocalReview({
           : doc,
     [showingDraft, draft, retrying, doc, failedSections],
   );
+  // Where "Where this fits" reads the files it names, whole, at the head of
+  // the version on screen. A draft is no saved version, so the daemon has no
+  // document to read its files for.
+  // Each pane reads its own version's files: two compared versions differ.
+  const latestVersion = doc?.review.version;
+  const repositoryFiles = useMemo<RepositoryFileSources | null>(() => {
+    if (showingDraft) return null;
+    return (document) => ({
+      source: `api/file?${selector(
+        clone,
+        pr.number,
+        document.review.version === latestVersion ? undefined : document.review.version,
+      )}`,
+      href: (path) => contextRefUrl(document, path),
+    });
+  }, [showingDraft, clone, pr.number, latestVersion]);
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
   // Before there is a review, Files changed lists the pull request's files
   // in the viewer's own files pane; once one lands, the same place is the
@@ -997,7 +1066,7 @@ export function LocalReview({
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
           <div className="ask-main" inert={narrow && questionsOpen ? true : undefined}>
-            <TileHostContext.Provider value={tileHost}>
+            <ReviewHosts tileHost={tileHost} files={repositoryFiles}>
               <ReviewViewer
                 document={shownDocument}
                 openSource={(anchor) => {
@@ -1069,6 +1138,7 @@ export function LocalReview({
                     : null
                 }
                 foldSidePane={questionsOpen && tight}
+                sidePaneKey={SIDE_PANE_KEY}
                 header={{
                   pullRequest: {
                     number: pr.number,
@@ -1087,7 +1157,7 @@ export function LocalReview({
                   // The stacks and groups it belongs to, under the title with its
                   // other facts rather than as a notice over the review.
                   subtitle:
-                    groups.length > 0 || kept ? (
+                    groups.length > 0 || kept || linkedIssues ? (
                       <>
                         {kept ? (
                           <span
@@ -1097,6 +1167,7 @@ export function LocalReview({
                             Still applies to the newer commits
                           </span>
                         ) : null}
+                        {linkedIssues}
                         {groups.map((group) => (
                           <ViewerLink
                             key={group.id}
@@ -1423,7 +1494,7 @@ export function LocalReview({
                   showingDraft ? (doc ? undefined : (path: string) => factsPatches(path)) : patches
                 }
               />
-            </TileHostContext.Provider>
+            </ReviewHosts>
           </div>
           {questionsOpen && earlier ? (
             <>
@@ -1543,6 +1614,26 @@ function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
         ),
       })
     : copy;
+}
+
+/** What the review's tiles and its context's files read from the page: the
+ *  tile host, and the route repository files are read from. */
+function ReviewHosts({
+  tileHost,
+  files,
+  children,
+}: {
+  tileHost: TileHost;
+  files: RepositoryFileSources | null;
+  children: ReactNode;
+}) {
+  return (
+    <TileHostContext.Provider value={tileHost}>
+      <RepositoryFileSourceContext.Provider value={files}>
+        {children}
+      </RepositoryFileSourceContext.Provider>
+    </TileHostContext.Provider>
+  );
 }
 
 class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean; why: string }> {

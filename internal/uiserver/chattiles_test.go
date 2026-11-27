@@ -416,6 +416,45 @@ func TestAddingATileMadeInChatIsRefused(t *testing.T) {
 	}
 }
 
+// A turn keeps working on the pull request it was sent from while the
+// person reads another page: the card stands on that pull request's
+// Overview, where they were reading, and the tile it becomes stays there,
+// with the add naming the pull request.
+func TestChatTilesFollowTheTurnsPullRequest(t *testing.T) {
+	f := newChatTilesFixture(t)
+	// The Overview takes added tiles on a baum.review/2 version.
+	v2, err := reviewv2.FromV1(titled(t, "Second title"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewv2.EnsureBodies(&v2)
+	encoded, err := json.Marshal(v2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, encoded)
+	if err := f.mcp.Registry.SetTurnPage(f.id, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/widgets", PullRequest: 42, Focus: json.RawMessage(`{"tab":"overview"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mcp.Registry.SetPage(f.id, agentcontext.PageContext{Page: agentcontext.PageInbox}); err != nil {
+		t.Fatal(err)
+	}
+	if text, failed := f.call("start_tile", map[string]any{"title": "Env"}); failed {
+		t.Fatalf("start_tile from another page: %s", text)
+	}
+	if d := f.servedWithDrafts("").Drafts; len(d) != 1 || d[0].Section != reviewv2.OwnerOverview {
+		t.Fatalf("the pending card: %+v", d)
+	}
+	answer := f.check(checkArgs(t, "env_vars", "", envData(f.firstHunk(), "PORT")))
+	text, failed := f.call("add_custom_tile", map[string]any{"check": answer.Check})
+	if failed || !strings.Contains(text, `"pull_request":"acme/widgets#42"`) || !strings.Contains(text, `"section":"overview"`) {
+		t.Fatalf("add_custom_tile from another page: %s", text)
+	}
+	if at := ownerOf(f.servedWithDrafts("").Document, "env_vars"); at != reviewv2.OwnerOverview {
+		t.Errorf("the tile is on %q", at)
+	}
+}
+
 // The tools work only for the pull request the turn was sent from, only on
 // a page that mounts tile frames, and only on a pull request with a saved
 // review; a check the app could not run fails the card with its reason.
@@ -435,26 +474,24 @@ func TestChatTilesRefusals(t *testing.T) {
 		}
 	}
 	f.page(`{}`)
-	if err := f.mcp.Registry.SetTurnPage(f.id, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/widgets", PullRequest: 7}); err != nil {
-		t.Fatal(err)
-	}
-	if text, failed := f.call("start_tile", map[string]any{"title": "x"}); !failed || !strings.Contains(text, "started about another page") {
-		t.Errorf("a turn from another pull request: %s", text)
-	}
+	// A turn sent from another pull request works on that one, never on the
+	// page open now: here it has no saved review.
 	if err := f.mcp.Registry.SetTurnPage(f.id, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/widgets", PullRequest: 99}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.mcp.Registry.SetPage(f.id, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/widgets", PullRequest: 99}); err != nil {
 		t.Fatal(err)
 	}
 	if text, failed := f.call("start_tile", map[string]any{"title": "x"}); !failed || !strings.Contains(text, "no saved review yet") {
 		t.Errorf("no saved review: %s", text)
 	}
-	if err := f.mcp.Registry.SetPage(f.id, agentcontext.PageContext{Page: agentcontext.PageInbox}); err != nil {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 0 {
+		t.Errorf("a turn from another pull request put a card on the open one: %+v", d)
+	}
+	// A turn sent from a page that is not a pull request's is refused, even
+	// once the person opens one.
+	if err := f.mcp.Registry.SetTurnPage(f.id, agentcontext.PageContext{Page: agentcontext.PageInbox}); err != nil {
 		t.Fatal(err)
 	}
-	if text, failed := f.call("start_tile", map[string]any{"title": "x"}); !failed || !strings.Contains(text, "open a pull request's page first") {
-		t.Errorf("off the pull request page: %s", text)
+	if text, failed := f.call("start_tile", map[string]any{"title": "x"}); !failed || !strings.Contains(text, "ask from the pull request's page") {
+		t.Errorf("a turn from the inbox: %s", text)
 	}
 
 	g := newChatTilesFixture(t)

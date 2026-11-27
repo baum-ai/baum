@@ -13,8 +13,9 @@ import "./table.css";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { type Column, Table } from "@baum/viewer/components/table";
-import { Toggle } from "@baum/viewer/components/ui";
+import { Badge, Toggle } from "@baum/viewer/components/ui";
 import type {
+  ColumnItem,
   ColumnsData,
   FlowData,
   FlowStep,
@@ -23,6 +24,7 @@ import type {
   TableData,
   Tone,
 } from "./model";
+import { toneOf } from "./document";
 import { isRecord, isString } from "../tiles/types";
 
 /** The diagrams and tables the view call writes, drawn by the page itself:
@@ -61,10 +63,6 @@ const LABEL_INK: Record<Tone, string> = {
   missing: "text-status-critical",
 };
 
-const TONES = new Set<string>(["plain", "new", "good", "bad", "muted", "missing"]);
-const toneOf = (tone: unknown): Tone =>
-  isString(tone) && TONES.has(tone) ? (tone as Tone) : "plain";
-
 /** The small uppercase label above a block of a section's body (a tile's
  *  title in the bare variant too), and above a flow's lane. */
 export const BLOCK_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
@@ -79,10 +77,13 @@ function Box({
   onPress,
   onPeek,
   change,
+  ink,
 }: {
   title: string;
   note?: string;
   tone: Tone;
+  /** The title's colour, where it isn't the tone's. */
+  ink?: string;
   /** What the pull request does to it, marked as a sequence marks a
    *  message: a pill over the title and a bar at the left edge. */
   change?: Change | null;
@@ -127,7 +128,9 @@ function Box({
           </span>
         </>
       ) : null}
-      <InlineMarkdown className={cn("font-medium leading-snug", INK[tone])}>{title}</InlineMarkdown>
+      <InlineMarkdown className={cn("font-medium leading-snug", ink ?? INK[tone])}>
+        {title}
+      </InlineMarkdown>
       {note ? (
         <InlineMarkdown className="text-xs leading-snug text-secondary">{note}</InlineMarkdown>
       ) : null}
@@ -466,6 +469,10 @@ export function FlowDiagram({ data }: { data: FlowData }) {
         {legend}
       </div>
     );
+  // Every detail sits in the same cell, only the shown one visible, so the
+  // area keeps the height of the tallest and nothing under it moves as the
+  // mouse passes over the steps.
+  const showing = opened?.more?.trim() ? opened : undefined;
   return (
     <div className="grid min-w-0 gap-2.5">
       {grid}
@@ -473,67 +480,521 @@ export function FlowDiagram({ data }: { data: FlowData }) {
       <div
         aria-live={peeked ? "off" : "polite"}
         data-flow-more=""
-        className="max-w-[72ch] space-y-1.5 text-base text-secondary"
+        className="grid max-w-[72ch] text-base text-secondary"
       >
-        {opened?.more ? (
-          <div className="space-y-1.5 border-t border-subtle pt-2.5">
-            <InlineMarkdown className="block font-semibold text-primary">
-              {opened.title}
-            </InlineMarkdown>
-            <InlineMarkdown className="block">{opened.more}</InlineMarkdown>
-          </div>
-        ) : (
-          <p className="text-xs text-tertiary">Click a step for its detail, or hover over it.</p>
+        <p
+          aria-hidden={showing ? true : undefined}
+          className={cn("col-start-1 row-start-1 text-xs text-tertiary", showing && "invisible")}
+        >
+          Click a step for its detail, or hover over it.
+        </p>
+        {data.lanes.flatMap((lane, at) =>
+          lane.steps.map((step, position) =>
+            step.more?.trim() ? (
+              <div
+                key={`${at}:${position}`}
+                aria-hidden={step === showing ? undefined : true}
+                className={cn(
+                  "col-start-1 row-start-1 space-y-1.5 border-t border-subtle pt-2.5",
+                  step !== showing && "invisible",
+                )}
+              >
+                <InlineMarkdown className="block font-semibold text-primary">
+                  {step.title}
+                </InlineMarkdown>
+                <InlineMarkdown className="block">{step.more}</InlineMarkdown>
+              </div>
+            ) : null,
+          ),
         )}
       </div>
     </div>
   );
 }
 
+const isItem = (item: unknown): item is ColumnItem => isRecord(item) && isString(item.title);
+
 export function validColumns(data: unknown): data is ColumnsData {
+  if (!isRecord(data) || !Array.isArray(data.columns) || data.columns.length === 0) return false;
+  const labelled = data.columns.every((column) => isRecord(column) && isString(column.label));
+  if (data.rows !== undefined)
+    return (
+      labelled &&
+      Array.isArray(data.rows) &&
+      data.rows.length > 0 &&
+      data.rows.every(
+        (row) => Array.isArray(row) && row.every((item) => item === null || isItem(item)),
+      )
+    );
   return (
-    isRecord(data) &&
-    Array.isArray(data.columns) &&
-    data.columns.length > 0 &&
+    labelled &&
     data.columns.every(
-      (column) =>
-        isRecord(column) &&
-        isString(column.label) &&
-        Array.isArray(column.items) &&
-        column.items.every((item) => isRecord(item) && isString(item.title)),
+      (column) => Array.isArray(column.items) && (column.items as unknown[]).every(isItem),
     )
   );
 }
 
+/** An item's box in a column by the column's tone. The label and the fill
+ *  carry the tone, so every title stays in the primary ink, and a plain
+ *  column is tinted like the others rather than outlined. */
+const COLUMN_BOX: Record<Tone, string> = {
+  ...BOX,
+  plain: "border-transparent bg-surface-wash",
+  muted: "border-subtle bg-transparent",
+};
+
+/** An item drawn quieter for what it shares with another column. */
+const SAME_BOX = "border-dashed border-default bg-transparent";
+
+/** Text as columns compare it: the same words, whatever their case and
+ *  spacing, are the same. */
+const sameKey = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** The titles more than one column lists: what the columns have in common,
+ *  so the items around them are what tells the columns apart. */
+export function sharedTitles(data: ColumnsData): Set<string> {
+  const seen = new Map<string, number>();
+  for (const column of data.columns)
+    for (const key of new Set((column.items ?? []).map((item) => sameKey(item.title))))
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+  return new Set([...seen].filter(([, columns]) => columns > 1).map(([key]) => key));
+}
+
+/** Whether an arrow goes from one column to the next: from a muted column
+ *  (how it was, or what is left alone) to a new or good one (what it is
+ *  now). */
+const leadsTo = (from: Tone, to: Tone) => from === "muted" && (to === "new" || to === "good");
+
 export function ColumnsDiagram({ data }: { data: ColumnsData }) {
+  return data.rows ? <ComparedColumns data={data} rows={data.rows} /> : <ColumnLists data={data} />;
+}
+
+/** A column's label over its items, with how many it has. */
+function ColumnLabel({ label, tone, count }: { label: string; tone: Tone; count: number }) {
   return (
-    <div
+    <h4
       className={cn(
-        "grid min-w-0 gap-4 @md:grid-cols-2",
-        data.columns.length > 2 && "@3xl:grid-cols-3",
+        BLOCK_LABEL,
+        LABEL_INK[tone],
+        "flex items-baseline gap-1.5 [overflow-wrap:anywhere]",
       )}
     >
-      {data.columns.map((column, at) => {
-        const tone = toneOf(column.tone);
-        return (
-          <section
+      <InlineMarkdown className="min-w-0">{label}</InlineMarkdown>
+      <Badge size="compact" className="tracking-normal tabular-nums normal-case">
+        {count}
+        <span className="sr-only"> {count === 1 ? "item" : "items"}</span>
+      </Badge>
+    </h4>
+  );
+}
+
+/** The classes that switch at the container width columns sit side by
+ *  side from: two columns from @md, three from @3xl. Spelled out, so the
+ *  stylesheet has them. */
+const WIDE = {
+  "@md": {
+    hidden: "@md:hidden",
+    srOnly: "@md:sr-only",
+    inline: "@md:inline",
+    grid: "@md:grid",
+    block: "@md:block",
+    stacked: "@max-md:not-last:border-b @max-md:not-last:pb-3",
+    across: "@md:[grid-template-columns:var(--columns-across)]",
+  },
+  "@3xl": {
+    hidden: "@3xl:hidden",
+    srOnly: "@3xl:sr-only",
+    inline: "@3xl:inline",
+    grid: "@3xl:grid",
+    block: "@3xl:block",
+    stacked: "@max-3xl:not-last:border-b @max-3xl:not-last:pb-3",
+    across: "@3xl:[grid-template-columns:var(--columns-across)]",
+  },
+} as const;
+type Wide = keyof typeof WIDE;
+
+/** The arrow from one column to the next: across while they sit side by
+ *  side (`wide`, the container class they do from), down while they stack. */
+function ColumnArrow({ wide, className }: { wide: Wide; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "justify-self-center self-center text-lg leading-none text-tertiary",
+        className,
+      )}
+    >
+      <span className={WIDE[wide].hidden}>↓</span>
+      <span className={cn("hidden", WIDE[wide].inline)}>→</span>
+    </span>
+  );
+}
+
+/** Lists of different things side by side, an item another column lists
+ *  too drawn quieter. */
+function ColumnLists({ data }: { data: ColumnsData }) {
+  const tones = data.columns.map((column) => toneOf(column.tone));
+  const arrows = tones.map((tone, at) => at + 1 < tones.length && leadsTo(tone, tones[at + 1]!));
+  const shared = sharedTitles(data);
+  // With arrows the columns sit side by side only once all of them fit, and
+  // stack with the arrows pointing down before then.
+  const many = data.columns.length > 2;
+  const across = data.columns
+    .map((_, at) => (arrows[at] ? "minmax(0,1fr) auto" : "minmax(0,1fr)"))
+    .join(" ");
+  return (
+    <div className="grid min-w-0 gap-3">
+      <div
+        style={{ "--columns-across": across } as CSSProperties}
+        className={cn(
+          "grid min-w-0 gap-4",
+          !arrows.some(Boolean)
+            ? cn("@md:grid-cols-2", many && "@3xl:grid-cols-3")
+            : many
+              ? "@3xl:gap-x-2 @3xl:[grid-template-columns:var(--columns-across)]"
+              : "@md:gap-x-2 @md:[grid-template-columns:var(--columns-across)]",
+        )}
+      >
+        {data.columns.flatMap((column, at) => {
+          const tone = tones[at]!;
+          const items = column.items ?? [];
+          const section = (
+            <section
+              key={at}
+              aria-label={column.label}
+              className="grid min-w-0 content-start gap-1.5"
+            >
+              <ColumnLabel label={column.label} tone={tone} count={items.length} />
+              <ul className="grid gap-1.5">
+                {items.map((item, position) => {
+                  const same = shared.has(sameKey(item.title));
+                  return (
+                    <li key={position} className="min-w-0" data-same={same || undefined}>
+                      <Box
+                        title={item.title}
+                        note={item.note}
+                        tone={tone}
+                        ink={same ? "text-secondary" : "text-primary"}
+                        className={cn(COLUMN_BOX[tone], "opacity-100", same && SAME_BOX)}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          );
+          return arrows[at]
+            ? [section, <ColumnArrow key={`${at}-to`} wide={many ? "@3xl" : "@md"} />]
+            : [section];
+        })}
+      </div>
+      {shared.size > 0 ? (
+        <p className="flex items-center gap-1.5 border-t border-subtle pt-2.5 text-xs text-tertiary">
+          <span aria-hidden className={cn("h-3 w-4 rounded-sm border", SAME_BOX)} />
+          also in another column
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** A run of text in a compared item: a word, a code span or the space
+ *  between, marked when the item before or after in its row lacks it. */
+type Piece = { tokens: string[]; mark?: "added" | "removed" };
+
+const PIECES = /`[^`]*`|\s+|[^\s`]+|`/g;
+
+/** Two texts split into pieces, with the words one has and the other lacks
+ *  marked (by their longest run in common); unmarked when they share no
+ *  word, where marking every word would say nothing. */
+export function wordDiff(was: string, now: string): { was: Piece[]; now: Piece[] } {
+  const split = (text: string) => text.match(PIECES) ?? [];
+  const [a, b] = [split(was), split(now)];
+  const words = (pieces: string[]) =>
+    pieces.flatMap((piece, at) => (/^\s+$/.test(piece) ? [] : [at]));
+  const [wa, wb] = [words(a), words(b)];
+  const key = (piece: string) => piece.toLowerCase();
+  // The longest common subsequence of the words, by dynamic programming.
+  const table = Array.from({ length: wa.length + 1 }, () =>
+    Array.from({ length: wb.length + 1 }, () => 0),
+  );
+  for (let i = wa.length - 1; i >= 0; i--)
+    for (let j = wb.length - 1; j >= 0; j--)
+      table[i]![j] =
+        key(a[wa[i]!]!) === key(b[wb[j]!]!)
+          ? table[i + 1]![j + 1]! + 1
+          : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+  const keptA = new Set<number>();
+  const keptB = new Set<number>();
+  for (let i = 0, j = 0; i < wa.length && j < wb.length; ) {
+    if (key(a[wa[i]!]!) === key(b[wb[j]!]!)) {
+      keptA.add(wa[i]!);
+      keptB.add(wb[j]!);
+      i++;
+      j++;
+    } else if (table[i + 1]![j]! >= table[i]![j + 1]!) i++;
+    else j++;
+  }
+  // Mark only texts mostly alike: where under half the words of the shorter
+  // are shared, the item was rewritten and marking every word says nothing.
+  const common = keptA.size > 0 && keptA.size * 2 >= Math.min(wa.length, wb.length);
+  const mark = (pieces: string[], kept: Set<number>, as: Piece["mark"]): Piece[] => {
+    const marked = (at: number) =>
+      common && at >= 0 && at < pieces.length && !kept.has(at) && !/^\s+$/.test(pieces[at]!);
+    const out: Piece[] = [];
+    for (const [at, text] of pieces.entries()) {
+      // A run of marked words, with the spaces between them, is one mark.
+      const inRun = marked(at) || (marked(at - 1) && marked(at + 1));
+      const last = out.at(-1);
+      if (last && Boolean(last.mark) === inRun) last.tokens.push(text);
+      else out.push(inRun ? { tokens: [text], mark: as } : { tokens: [text] });
+    }
+    return out;
+  };
+  return { was: mark(a, keptA, "removed"), now: mark(b, keptB, "added") };
+}
+
+/** A word or code span of a compared item, code as code. */
+function Token({ text }: { text: string }) {
+  if (text.length > 1 && text.startsWith("`") && text.endsWith("`"))
+    return <code className="rounded-sm bg-code-fill px-1 py-0.5">{text.slice(1, -1)}</code>;
+  return text;
+}
+
+/** A compared item's text as the page draws it: plain, with code spans.
+ *  The host has taken out links and bold; this takes out italics: a `*` or
+ *  `_` pair around words outside code that opens after a space or the start
+ *  and closes before a space, punctuation or the end, around text that starts
+ *  and ends with a letter or digit. Identifiers, paths and
+ *  globs (`__init__`, `snake_case`, `*.go,*.ts`) stay as written. */
+export function comparedText(text: string): string {
+  return text
+    .split(/(`[^`]*`)/)
+    .map((part, at) =>
+      at % 2
+        ? part
+        : part.replace(/(^|[\s("'])([*_])([^\W_](?:[^*_]*[^\W_])?)\2(?=$|[\s.,;:!?)"'])/g, "$1$3"),
+    )
+    .join("");
+}
+
+/** A compared item's pieces, the words it changed highlighted: `del` for
+ *  what the item before had, `ins` for what this one adds. */
+function Pieces({ pieces }: { pieces: Piece[] }) {
+  return pieces.map((piece, at) => {
+    const body = piece.tokens.map((text, position) => <Token key={position} text={text} />);
+    if (!piece.mark) return <span key={at}>{body}</span>;
+    const Mark = piece.mark === "added" ? "ins" : "del";
+    return (
+      <Mark
+        key={at}
+        data-mark={piece.mark}
+        className={cn(
+          "rounded-sm px-0.5",
+          // Removed words keep del's strike, so colour is not the only cue.
+          piece.mark === "added" && "no-underline",
+          piece.mark === "added" ? "bg-status-positive-bg" : "bg-status-critical-bg",
+        )}
+      >
+        {body}
+      </Mark>
+    );
+  });
+}
+
+/** What a compared row's item is against the one before it in the row. */
+type Compared = "same" | Change | null;
+
+/** Each item of a row against the one before it: `added` where the column
+ *  before has none, `removed` (on the earlier item) where the next has none,
+ *  `changed` where the words differ, `same` where they don't. */
+function compareRow(row: (ColumnItem | null)[]): Compared[] {
+  const out: Compared[] = row.map(() => null);
+  const text = (item: ColumnItem) =>
+    `${sameKey(comparedText(item.title))}\n${sameKey(comparedText(item.note ?? ""))}`;
+  for (let at = 1; at < row.length; at++) {
+    const [before, item] = [row[at - 1], row[at]];
+    if (before && item) {
+      out[at] = text(before) === text(item) ? "same" : "changed";
+      if (at === 1) out[0] = "same";
+    } else if (item) out[at] = "added";
+    else if (before && out[at - 1] !== "added" && out[at - 1] !== "changed")
+      out[at - 1] = "removed";
+  }
+  return out;
+}
+
+/** States of one thing compared item by item: each row lines an item up
+ *  with itself in the next column, the words that differ marked, and items
+ *  the same in every column drawn quieter (or, with "Show only changes",
+ *  left out). */
+function ComparedColumns({ data, rows }: { data: ColumnsData; rows: (ColumnItem | null)[][] }) {
+  const [focused, setFocused] = useState(false);
+  const count = data.columns.length;
+  const tones = data.columns.map((column) => toneOf(column.tone));
+  const many = count > 2;
+  const wide: Wide = many ? "@3xl" : "@md";
+  const across = data.columns.map(() => "minmax(0,1fr)").join(" auto ");
+  const plain = (text: string): Piece[] => [{ tokens: text.match(PIECES) ?? [] }];
+  // The words each item lacks or adds against its neighbours in the row.
+  const piecesOf = (
+    cells: (ColumnItem | null)[],
+    marks: Compared[],
+    at: number,
+    field: (item: ColumnItem) => string | undefined,
+  ): Piece[] => {
+    const [before, item, after] = [cells[at - 1], cells[at], cells[at + 1]];
+    const read = (cell: ColumnItem | null | undefined) => {
+      const text = cell && field(cell);
+      return text ? comparedText(text) : "";
+    };
+    const text = read(item);
+    if (!text) return [];
+    const was = read(before);
+    if (was && marks[at] === "changed") return wordDiff(was, text).now;
+    const now = read(after);
+    if (now && marks[at + 1] === "changed") return wordDiff(text, now).was;
+    return plain(text);
+  };
+  const compared = rows.map((row) => {
+    const cells = data.columns.map((_, at) => row[at] ?? null);
+    const marks = compareRow(cells);
+    const pieces = cells.map((_, at) => ({
+      title: piecesOf(cells, marks, at, (item) => item.title),
+      note: piecesOf(cells, marks, at, (item) => item.note),
+    }));
+    return { cells, marks, pieces, same: marks.every((mark) => mark === "same") };
+  });
+  const marked = compared.some((row) =>
+    row.pieces.some((cell) => [...cell.title, ...cell.note].some((piece) => piece.mark)),
+  );
+  const someSame = compared.some((row) => row.same);
+  const toggle = someSame && compared.some((row) => !row.same);
+  const shown = compared.filter((row) => !(focused && row.same));
+  const template = cn("grid min-w-0 gap-x-2 gap-y-1.5", WIDE[wide].across);
+  const legend = [
+    marked ? (
+      <li key="words" className="inline-flex items-center gap-1.5">
+        <span aria-hidden className="rounded-sm bg-status-critical-bg px-1 text-secondary">
+          was
+        </span>
+        <span aria-hidden className="rounded-sm bg-status-positive-bg px-1 text-secondary">
+          now
+        </span>
+        words that differ
+      </li>
+    ) : null,
+    someSame ? (
+      <li key="same" className="inline-flex items-center gap-1.5">
+        <span aria-hidden className={cn("h-3 w-4 rounded-sm border", SAME_BOX)} />
+        the same in each column
+      </li>
+    ) : null,
+  ].filter(Boolean);
+  return (
+    <div className="grid min-w-0 gap-3" style={{ "--columns-across": across } as CSSProperties}>
+      <div aria-hidden className={cn(template, "hidden", WIDE[wide].grid)}>
+        {data.columns.flatMap((column, at) => [
+          ...(at > 0 ? [<span key={`${at}-to`} className="w-5" />] : []),
+          <ColumnLabel
             key={at}
-            aria-label={column.label}
-            className="grid min-w-0 content-start gap-1.5"
+            label={column.label}
+            tone={tones[at]!}
+            count={rows.filter((row) => row[at]).length}
+          />,
+        ])}
+      </div>
+      <ol className="grid min-w-0 gap-3">
+        {shown.map(({ cells, marks, pieces, same }, position) => (
+          <li
+            key={position}
+            data-same={same || undefined}
+            className={cn(template, "border-subtle", WIDE[wide].stacked)}
           >
-            <h4 className={cn(BLOCK_LABEL, LABEL_INK[tone])}>
-              <InlineMarkdown>{column.label}</InlineMarkdown>
-            </h4>
-            <ul className="grid gap-1.5">
-              {column.items.map((item, position) => (
-                <li key={position} className="min-w-0">
-                  <Box title={item.title} note={item.note} tone={tone} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        );
-      })}
+            {cells.flatMap((item, at) => {
+              // Changed says something only beside rows that stayed the same;
+              // where every row differs, the highlighted words say it.
+              const change =
+                marks[at] === "same" || (marks[at] === "changed" && !someSame) ? null : marks[at];
+              const cell = (
+                <div
+                  key={at}
+                  // A column with no item here keeps its place side by side
+                  // and is left out while the columns stack.
+                  className={cn(
+                    "grid min-w-0 content-start gap-1",
+                    !item && cn("hidden", WIDE[wide].block),
+                  )}
+                >
+                  {/* The column's name: shown while stacked, read out side by side. */}
+                  {item ? (
+                    <span className={cn(BLOCK_LABEL, LABEL_INK[tones[at]!], WIDE[wide].srOnly)}>
+                      <InlineMarkdown>{data.columns[at]!.label}</InlineMarkdown>
+                    </span>
+                  ) : null}
+                  {item ? (
+                    <div
+                      data-change={change ?? undefined}
+                      className={cn(
+                        "relative grid min-w-0 content-start gap-0.5 rounded-md border px-3 py-2 [overflow-wrap:anywhere]",
+                        same ? SAME_BOX : "border-subtle bg-surface-card",
+                      )}
+                    >
+                      {change ? (
+                        <span className="mb-1 justify-self-start">
+                          <ChangePill change={change} />
+                        </span>
+                      ) : null}
+                      <span
+                        className={cn(
+                          "font-medium leading-snug",
+                          same ? "text-secondary" : "text-primary",
+                        )}
+                      >
+                        <Pieces pieces={pieces[at]!.title} />
+                      </span>
+                      {pieces[at]!.note.length > 0 ? (
+                        <span className="text-xs leading-snug text-secondary">
+                          <Pieces pieces={pieces[at]!.note} />
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+              if (at === 0) return [cell];
+              // An arrow only between two items; beside a gap, its room.
+              return [
+                cells[at - 1] && item ? (
+                  <ColumnArrow key={`${at}-to`} wide={wide} className="w-5" />
+                ) : (
+                  <span
+                    key={`${at}-to`}
+                    aria-hidden
+                    className={cn("hidden w-5", WIDE[wide].block)}
+                  />
+                ),
+                cell,
+              ];
+            })}
+          </li>
+        ))}
+      </ol>
+      {legend.length > 0 || toggle ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-subtle pt-2.5">
+          <ul
+            aria-label="Legend"
+            className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-tertiary"
+          >
+            {legend}
+          </ul>
+          {toggle ? (
+            <Toggle checked={focused} onChange={setFocused} className="ml-auto">
+              Show only changes
+            </Toggle>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -605,7 +1066,7 @@ function Head({ refused, flip }: { refused: boolean; flip: boolean }) {
 }
 
 type SequenceStep = SequenceData["steps"][number];
-type Change = "added" | "changed";
+type Change = "added" | "changed" | "removed";
 
 /** What the pull request does to a message: its `change`, or `added` for
  *  one an earlier review marked with the `new` tone. */
@@ -620,6 +1081,7 @@ const changeOf = (step: SequenceStep): Change | null =>
 const CHANGE: Record<Change, { bar: string; pill: string; label: string }> = {
   added: { bar: "bg-status-info", pill: "bg-status-info text-inverse", label: "New" },
   changed: { bar: "bg-status-caution", pill: "bg-status-caution text-inverse", label: "Changed" },
+  removed: { bar: "bg-status-critical", pill: "bg-status-critical text-inverse", label: "Removed" },
 };
 
 /** The bar at a changed message's left edge. */
@@ -749,7 +1211,7 @@ function Message({ step, at, names }: { step: SequenceStep; at: number; names: s
 
 /** What a message's colour means, for the tones a legend explains (`new`
  *  reads as added, `plain` needs no words). */
-const TONE_MEANS: Partial<Record<Tone, string>> = {
+export const TONE_MEANS: Partial<Record<Tone, string>> = {
   good: "works or is allowed",
   bad: "fails or is refused",
   muted: "outside this change",

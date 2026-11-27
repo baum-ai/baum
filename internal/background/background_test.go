@@ -249,15 +249,22 @@ func TestOfflineBackoffAndRecovery(t *testing.T) {
 	if s.state("acme/app").Error != "discovery_unavailable" || calls != 0 {
 		t.Fatal("offline failure hidden")
 	}
-	now = now.Add(time.Minute)
-	s.Sync(context.Background())
-	if s.state("acme/app").NextRefresh != now.Add(2*time.Minute) {
-		t.Fatal("no exponential backoff")
+	// A moment's failure is retried within seconds, then a longer one backs
+	// off from the interval, doubling.
+	if next := s.state("acme/app").NextRefresh; next != now.Add(5*time.Second) {
+		t.Fatalf("first retry in %v, want 5s", next.Sub(now))
+	}
+	for _, want := range []time.Duration{15 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute} {
+		now = s.state("acme/app").NextRefresh
+		s.Sync(context.Background())
+		if next := s.state("acme/app").NextRefresh; next != now.Add(want) {
+			t.Fatalf("retry in %v, want %v", next.Sub(now), want)
+		}
 	}
 	now = now.Add(time.Minute)
 	s.Sync(context.Background())
-	if d.polls != 2 {
-		t.Fatal("polled during backoff")
+	if d.polls != 5 {
+		t.Fatalf("polls=%d, polled during backoff", d.polls)
 	}
 	now = now.Add(time.Minute)
 	d.err = nil
@@ -446,7 +453,7 @@ func TestReconnectPollsFailedRepositoriesAtOnce(t *testing.T) {
 	s := &Service{Registry: registry{{Repository: "acme/a"}, {Repository: "acme/b"}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved(), Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		return discovery.Observation{Number: n}, nil
 	}}
-	for range 5 {
+	for range 7 {
 		now = maxTime(now, s.state("acme/a").NextRefresh)
 		s.Sync(context.Background())
 	}

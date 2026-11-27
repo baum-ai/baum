@@ -89,7 +89,8 @@ func framesOff(c CallContext) bool {
 	var focus struct {
 		Frames string `json:"frames"`
 	}
-	return c.HasPage && json.Unmarshal(c.Page.Focus, &focus) == nil && focus.Frames == "off"
+	p, ok := tileTarget(c)
+	return ok && json.Unmarshal(p.Focus, &focus) == nil && focus.Frames == "off"
 }
 
 // tilePull is the pull request a tile making tool works on, as add_tile
@@ -134,7 +135,7 @@ func (s *Server) tileMakingTools() []Tool {
 		},
 	}, {
 		Name: "start_tile",
-		Description: "Starts making a tile for the review on the pull request page the person has open: the page shows a pending card on the section where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. " + preferBuiltIn + " Call it first, when the person asks for a tile no built-in or library type gives (add_tile lists them); then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
+		Description: "Starts making a tile for the review on the pull request page this turn was sent from (it stays that pull request's if the person opens another page meanwhile): the page shows a pending card on the section where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. " + preferBuiltIn + " Call it first, when the person asks for a tile no built-in or library type gives (add_tile lists them); then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
 			"If you stop before adding it, the card says \"Not finished\" for a few minutes, with Remove. The result is the card's id (draft_<n>)." + tileRule,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":80,"description":"The tile's title, as the card shows it."},` + sectionArg + `},"required":["title"],"additionalProperties":false}`),
 		Edits:       true,
@@ -218,7 +219,7 @@ func (s *Server) tileMakingTools() []Tool {
 		},
 	}, {
 		Name: "add_custom_tile",
-		Description: "Adds the tile a check_tile check passed with data for this pull request to the review on the page the person has open, at once: the pending card becomes the tile, on its section. " +
+		Description: "Adds the tile a check_tile check passed with data for this pull request to the review on the pull request page this turn was sent from, at once: the pending card becomes the tile, on its section. " +
 			"check is the passed check's id (chk_…), made in the last hour. The section defaults to the pending card's. Tell the person it is added, that Remove on its menu takes it off, and that \"Save to library…\" on its menu (or asking you) saves it as a type for later reviews." + tileRule,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"check":{"type":"string","pattern":"^chk_[A-Za-z0-9_]{1,64}$"},` + draft + `,` + sectionArg + `},"required":["check"],"additionalProperties":false}`),
 		Edits:       true,
@@ -239,7 +240,7 @@ func (s *Server) tileMakingTools() []Tool {
 			if err != nil {
 				return "", err
 			}
-			return addResult(added)
+			return addResult(repository, number, added)
 		},
 	}}
 }

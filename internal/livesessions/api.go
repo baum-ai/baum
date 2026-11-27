@@ -29,7 +29,7 @@ func (t *Tracker) Handler() http.Handler {
 // Handler serves the tracker's list as Tracker.Handler does, each session
 // with its title (Listed), and GET
 // /api/live-sessions/{agent}/{id}/transcript: the transcript of a session
-// the list has, for as long as it has it. The answer is
+// the list has, or of one it no longer has. The answer is
 // {"available":true,"version","live","transcript","summary"?,"images"?}, the
 // transcript as GET /api/sessions/{id} answers it, the session's latest
 // compaction summary (masked) and the media types of the images pasted with
@@ -37,7 +37,8 @@ func (t *Tracker) Handler() http.Handler {
 // version (?version=), so a window polling a session that did not change
 // receives a few bytes; or {"available":false,"live",
 // "code":"transcript_unavailable","message"} with why it is not served. A
-// session the tracker does not list is 404.
+// session the tracker does not list is read from the agent's own store by
+// its id, as an ended one.
 //
 // GET /api/live-sessions/{agent}/{id}/transcript/images/{turn}/{n} is the
 // n-th of those images (from 0), as it was pasted: images are not masked.
@@ -52,7 +53,9 @@ func (t *Transcripts) Handler() http.Handler {
 	mux.HandleFunc("POST /api/live-sessions/{agent}/{id}/end", t.handleEnd)
 	mux.HandleFunc("POST /api/live-sessions/{agent}/{id}/message", t.handleMessage)
 	mux.HandleFunc("GET /api/live-sessions/{agent}/{id}/transcript", func(w http.ResponseWriter, r *http.Request) {
-		answer, err := t.Get(r.Context(), r.PathValue("agent"), r.PathValue("id"))
+		// One the tracker no longer lists, such as a pull request's session
+		// that ended long ago, is found by its id in the agent's own store.
+		answer, err := t.Read(r.Context(), r.PathValue("agent"), r.PathValue("id"), "", "")
 		t.WriteAnswer(w, r, answer, err)
 	})
 	mux.HandleFunc("GET /api/live-sessions/{agent}/{id}/transcript/images/{turn}/{n}", t.handleImage)

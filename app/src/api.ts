@@ -985,6 +985,12 @@ export function navigate(href: string) {
   writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
 }
+/** Opens one of the app's own addresses in the current entry's place, so
+ *  Back skips the address it replaces. */
+export function redirect(href: string) {
+  writeHistory(href, true);
+  dispatchEvent(new PopStateEvent("popstate"));
+}
 /** Opens a page outside the app, as a link to it would. */
 export { openExternal } from "./outside-links";
 /** A job's own page: everything kept about it and its transcript. */

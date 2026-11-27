@@ -101,7 +101,13 @@ without changing what is stored. The preload applies the saved theme before
 the first paint of every page of the app's windows: it asks the main process
 for it synchronously and sets it on the document element as soon as the
 parser creates it, and the page applies the live one right after. Without a
-saved theme the screens follow the system's light or dark.
+saved theme the screens follow the system's light or dark. The main
+window's background colour is the screens' page surface under the active
+theme (`windowBackground` in `electron/main/theme.ts`), updated when the
+theme or the system's appearance changes, so a dark theme opens without a
+white flash. The daemon's launch page, which shows for a moment between the
+connecting screen and the application, paints the application's canvas
+colour and shows its status only when the launch is slow or fails.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. The app
 serves `dist/` as `app://bundle`, so setup stays on its own origin with its
@@ -279,6 +285,12 @@ warning, since such a shell may skip `~/.bashrc` or `~/.zshrc`. An AppImage's
 runtime puts its mount (`$APPDIR/usr/bin`, which holds the bundled baum) first
 on the app's PATH; the app removes it from the PATH of every baum it runs, so
 the daemon never inherits it and setup never reports it as a different baum.
+On Linux the app also drops, at start, every environment entry inside another
+AppImage's mount (a `.mount_` directory other than its own `APPDIR`), and
+leaves a working directory inside one for the home directory. An AppImage
+started by another inherits that one's PATH, `LD_LIBRARY_PATH` and GTK and
+XDG variables: the Tauri app's updater started the Electron app that way, so
+the old app's mount stayed alive with its bundled baum first on the PATH.
 
 The status also names each detected agent CLI's path and version and whether
 baum supports that version. When one is too old, the agent's row says so,
@@ -459,8 +471,12 @@ The daemon outlives the app, so the app's presence is a tray icon.
   when it loses focus or on Escape. As in a native menu, `↓` and `↑` move
   through its items (from the first or last, wrapping), `Home` and `End` go
   to either end, and `Enter` or `Space` presses the focused one. The right
-  click keeps the full menu. Linux tray hosts
-  report no clicks, so Linux has the menu only. The panel is the bundled
+  click keeps the full menu. Linux has no panel. In the Tauri shell its
+  tray hosts report no clicks, so Linux has the menu only; in the Electron
+  shell a left click opens baum (as Open baum does) and the right click shows
+  the menu. Which click activates the icon is the host's choice: a double
+  click on some, and GNOME's AppIndicator extension shows the menu on a left
+  click. The panel is the bundled
   `tray.html`, created hidden at startup.
 - **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
   disabled line such as "3 pull requests in your Inbox", the tooltip appends
@@ -814,8 +830,9 @@ doing anything (`electron/main/zoom.ts`).
 - No page reaches Node.js or Electron: every window has context isolation,
   a sandboxed renderer and preload, no Node.js integration and no
   `<webview>`, and no web contents the app did not set up opens a window or
-  attaches a webview. Pages of the app's origins may ask for notifications
-  and clipboard writes; every other permission, and every request from
+  attaches a webview. Pages of the app's origins may ask for notifications,
+  clipboard writes and full screen (a video's full-screen button; Esc
+  leaves it); every other permission, and every request from
   another origin, is refused.
 - Commands go over one IPC channel. The guard (`electron/main/bridge.ts`)
   runs one only when it comes from the main frame of one of the app's own
@@ -1001,6 +1018,8 @@ so the harness can tell the page's calls from a frame's. It fails if:
 - the page's own `target="_blank"` link does not open the browser exactly
   once, a same-window link to another site is not refused, or a link to the
   daemon's own page does not navigate;
+- a click on the page's video does not put it in full screen, or Esc does
+  not leave it;
 - `open_link` does not open a link once, a second within the second is not
   dropped, or a `file:`, `data:`, `javascript:`, loopback or userinfo URL is
   not refused; `window.open` in a burst opens more than once, every 100 ms
@@ -1174,8 +1193,8 @@ release a test version, so an installed app only ever trusts the release key.
   counts as failed without a request. A status without a `pid` is not
   checked.
 - Only the main frame of a page on the app's own origins gets the
-  notification and clipboard-write permissions; frames inside a page, and
-  opaque origins, never do.
+  notification, clipboard-write and full-screen permissions; frames inside a
+  page, and opaque origins, never do.
 - The app's identifier is `com.usebaum.desktop`, the Tauri app's, so a copy
   that updated from it keeps its `desktop.json` and stable `baum` (see Bridge
   release). Chromium's files go in `chromium/` under the same folder.
@@ -1376,6 +1395,7 @@ the CPUs it had. The scenarios:
 | `filter` | `/` on the Inbox, type `retry` a key at a time, Enter to search titles; reports the Inbox's rows before and after | the Inbox's filter |
 | `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled; each must switch | two inboxes |
 | `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
+| `transcript` | From the Sessions page, open the largest session's transcript as the app's links do, until its messages show; then 20 presses of k back up it, each must mark the message before | a session with a transcript |
 | `pages` | Every page and its main sub-views, rendered two ways and ranked slowest first (below) | |
 
 `pages` is the scenario for making every page render fast: it ranks the
@@ -1487,6 +1507,141 @@ requests and the inboxes and Pull requests stay empty: `jk` skips, and
 sessions are recorded as ended, so in `session-panel` nothing streams: it
 measures the panel open on an ended conversation, and the summary says so.
 
+#### Comparing with a baseline
+
+`--baseline REF` says whether this checkout is faster or slower than REF
+(a commit, branch or tag), for people and agents who keep a change only if
+it helps:
+
+```sh
+just desktop::profile cold-start --baseline origin/main
+just desktop::profile jk --baseline HEAD~1 --runs 12
+just desktop::profile review --baseline origin/main --metric long_frame_total
+```
+
+Both sides are this checkout's runner and scenarios, so the journey is the
+same; only the app under test differs. The baseline's app is its profiling
+frontend, viewer, sidecar and the Electron shell's main process bundled
+(`pnpm build`), all built from REF by REF's own recipes in a worktree that
+comparisons share,
+`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/profile-baselines/worktree`, and
+kept by commit beside it, so comparing against the same commit again
+builds nothing. The three most recent stay, and any a running comparison
+uses. The shell is built per side because its connecting screen and
+commands are part of what cold start measures; Electron itself is this
+checkout's on both sides (the container's `node_modules`), so a change of
+Electron's version does not show. A REF from before the profiling runner
+has no `__baumPerf.progress()` to drive, and one from before the Electron
+app cannot be built or run as this checkout's is, so the comparison stops
+before building, saying so.
+
+Each side runs in its own headless instance, `NAME-head` and `NAME-base`
+(`profile-head` and `profile-base` by default): two containers, each with
+its own daemon, which keeps running between launches as it does for a
+user. One comparison runs per name; a second with the same name is
+refused, so give concurrent ones their own `--name`. Their homes are
+emptied, but for the Claude Code they installed (`~/.local/bin/claude` and
+`~/.local/share/claude`), and seeded afresh with the same seed
+(`--seed-data=SEED`, 1 by default) at the same path, both by this
+checkout's generator, since the dataset a seed gives changes between
+commits. So both start from the same data and from no cache; the runners
+check that the datasets' digests match before the first run. A home of its
+own per side means one version's daemon never migrates or caches what the
+other then reads. `--copy-data` and `--workspace` do not apply.
+
+Since the baseline's daemon opens data this checkout wrote, it must read
+this checkout's store schemas. A baseline whose application database
+(`internal/appdb`) is an older schema is refused before building; one whose
+other stores cannot read the data fails to launch, and the failure quotes
+the daemon and says so. Compare against a ref with the same schemas, such
+as a commit after the migration.
+
+The runners take turns through files in the comparison's directory: each
+side's warm-up, then the runs in pairs whose order alternates (head then
+base, base then head, ...), so drift from other work on the machine, and
+any advantage of going first or second, falls on both sides alike. From
+the first warm-up on, `profile.sh` freezes the waiting side's container
+(`docker pause`) and thaws it before its own turn, which starts only once
+the other side is frozen; a side is frozen only after it handed the turn
+on, so never inside a run. Without that, work the waiting side's daemon,
+app or compositor does in the background would slow the other side's runs,
+and a change that added background work would look faster. What a side
+does in the background still slows its own runs, which is the cost a
+person would see. Ctrl-C stops both instances and thaws them.
+
+Before the first warm-up, and before every run, the runner waits until its
+container has been quiet for a second (under a tenth of a CPU in each
+quarter second; at most 5 minutes before the first, 15 s before a run). A
+new home's daemon works through its clones after it starts, and frozen it
+only gets on with that in its own turns, so that work can ride along in a
+side's first runs; a side just thawed also catches up on what came due.
+In one comparison on a loaded machine (load average 5.7), the first seven
+runs used about 16 s of container CPU each against 9 s for the rest, for
+the same journey, and the spread of `jk`'s `interaction_median` grew from
+about 2 ms (interquartile range) to 23 ms. Each run records the load
+average as it began, the time it waited and its container's CPU
+(`conditions` in `metrics.json`), and the summary warns when the machine
+was busy or a side's runs did uneven work. `BAUM_PROFILE_PAUSE=0` and
+`BAUM_PROFILE_SETTLE=0` turn pausing and settling off, to measure what
+each does; they are diagnostic, not settings.
+
+`--runs N` is the runs a side, 8 by default. Single cold starts on a
+loaded machine vary from 680 to 970 ms, while medians of five agree within
+about 3%. How many runs the test below needs depends on how many metrics
+a scenario reports: with five a side the smallest possible p is 0.008,
+which passes Holm's adjustment only when six or fewer other metrics are
+tested, and the scenarios test 7 (jk) to 16 (cold-start), so then only
+the headline can reach a verdict (the summary says so). Eight lets every
+metric reach one on a clear change; more find smaller ones. On a quiet
+machine, A/A comparisons of `jk` varied `interaction_median` by about
+1.8 ms (standard deviation), so 8 runs a side detect a 3.5 ms change of it
+four times in five and 12 runs a 3 ms change; with the uneven work above
+the same took 25 and 15 ms. When the summary warns of a busy machine or
+uneven work, run again rather than add runs.
+
+The verdict per metric: the two-sided Mann-Whitney U test, exact (every
+way to split the pooled runs into the two groups, ties at their mean rank),
+which assumes no distribution and, with few runs, cannot give a small p:
+three runs a side never show a change. The scenario's headline metric (or
+`--metric`) is tested on its own at p < 0.05; the others together, with
+Holm's adjustment at 0.05. A change must also move the median at least
+2 ms (1 for counts) and 2%, or it is called negligible. Counts that are the
+same in every run of each side (presses, rows, requests, DOM nodes) are
+compared as they are: a difference there is no noise but a journey or work
+that differs, and the summary lists it first after the headline.
+
+When nothing changed, about one comparison in ten still flags some metric
+(the headline about one in twenty, a wrong "faster" one in forty; the
+others, together, about one in twenty). So decide on the headline, and run
+a comparison again before keeping a change it calls faster.
+
+| Scenario | Headline |
+| --- | --- |
+| `cold-start` | `launch_to_content` |
+| `jk` | `interaction_median` |
+| `review` | `open_content` |
+| `filter` | `keystroke_median` |
+| `switch-inboxes` | `switch_content_median` |
+| `session-panel` | `open_duration` |
+| `transcript` | `open_content` |
+| `pages` | none yet: a comparison needs `--metric` |
+
+A comparison goes to `target/profile/<scenario>-vs-<commit>-<time>/`:
+
+- `summary.md`: the verdict first (the headline, counts that differ, then
+  each other metric that changed, and whether the runs could show a change
+  at all), then every metric's median and range on both sides, the change,
+  p and the verdict, and both bundles' sizes.
+- `metrics.json`: every run's metrics with its side and its place in the
+  order, and each metric's comparison.
+- `head/` and `base/`: each side's own profile, as above.
+
+What a comparison cannot tell: both sides share the machine and its load
+(interleaving spreads it, it does not remove it); a frozen side thaws with
+its timers due, which fire before its run's page loads; and a change
+smaller than the floor, or than the runs' spread, shows as within noise
+rather than as no change.
+
 #### CPU profiles
 
 The runs say what is slow (interactions, frames, renders); the CPU profile
@@ -1496,6 +1651,18 @@ app:
 ```sh
 just desktop::profile review --runs 3
 just desktop::profile jk --runs 3
+```
+
+The `pages` scenario visits every page, so its CPU profile is theirs together.
+`--page LABEL` (repeatable) visits only the pages named, directly and by
+navigation from the Inbox, for a profile, or a comparison, of one page. A label
+is the summary's page column in any case, with dashes for spaces, as are the
+page metrics `--metric` names (`just` passes its arguments split on spaces):
+
+```sh
+just desktop::profile pages --page edit-inbox --runs 3
+just desktop::profile pages --page edit-inbox --baseline origin/main \
+  --metric page:edit-inbox:direct:content
 ```
 
 Each measured run (not the warm-up) samples the window's renderer main
@@ -1677,7 +1844,7 @@ GitHub release. Pushing the tag to baum-ai/baum runs
 
 ```text
 test, viewer-dist, desktop-test          checks of the tagged release commit
-  └─ release                             parent on main? goreleaser: CLI archives, draft release
+  └─ release                             parent on main or release/*? goreleaser: CLI archives, draft release
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
             ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
@@ -1772,6 +1939,20 @@ changelog notes, when the desktop files are attached. A tag with a pre-release s
 (`v1.2.3-rc.1`) becomes a GitHub pre-release. Full releases of the app do not
 update to it, since they read the latest full release; installed release
 candidates do, through `desktop-rc-updates`.
+
+To leave out work that is already on `main`, release from a release branch.
+Create `release/vX.Y.Z` in the monorepo at the last `main` commit to keep,
+and bring later changes into it as pull requests of cherry-picks from `main`
+(`git cherry-pick -x`, with `-m 1` for a merge commit). The publish workflow
+pushes its `oss/` history to the branch of the same name here, which forks
+from this `main` at the same commit, and Check runs on it. Once that is green,
+run the tagging workflow on the monorepo's `main` with `base` set to the
+branch's published commit. The ordering check compares what each release took
+from `main`: the commit where the previous release's parent leaves `main`
+must be in the new release's history. So the next release from `main` follows
+a release branch, but a release branch that forks before the previous
+release's `main` commit cannot be released after it. Fixes therefore land on
+`main` first.
 
 If a job fails, re-run the failed jobs: uploads replace files of the same
 name, and nothing is public until `desktop-publish` finishes, because the
@@ -1889,6 +2070,30 @@ the session panel's layout, the closed tour, and the viewer's conversation
 tab, width and folding), which go back to their defaults once. A deb is
 updated by installing the new deb, which has the same package name.
 
+On macOS the bundled baum moves. The Tauri app kept it at
+`baum.app/Contents/MacOS/baum`, which is the Electron app's own executable;
+the Electron app's baum is `Contents/Resources/bin/baum`. Two things still
+name the old path after the update, and the Electron app handles both
+(`electron/main/forward-cli.ts`, `Setup.moveTauriLinks` in
+`electron/main/onboarding.ts`):
+
+- The daemon the Tauri app started. It notices that its executable was
+  replaced and restarts itself from that path (`baum daemon run --detached
+  --port N`), and the git hooks it installed fall back to that path when
+  `baum` is not on Git's PATH. The packaged macOS app started with a baum
+  command (a first argument that is not a flag) runs the bundled baum with
+  the same arguments instead of starting the app: it leaves a daemon
+  running and exits at once, and waits for any other command and exits with
+  its status.
+- The command links the Tauri app made. Run through a link, the Electron
+  executable stops before any of the app's code runs, so `baum` and the
+  hooks would do nothing. At start, before it attaches to the daemon, the
+  app points each link it recorded at that old path at its bundled baum: in
+  a directory the user can write (such as `~/.local/bin`, where the Tauri app
+  put the link when it was on the PATH) without asking, and in a system
+  directory (`/usr/local/bin`) through the password prompt, once. A cancelled
+  prompt leaves the link, and setup and Settings offer Install for it.
+
 The release checks `latest.json` as installed Tauri copies read it
 (`updater-manifest.sh write`, then `electron`): every bundle is signed by the
 release key for the announced version and served from its expected URL, the
@@ -1898,7 +2103,9 @@ macOS archive holds one `baum.app` at its root with Electron's `app.asar`
 and an executable `baum-desktop`; the AppImage holds `resources/app.asar`).
 What it cannot check is an installed copy updating: try the first release
 candidate on a Mac and on Linux with the Tauri app installed (on macOS from
-`/Applications`) before the full release.
+`/Applications`) before the full release, and check on the Mac that the
+window stays on the daemon's page for a minute after the update and that
+`baum daemon status` in a new terminal reports the new version.
 
 Keep publishing `latest.json` for at least three stable releases after the
 first Electron one, so copies that were not running for a while still find

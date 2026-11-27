@@ -60,6 +60,8 @@ import (
 	"github.com/baum-ai/baum/internal/hookrefresh"
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/inboxqueue"
+	"github.com/baum-ai/baum/internal/integrations"
+	"github.com/baum-ai/baum/internal/integrations/linear"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -512,7 +514,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// token; the server is built after the executor, which reviewMCP
 		// learns once it is (Serve, below).
 		reviewMCP := &agentcontext.ReviewMCP{}
-		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary, ReviewMCP: reviewMCP.Attach}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary, ReviewMCP: reviewMCP.Attach,
+			Attributions: &commitattribution.Store{}}
 		// The tiles a person added that a version has no data for are
 		// filled beside the queue.
 		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Added: added, Log: log}
@@ -833,7 +836,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		drafts := &tiledrafts.Store{Changed: func(pr string) {
 			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		local := uiserver.LocalAPI{Drafts: drafts, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		local := uiserver.LocalAPI{Integrations: integrations.Handler(linear.New(ctx, os.Getenv("BAUM_LINEAR_CLIENT_ID"))), Drafts: drafts, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
@@ -960,8 +963,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Price: func(backend string, accounting *agent.Accounting) (*float64, string) {
 				return pricing.Active().BackendAccountingCost(backend, accounting)
 			},
-			Publish:    func(event console.Event) { _ = server.Publish("console", event) },
-			Transcript: conversationTranscript(transcripts),
+			Publish:          func(event console.Event) { _ = server.Publish("console", event) },
+			Transcript:       conversationTranscript(transcripts),
+			SessionDirectory: sessionDirectory(transcripts),
+			SessionRunning:   sessionRunning(transcripts),
 		})
 		if err != nil {
 			log.Warn("the session panel is off: its conversations did not open", "error", err)
@@ -1138,6 +1143,27 @@ func conversationTranscript(transcripts *livesessions.Transcripts) func(http.Res
 	return func(w http.ResponseWriter, r *http.Request, agent, id string) {
 		answer, err := transcripts.Read(r.Context(), agent, id, "", "")
 		transcripts.WriteAnswer(w, r, answer, err)
+	}
+}
+
+// sessionRunning tells the panel whether something else, such as the
+// person's terminal, runs a session it is about to write to; nil without
+// live transcripts.
+func sessionRunning(transcripts *livesessions.Transcripts) func(string, string, time.Time) bool {
+	if transcripts == nil {
+		return nil
+	}
+	return transcripts.Running
+}
+
+// sessionDirectory finds where a session the panel resumes worked; nil
+// without live transcripts.
+func sessionDirectory(transcripts *livesessions.Transcripts) func(context.Context, string, string) (string, error) {
+	if transcripts == nil {
+		return nil
+	}
+	return func(_ context.Context, agent, id string) (string, error) {
+		return transcripts.SessionDirectory(agent, id)
 	}
 }
 

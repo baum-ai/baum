@@ -93,6 +93,14 @@ const keyOf = (selection: Selection) =>
 const strip = (container: HTMLElement) =>
   container.querySelector<HTMLButtonElement>('button[aria-label="Expand sections"]');
 
+/** [ pressed on `target`, as a real key reaches the page. */
+const pressBracket = (target: EventTarget) =>
+  act(async () => {
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "[", bubbles: true, cancelable: true }),
+    );
+  });
+
 /** A host whose places are Home and two tiles, held in the rail's first rows. */
 function dummyPlaces(overrides: Partial<ReviewPlaces> = {}, seen?: ReviewPlaceContext[]) {
   const places: ReviewPlaces = {
@@ -347,6 +355,40 @@ describe("ReviewViewer places and the rail's fold", () => {
     expect(container.querySelector('[aria-label="Collapse sections"]')).not.toBeNull();
   });
 
+  it("folds and unfolds the rail with [ once wide, and leaves typing alone", async () => {
+    const pageWidth = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.hasAttribute("data-review-page") ? 1200 : 0;
+      });
+    try {
+      const container = await render(<Host>{viewer({ places: dummyPlaces() })}</Host>);
+      expect(strip(container)).toBeNull();
+      const input = document.createElement("textarea");
+      container.append(input);
+      await pressBracket(input);
+      expect(strip(container)).toBeNull();
+      await pressBracket(document.body);
+      expect(strip(container)).not.toBeNull();
+      // The keys stay where they were rather than on the strip.
+      expect(document.activeElement).not.toBe(strip(container));
+      await pressBracket(document.body);
+      expect(strip(container)).toBeNull();
+    } finally {
+      pageWidth.mockRestore();
+    }
+  });
+
+  it("opens and closes the rail's sheet with [ where the panes stack", async () => {
+    const container = await render(<Host>{viewer({ places: dummyPlaces() })}</Host>);
+    const rail = () => container.querySelector("#review-rail")!;
+    expect(rail().classList.contains("hidden")).toBe(true);
+    await pressBracket(document.body);
+    expect(rail().classList.contains("hidden")).toBe(false);
+    await pressBracket(document.body);
+    expect(rail().classList.contains("hidden")).toBe(true);
+  });
+
   it("never folds the rail, and draws no fold button, without places", async () => {
     const container = await render(<Host>{viewer()}</Host>);
     expect(container.querySelector('[aria-label="Expand sections"]')).toBeNull();
@@ -544,7 +586,7 @@ describe("ReviewViewer places: the rail's fold", () => {
     const expand = strip(container)!;
     expect(expand.getAttribute("aria-expanded")).toBe("false");
     expect(expand.getAttribute("aria-controls")).toBe("review-rail");
-    expect(expand.hasAttribute("aria-keyshortcuts")).toBe(false);
+    expect(expand.getAttribute("aria-keyshortcuts")).toBe("[");
     await act(async () => expand.click());
     const collapse = container.querySelector<HTMLButtonElement>(
       '[aria-label="Collapse sections"]',

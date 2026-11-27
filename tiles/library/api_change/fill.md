@@ -23,7 +23,7 @@ A configuration file or environment variable counts (surface `other`) only when 
 
 - `surface`, `method` (HTTP only, else null), `name` as callers write it: `/api/widgets/{id}`, `review_get`, `baum review --watch`, `schema/review-1.json`.
 - `change`: `added`, `removed`, `changed` or `deprecated` (still served, marked for removal).
-- `request` and `response`: for an added entry point, every field the handler reads or returns, from the types the registration leads to; for a changed one, only the fields that change. `before` and `after` are the type or meaning (`string`, `int, 1–100`, `array of Widget`); `required` is whether a caller must send the field or can rely on it.
+- `request` and `response`: for an added entry point, every field the handler reads or returns, from the types the registration leads to; for a changed one, the fields that change, and, as `unchanged` with `before` equal to `after`, a few fields the diff shows beside them when they help read the change (such as the field a new one replaces), never more than the changed ones. `before` and `after` are the type or meaning (`string`, `int, 1–100`, `array of Widget`); `required` is whether a caller must send the field or can rely on it.
 - `errors`: status, error or exit codes added, removed or changed, with what they mean.
 - `auth`: who may call it, when the code shows it (middleware, a token check). null when unknown.
 - `breaking`: true when an existing caller can break: the entry point is removed or renamed, a request field becomes required, a field is removed or changes type or meaning, auth is tightened, a status or error code changes, a default changes what callers get. An added entry point is not breaking. `breaking_reason` says who breaks and how, in one sentence.

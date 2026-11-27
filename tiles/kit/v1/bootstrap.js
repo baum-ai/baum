@@ -466,6 +466,31 @@ function measure(root) {
   };
 }
 
+/** Each <details> of a drawn root, by position, with its summary's words
+ *  and whether it is open. */
+function disclosuresOf(root) {
+  return [...root.querySelectorAll("details")].map((node) => ({
+    label: summaryText(node),
+    open: node.open,
+  }));
+}
+
+function summaryText(node) {
+  const summary = node.querySelector(":scope > summary");
+  return summary ? summary.textContent.trim() : "";
+}
+
+/** A render that draws the same disclosures again (the page sends an update
+ *  as cited code loads, not only when the data changes) leaves each open or
+ *  closed as the reader left it, matched by position and summary. */
+function keepDisclosures(root, before) {
+  const after = root.querySelectorAll("details");
+  for (let i = 0; i < after.length && i < before.length; i++) {
+    const node = after[i];
+    if (summaryText(node) === before[i].label && node.open !== before[i].open) node.open = before[i].open;
+  }
+}
+
 async function render() {
   const seq = ++renderSeq;
   const began = performance.now();
@@ -473,6 +498,7 @@ async function render() {
   const root = el("div");
   root.id = "baum-root";
   const old = docCall("getElementById", "baum-root");
+  const disclosures = old ? disclosuresOf(old) : null;
   if (old) old.replaceWith(root);
   else docGet("body").prepend(root);
   const draw = spec[state.face];
@@ -502,6 +528,7 @@ async function render() {
     if (result !== root && !(result instanceof Node && result.parentNode === root)) {
       insert(root, null, result, 0);
     }
+    if (disclosures) keepDisclosures(root, disclosures);
     state.renderMS = Math.round(performance.now() - began);
   } catch (error) {
     if (seq === renderSeq) report("script_error", describeError(error), stackPosition(error));
@@ -602,6 +629,7 @@ Object.defineProperty(window, "baum", {
     cite,
     diff,
     md,
+    compare,
     empty,
     fail,
     refs: Object.freeze({

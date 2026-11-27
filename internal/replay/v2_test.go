@@ -46,14 +46,16 @@ func TestV2Metrics(t *testing.T) {
 		}
 	}
 	cost := 0.5
-	levels, _ := json.Marshal(replay.V2Record{Schema: replay.V2RecordName, Repairs: 3, Levels: map[string]replay.V2Level{"map": {Calls: 4, Tokens: 10, Seconds: 2, CostUSD: &cost}}})
+	levels, _ := json.Marshal(replay.V2Record{Schema: replay.V2RecordName, Repairs: 3, Levels: map[string]replay.V2Level{"map": {Calls: 4, Tokens: 10, Seconds: 2, CostUSD: &cost},
+		"sections": {Calls: 3, Ran: 3, Kept: 1, Revised: 2}}})
 	am, err := g.ArtifactMetrics(func(name string) ([]byte, error) {
 		if name != "levels.json" {
 			return nil, errors.New("no " + name)
 		}
 		return levels, nil
 	})
-	if err != nil || am["v2_map_calls"] != 4 || am["v2_map_cost_usd"] != 0.5 || am[replay.MetricV2Repairs] != 3 {
+	if err != nil || am["v2_map_calls"] != 4 || am["v2_map_cost_usd"] != 0.5 || am[replay.MetricV2Repairs] != 3 ||
+		am[replay.MetricV2SectionsKept] != 1 || am[replay.MetricV2SectionsRevised] != 2 {
 		t.Fatalf("artifact metrics: %v %v", am, err)
 	}
 	for name := range am {

@@ -106,7 +106,7 @@ const SETTINGS_SHORTCUTS: Shortcut[] = [
     label: "Previous section",
     short: "sections",
   },
-  { keys: ["1–8"], label: "Go to a section", short: "section" },
+  { keys: ["1–9"], label: "Go to a section", short: "section" },
   { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section", short: "go in" },
   { keys: ["Space", "Enter"], label: "Change or press the focused control" },
   { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections", short: "back" },
@@ -137,6 +137,12 @@ const KEY_NAMES: Record<string, string> = {
  *  is the system's). As `aria-keyshortcuts` writes it, and as drawn. */
 export const PANEL_KEY = "Control+`";
 export const PANEL_KEY_LABEL = MAC ? "⌃`" : "Ctrl+`";
+
+/** The review's right-hand sidebar's key: Ctrl with `]`, which by itself
+ *  folds the code beside a section's Overview. As the viewer takes it, and
+ *  as drawn. */
+export const SIDE_PANE_KEY = "Control+]";
+export const SIDE_PANE_KEY_LABEL = MAC ? "⌃]" : "Ctrl+]";
 
 /** Whether a keydown is the session panel's key: Ctrl with the backtick, or
  *  with the key in its place on a layout where it types something else or
@@ -990,13 +996,25 @@ function shortcutGroups(
           short: "ask",
         },
         {
+          keys: ["["],
+          label: "Collapse or expand the list of sections on the left",
+          short: "list",
+        },
+        {
           keys: ["]"],
-          label: "Toggle the right-hand sidebar; opening it gives it the keys",
-          short: "sidebar",
+          label: "Collapse or expand the code beside a section's Overview",
+          short: "code",
         },
         {
           keys: ["h", "l"],
-          label: "In the sidebar: Details, Activity and Comments; Esc goes back to the review",
+          label:
+            "Previous or next of a section's views (Code, Tests, Session, Docs); in the sidebar, its Details, Activity and Comments, until Esc gives the keys back",
+          short: "views",
+        },
+        {
+          keys: [SIDE_PANE_KEY_LABEL],
+          label: "Toggle the right-hand sidebar; opening it gives it the keys",
+          short: "sidebar",
         },
         back,
       ],

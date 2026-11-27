@@ -75,6 +75,7 @@ export function ViewPane({
             list={list}
             ctx={ctx}
             idPrefix={prefix}
+            historical={historical}
             go={go}
           />
         ) : place.tab === "sections" ? (
@@ -93,7 +94,6 @@ export function ViewPane({
         ) : (
           <CodeTab
             document={snapshot}
-            review={review}
             files={files}
             file={file}
             list={list}

@@ -12,8 +12,9 @@ import (
 // worktree, whether the person's or one baum added, is matched by session
 // only: the worktree is a checkout the person may work in too, and stays
 // after the conversation closes, so the person's own sessions there stay
-// theirs. It reads an index kept in memory: a map lookup per directory above
-// cwd, under a lock no turn holds for long.
+// theirs. So is one that resumed a session in the person's own directory.
+// It reads an index kept in memory: a map lookup per directory above cwd,
+// under a lock no turn holds for long.
 func (s *Service) Owns(agent, id, cwd string) (string, bool) {
 	s.cmu.Lock()
 	defer s.cmu.Unlock()
@@ -41,7 +42,7 @@ func (s *Service) Owns(agent, id, cwd string) (string, bool) {
 // repository for Owns, as it is spelled and with its links resolved, since
 // hooks may report either. The links are resolved before the lock is taken.
 func (s *Service) indexDirectory(c Conversation) {
-	if c.Repository != "" {
+	if c.Repository != "" || c.Resumed {
 		return
 	}
 	dir := filepath.Clean(c.Directory)
@@ -64,7 +65,16 @@ func (s *Service) indexSession(c Conversation) {
 			delete(s.sessions, key)
 		}
 	}
-	if c.Session != "" {
-		s.sessions[agentcontext.SessionKey(c.Agent, c.Session)] = c.ID
+	if c.Session == "" {
+		return
 	}
+	key := agentcontext.SessionKey(c.Agent, c.Session)
+	// A closed conversation that resumed the person's own session gives it
+	// back, from any conversation that had it before: they may continue it
+	// in their terminal again.
+	if c.Resumed && c.State == StateClosed {
+		delete(s.sessions, key)
+		return
+	}
+	s.sessions[key] = c.ID
 }

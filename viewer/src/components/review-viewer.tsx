@@ -6,6 +6,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,6 +34,7 @@ import {
   triageRisks,
 } from "../review-document";
 import type { Selection } from "../review-selection";
+import { useUrlState } from "../navigation";
 import { reviewVersionChanges } from "../review-versions";
 import { useConversationCollapsed } from "../use-conversation-collapsed";
 import { type ConversationTab, useConversationTab } from "../use-conversation-tab";
@@ -95,7 +97,7 @@ import {
 } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { tabIds, tabPanelProps } from "./tabs";
-import { scrollerOf, scrollToTop } from "./scroller";
+import { readThrough, scrollerOf, scrollToTop } from "./scroller";
 import {
   Alert,
   Badge,
@@ -152,6 +154,9 @@ export type ReviewListSlot = {
     actions: ReviewViewerActions,
     focusTurn?: number,
   ) => ReactNode;
+  /** Opens an item somewhere of the host's own instead of in the pane, at
+   *  `focusTurn` of a session; false leaves it to the pane. */
+  open?: (id: string, focusTurn?: number) => boolean;
 };
 
 /** A rail row a host fills with one pane of its own, such as the decisions
@@ -489,6 +494,10 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** Folds the side pane to its strip while true, whatever the reader chose,
    *  for a host that shares the width with a pane of its own. */
   foldSidePane?: boolean;
+  /** The key that folds and opens the side pane: `]` unless the host keeps
+   *  that key for something of its own (the desktop app's section code),
+   *  which then takes Control+]. */
+  sidePaneKey?: "]" | "Control+]";
   /** Asks the host to write again the details of a section of the current
    *  version whose details failed; the section then offers a Retry. */
   onRetryDetails?: (sectionId: string) => void | Promise<unknown>;
@@ -582,8 +591,9 @@ function isWide(element: Element | null | undefined) {
 
 /** How wide a pane's content may run, centred in the pane. The Summary set
  *  this measure, and every pane keeps to it so that switching between them
- *  does not move the text. */
-const PANE_WIDTH = "mx-auto w-full max-w-[1480px]";
+ *  does not move the text. Content that marks itself `data-pane-full` (a
+ *  section with its side column open) takes the whole pane instead. */
+const PANE_WIDTH = "mx-auto w-full max-w-[1480px] has-[[data-pane-full]]:max-w-none";
 
 /** Keeps `--review-visible` on the element at the height of what scrolls it
  *  (the window, or a host's panel that scrolls on its own) below its top, or
@@ -696,6 +706,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   onVersionsShown,
   steps: stepsRef,
   foldSidePane = false,
+  sidePaneKey = "]",
   onRetryDetails,
   contextPending = false,
   openSource,
@@ -732,6 +743,32 @@ function ReviewWorkspace<F extends ReviewFile>({
   // reader reaches for either once the review has said where to look. Changes
   // and Risks stay open.
   const [sessionFocus, setSessionFocus] = useState<{ session: string; turn: number } | null>(null);
+  // A session the host opens on a page of its own leaves the review there,
+  // however it was selected (a row, a quote of its prompt, a link), at the
+  // prompt a link named, whether through the URL or a prompt anchor.
+  const openSession = useRef(sessions?.open);
+  openSession.current = sessions?.open;
+  const openedSession = selection.kind === "session" ? selection.id : null;
+  const turnParam = useUrlState().search.get("turn");
+  const openedTurn =
+    sessionFocus?.session === openedSession
+      ? sessionFocus?.turn
+      : turnParam && /^\d+$/.test(turnParam)
+        ? Number(turnParam)
+        : undefined;
+  // Asked again as the host's sessions arrive, for a page that opened on a
+  // session before it knew it.
+  const sessionsKnown =
+    sessions?.state.status === "ready"
+      ? sessions.state.items.map((item) => item.id).join("\n")
+      : (sessions?.state.status ?? "");
+  useLayoutEffect(() => {
+    if (openedSession) openSession.current?.(openedSession, openedTurn);
+  }, [openedSession, openedTurn, sessionsKnown]);
+  // A prompt anchor's turn is for that opening only.
+  useEffect(() => {
+    if (!openedSession) setSessionFocus(null);
+  }, [openedSession]);
   const [folded, setFolded] = useState({
     changes: false,
     risks: false,
@@ -813,12 +850,15 @@ function ReviewWorkspace<F extends ReviewFile>({
   const collapseRail = useRef<HTMLButtonElement>(null);
   const paneChoice = useRef({ chosenCollapsed: asideCollapsed, foldSidePane, sheet });
   paneChoice.current = { chosenCollapsed: asideCollapsed, foldSidePane, sheet };
+  const sidePaneLabel = sidePaneKey === "Control+]" ? "Ctrl+]" : "]";
   useEffect(() => {
+    const control = sidePaneKey === "Control+]";
     const toggle = (event: KeyboardEvent) => {
       if (
-        event.key !== "]" ||
+        // With Control held some layouts report no "]": its place says it.
+        (event.key !== "]" && !(control && event.code === "BracketRight")) ||
         event.defaultPrevented ||
-        event.ctrlKey ||
+        event.ctrlKey !== control ||
         event.metaKey ||
         event.altKey ||
         event.shiftKey ||
@@ -843,7 +883,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     };
     window.document.addEventListener("keydown", toggle);
     return () => window.document.removeEventListener("keydown", toggle);
-  }, [chooseAside, workspace]);
+  }, [chooseAside, workspace, sidePaneKey]);
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
@@ -1183,6 +1223,39 @@ function ReviewWorkspace<F extends ReviewFile>({
     railFocus.current = null;
     (target === "expand" ? expandRail : collapseRail).current?.focus();
   }, [railFolded]);
+  // [ folds or unfolds the rail once wide, as ] does the side pane, leaving
+  // the keys where they are; where the panes stack it opens or closes the
+  // rail's sheet.
+  const railFoldKey = useRef<() => boolean>(() => false);
+  railFoldKey.current = () => {
+    if (!isWide(workspace.current)) setSheet((current) => (current === "rail" ? null : "rail"));
+    else if (places) setRailChoice({ answer: hostFolds, folded: !railFolded });
+    // Without places the rail never folds, so the key is left alone.
+    else return false;
+    return true;
+  };
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (
+        event.key !== "[" ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.isComposing ||
+        window.document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('input, textarea, select, [contenteditable], [role="textbox"]')
+      )
+        return;
+      if (railFoldKey.current()) event.preventDefault();
+    };
+    window.document.addEventListener("keydown", toggle);
+    return () => window.document.removeEventListener("keydown", toggle);
+  }, []);
   /** The Summary's "view all" links: each opens the pane the rail row of the
    *  same name would; Team unfolds the side pane and puts the cursor in its
    *  text box. */
@@ -1443,6 +1516,10 @@ function ReviewWorkspace<F extends ReviewFile>({
       );
       const at = blocks.findIndex((block) => block.hasAttribute("data-review-block-active"));
       if (blocks.length === 0 || (at < 0 && direction < 0)) return;
+      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+      // A block taller than the pane (a long file's diff) is read through
+      // before the keys leave it.
+      if (at >= 0 && readThrough(blocks[at]!, direction > 0, !reduced)) return;
       const target = blocks[Math.max(0, Math.min(blocks.length - 1, at + direction))]!;
       for (const block of blocks) block.removeAttribute("data-review-block-active");
       target.setAttribute("data-review-block-active", "");
@@ -1450,7 +1527,6 @@ function ReviewWorkspace<F extends ReviewFile>({
       target.focus({ preventScroll: true });
       // The first block goes back to the top, so the review's header shows.
       if (target === blocks[0]) return scrollToTop(target);
-      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
       target.scrollIntoView?.({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
     },
   });
@@ -1787,8 +1863,8 @@ function ReviewWorkspace<F extends ReviewFile>({
       <span className="box-content hidden h-9 flex-none items-center border-b border-subtle pr-1 wide:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
-          title="Collapse side pane (])"
-          aria-keyshortcuts="]"
+          title={`Collapse side pane (${sidePaneLabel})`}
+          aria-keyshortcuts={sidePaneKey}
           onClick={() => chooseAside(true)}
         >
           <ChevronRightIcon />
@@ -1989,7 +2065,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                     <IconButton
                       ref={expandRail}
                       label="Expand sections"
-                      title="Expand sections"
+                      title="Expand sections ([)"
+                      aria-keyshortcuts="["
                       aria-expanded={false}
                       aria-controls="review-rail"
                       className="hidden h-9 w-9 text-secondary wide:flex"
@@ -2011,7 +2088,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                         <IconButton
                           ref={collapseRail}
                           label="Collapse sections"
-                          title="Collapse sections"
+                          title="Collapse sections ([)"
+                          aria-keyshortcuts="["
                           aria-expanded
                           aria-controls="review-rail"
                           className="h-8 w-8 text-secondary"
@@ -2516,8 +2594,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                   >
                     <IconButton
                       label={conversation ? "Expand conversation" : "Expand side pane"}
-                      title="Expand side pane (])"
-                      aria-keyshortcuts="]"
+                      title={`Expand side pane (${sidePaneLabel})`}
+                      aria-keyshortcuts={sidePaneKey}
                       className="h-9 w-9 text-secondary"
                       onClick={() => chooseAside(false)}
                     >

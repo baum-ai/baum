@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -44,6 +45,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/inboxes"
+	"github.com/baum-ai/baum/internal/integrations"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -548,7 +550,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			if strings.HasSuffix(r.URL.Path, "/11") && !updated() {
 				mergeableState = "behind"
 			}
-			body = map[string]any{"state": "open", "title": "Fixture pull request", "mergeable": !strings.HasSuffix(r.URL.Path, "/8"), "mergeable_state": mergeableState, "head": map[string]any{"sha": repo.Head, "ref": "feature", "repo": map[string]any{"full_name": headRepo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "acme/demo"}}, "user": map[string]any{"login": "author"}}
+			body = map[string]any{"state": "open", "title": "Fixture pull request", "body": "Tracks " + fixtureIssueURL, "mergeable": !strings.HasSuffix(r.URL.Path, "/8"), "mergeable_state": mergeableState, "head": map[string]any{"sha": repo.Head, "ref": "feature", "repo": map[string]any{"full_name": headRepo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "acme/demo"}}, "user": map[string]any{"login": "author"}}
 		} else {
 			var query struct {
 				Query     string
@@ -667,6 +669,28 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	writeFixtureTitle(home, "live-e2e", "Reuse the PR page in the local app",
 		"Serve saved reviews in the local app with the hosted PR page's viewer, without a second implementation.")
 	writeFixtureTitle(home, "needs-e2e", "Run the migration tests", "")
+	// One that ended before baum started, which no hook names: the Sessions
+	// page finds its transcript by its id, and the panel can continue it.
+	writeFixtureTranscript(filepath.Join(home, ".claude", "projects", "-fixture-live", "ended-e2e.jsonl"), "ended-e2e",
+		time.Now().Add(-26*time.Hour), []string{"Add a retry budget to the uploader", "Cover it with a test"})
+	// Another, which resume-session.spec.ts says a terminal runs again.
+	writeFixtureTranscript(filepath.Join(home, ".claude", "projects", "-fixture-live", "terminal-e2e.jsonl"), "terminal-e2e",
+		time.Now().Add(-27*time.Hour), []string{"Tighten the upload timeout"})
+	// A spec says a terminal runs a session by writing terminal-<id>, which
+	// a run before it may have left.
+	stale, _ := filepath.Glob(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "terminal-*"))
+	for _, path := range stale {
+		_ = os.Remove(path)
+	}
+	// Both ended long ago, so neither counts as written moments ago.
+	for _, id := range []string{"ended-e2e", "terminal-e2e"} {
+		old := time.Now().Add(-26 * time.Hour)
+		_ = os.Chtimes(filepath.Join(home, ".claude", "projects", "-fixture-live", id+".jsonl"), old, old)
+	}
+	inTerminal := func(id string) bool {
+		_, err := os.Stat(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "terminal-"+id))
+		return err == nil
+	}
 	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)
@@ -757,7 +781,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		drafts := &tiledrafts.Store{Changed: func(pr string) {
 			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		local := uiserver.LocalAPI{Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		local := uiserver.LocalAPI{Integrations: integrations.Handler(&fixtureIntegration{}), Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -791,6 +815,23 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			Transcript: func(w http.ResponseWriter, r *http.Request, agent, id string) {
 				answer, err := transcripts.Read(r.Context(), agent, id, "", "")
 				transcripts.WriteAnswer(w, r, answer, err)
+			},
+			// Continuing a session finds it as the daemon does, except that a
+			// terminal-<id> marker stands for a terminal that runs it, and the
+			// fixture's sessions worked in a directory made here.
+			SessionDirectory: func(_ context.Context, agentName, id string) (string, error) {
+				if inTerminal(id) {
+					return "", &livesessions.Unavailable{Reason: livesessions.RunningElsewhere}
+				}
+				dir, err := transcripts.SessionDirectory(agentName, id)
+				if err != nil || dir != "/fixture/live" {
+					return dir, err
+				}
+				dir = filepath.Join(home, "fixture-live")
+				return dir, os.MkdirAll(dir, 0o700)
+			},
+			SessionRunning: func(agentName, id string, since time.Time) bool {
+				return inTerminal(id) || transcripts.Running(agentName, id, since)
 			}})
 		if err != nil {
 			return daemon.App{}, err
@@ -1076,4 +1117,32 @@ func browserCustomTiles(t *testing.T, document []byte) []reviewv2.Tile {
 		out = append(out, reviewv2.Tile{ID: tile.ID, Type: def.Name, Owner: owner, Title: tile.Title, Data: tile.Data, State: tile.State, Definition: tile.Definition, Cites: []reviewv2.Anchor{}})
 	}
 	return out
+}
+
+type fixtureIntegration struct{ disconnected atomic.Bool }
+
+func (*fixtureIntegration) ID() string   { return "linear" }
+func (*fixtureIntegration) Name() string { return "Linear" }
+func (f *fixtureIntegration) Status(context.Context) integrations.Connection {
+	if f.disconnected.Load() {
+		return integrations.Connection{State: "disconnected"}
+	}
+	return integrations.Connection{State: "connected", Account: "Sam · Acme"}
+}
+func (f *fixtureIntegration) Connect(context.Context) (string, error) {
+	f.disconnected.Store(false)
+	return "https://linear.app/oauth/authorize", nil
+}
+func (f *fixtureIntegration) Disconnect(context.Context) error {
+	f.disconnected.Store(true)
+	return nil
+}
+
+const fixtureIssueURL = "https://linear.app/acme/issue/DEMO-42"
+
+func (f *fixtureIntegration) Issues(_ context.Context, description string) []integrations.Issue {
+	if f.disconnected.Load() || !strings.Contains(description, fixtureIssueURL) {
+		return nil
+	}
+	return []integrations.Issue{{Key: "DEMO-42", Title: "Improve review navigation", State: "In progress", URL: fixtureIssueURL}}
 }

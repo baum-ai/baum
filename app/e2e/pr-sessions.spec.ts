@@ -48,10 +48,30 @@ test("a running session is one of the pull request's sessions, counted and liste
   await expect(page.getByRole("region", { name: "Sessions in progress" })).toHaveCount(0);
   await page.screenshot({ path: "test-results/pr-sessions-list.png" });
 
-  // Opened alone, it reads its transcript through the daemon's live record.
+  // Opened, it leaves the review for its own page on Sessions, where it can
+  // be continued, and Esc comes back to the review's list.
   await card.getByRole("button", { name: "Resolve the conflict with the base" }).click();
+  await expect(page).toHaveURL(/page=sessions&session=claude-code%3Arunning-on-7/);
   await expect(
     page.getByRole("heading", { name: "Resolve the conflict with the base" }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/pr-sessions-open.png" });
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/pane=sessions/);
+  await expect(card).toBeVisible();
+});
+
+test("a session that ended before baum started opens on the Sessions page from its id", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(await launchURL());
+  const sessions = page.getByRole("link", { name: "Sessions", exact: true }).first();
+  await sessions.click();
+  await page.goto(
+    page.url().replace(/\?.*$/, "?page=sessions&session=claude-code%3Aended-e2e&turn=2"),
+  );
+  const transcript = page.getByRole("region", { name: "Transcript", exact: true });
+  await expect(transcript.getByText("Cover it with a test", { exact: true })).toBeVisible();
+  await expect(transcript.getByText("Done: Add a retry budget to the uploader")).toBeVisible();
 });

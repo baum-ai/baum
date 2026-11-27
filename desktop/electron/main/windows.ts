@@ -116,11 +116,12 @@ export function guardNavigation(
   });
 }
 
-/** The permissions a page of the app may have: notifications and writing
- *  to the clipboard, and only in a main frame on the app's own origins. A
- *  frame inside a page (a tile, an embedded site) never gets one, even when
- *  it shares the page's origin. */
-const ALLOWED_PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write"]);
+/** The permissions a page of the app may have: notifications, writing to
+ *  the clipboard and full screen (a video's full-screen button; Esc leaves
+ *  it), and only in a main frame on the app's own origins. A frame inside a
+ *  page (a tile, an embedded site) never gets one, even when it shares the
+ *  page's origin. */
+const ALLOWED_PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write", "fullscreen"]);
 
 /** Which frame asks for a permission, as Electron describes it. */
 export interface PermissionFrame {

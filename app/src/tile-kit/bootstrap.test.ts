@@ -89,6 +89,32 @@ describe("the handshake", () => {
     expect(f.document.querySelectorAll("#baum-root")).toHaveLength(1);
   });
 
+  it("keeps each disclosure as the reader left it across an update", async () => {
+    const f = open(`baum.tile({
+      glance: () => null,
+      detail: ({ data }) => baum.html\`\${data.cards.map((c) => baum.html\`<details open=\${c.open}><summary>\${c.label}</summary><p>x</p></details>\`)}\`,
+    });`);
+    const cards = [
+      { label: "Code", open: true },
+      { label: "Code", open: false },
+      { label: "Statement", open: false },
+    ];
+    f.init({ data: { cards } });
+    await f.next("ready");
+    const shown = () => [...f.root().querySelectorAll("details")].map((d) => d.open);
+    const [first, second] = f.root().querySelectorAll("details");
+    first!.open = false;
+    second!.open = true;
+    f.send({ protocol: "baum.tile/1", kind: "update", data: { cards }, refs: {} });
+    await f.next("ready", 2);
+    expect(shown()).toEqual([false, true, false]);
+    // A disclosure whose summary changed in its place is drawn as the tile asks.
+    const renamed = [cards[0], { label: "Other", open: false }, cards[2]];
+    f.send({ protocol: "baum.tile/1", kind: "update", data: { cards: renamed }, refs: {} });
+    await f.next("ready", 3);
+    expect(shown()).toEqual([false, false, false]);
+  });
+
   it("waits for an asynchronous render", async () => {
     const f = open(
       `baum.tile({ glance: () => null, detail: async () => { await new Promise((r) => setTimeout(r, 30)); return "late"; } });`,

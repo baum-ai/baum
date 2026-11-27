@@ -1,6 +1,6 @@
 //go:build unix
 
-package githubauth
+package credentialstore
 
 import (
 	"context"

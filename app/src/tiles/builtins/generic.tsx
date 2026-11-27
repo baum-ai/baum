@@ -6,11 +6,23 @@ import { type Column, Table } from "@baum/viewer/components/table";
 import { type Lang, languageForFence, languageForPath } from "@baum/viewer/highlight";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
+import { CodeExcerpt } from "./code-excerpt";
 
 export type ProseData = { text: string; anchors: Anchor[] };
 export type TableData = { columns: string[]; rows: string[][]; source: Anchor[] };
 export type DiagramData = { format: string; content: string; source: Anchor[] };
-export type CodeData = { language: string; content: string; caption?: string; source: Anchor[] };
+/** A code excerpt. A baum.review/2 code tile also names its hunk, the
+ *  lines of its new side the excerpt shows and those it highlights, and is
+ *  drawn as that hunk's diff. */
+export type CodeData = {
+  language: string;
+  content: string;
+  caption?: string;
+  source: Anchor[];
+  hunk?: string;
+  lines?: [number, number];
+  focus?: number[];
+};
 
 /** The generic tiles a composer writes for a point no other tile fits:
  *  prose, a table, a diagram's source and a code excerpt. */
@@ -129,13 +141,28 @@ function CodeDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as CodeData;
   // The caption is the tile's headline, which the detail's heading shows.
   const caption = data.caption && bare(data.caption) !== bare(tile.headline) ? data.caption : "";
+  const hunk = data.hunk ? ctx.review.index.hunks.find((each) => each.id === data.hunk) : undefined;
+  // The excerpt's header names and opens its hunk; the chips say the rest.
+  const anchors = hunk
+    ? (data.source ?? []).filter((anchor) => !(anchor.type === "hunk" && anchor.id === hunk.id))
+    : data.source;
   return (
     <div className="space-y-2">
-      <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
-        <HighlightedCode code={data.content} lang={codeLanguage(data, ctx.review)} />
-      </pre>
+      {hunk ? (
+        <CodeExcerpt
+          review={ctx.review}
+          hunk={hunk}
+          text={data.content}
+          lines={data.lines}
+          focus={data.focus ?? []}
+        />
+      ) : (
+        <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
+          <HighlightedCode code={data.content} lang={codeLanguage(data, ctx.review)} />
+        </pre>
+      )}
       {caption ? <p className="text-base text-tertiary">{caption}</p> : null}
-      <AnchorChips document={ctx.review} anchors={data.source} />
+      <AnchorChips document={ctx.review} anchors={anchors} />
     </div>
   );
 }

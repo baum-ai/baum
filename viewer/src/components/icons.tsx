@@ -149,20 +149,11 @@ export function ExternalLinkIcon(props: IconProps) {
   );
 }
 
-/** Four corners pointing out: fill the screen. */
-export function FullScreenIcon(props: IconProps) {
+/** Four corners pointing out: fit to the screen. */
+export function FitScreenIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
-    </Icon>
-  );
-}
-
-/** Four corners pointing in: leave full screen. */
-export function LeaveFullScreenIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" />
     </Icon>
   );
 }

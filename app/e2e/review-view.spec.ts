@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { REVIEW_1303 } from "../src/review-view/fixture-1303";
+import { HUNKS } from "../src/review-view/fixture-1303-hunks";
 import { reviewDocumentFor } from "../../viewer/test/review-document";
 import { launchURL } from "./inbox-helpers";
 
@@ -59,6 +60,7 @@ const PLACES = [
   ["context", "&pane=section&section=context"],
   ["encryption", "&pane=section&section=sec_encryption"],
   ["section-code", "&pane=section&section=sec_allowlist&section_view=code"],
+  ["section-tests", "&pane=section&section=sec_allowlist&section_view=tests"],
   ["section-session", "&pane=section&section=sec_relay&section_view=session"],
   ["code", "&pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go"],
 ] as const;
@@ -83,6 +85,64 @@ test("the rail switches places, keeps them in the address and survives a reload"
   await expect(page).toHaveURL(/tile=code/);
   await page.goBack();
   await expect(page).toHaveURL(/section=sec_allowlist/);
+  expect(errors).toEqual([]);
+});
+
+/** #1303 with its code tile showing `lines` of `hunk`, `focus` marked. */
+function withCode(hunk: string, lines: [number, number], focus: number[]) {
+  const text = (HUNKS.find((each) => each.id === hunk)?.diff?.lines ?? [])
+    .flatMap((line) =>
+      line.kind !== "remove" && line.new_line >= lines[0] && line.new_line <= lines[1]
+        ? [line.text]
+        : [],
+    )
+    .join("\n");
+  return {
+    document: {
+      ...REVIEW_1303,
+      tiles: REVIEW_1303.tiles.map((tile) =>
+        tile.id === "code_remote_routes" ? { ...tile, data: { hunk, lines, focus, text } } : tile,
+      ),
+    },
+  };
+}
+
+test("a code tile draws its hunk's diff, folds a long one and opens its file", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const tile = page.locator('[data-tile="code_remote_routes"]');
+  const shot = async (name: string) => {
+    if (!SHOTS) return;
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await tile.screenshot({ path: join(SHOTS, `${name}-${scheme}.png`) });
+    }
+    await page.emulateMedia({ colorScheme: "light" });
+  };
+  await open(
+    page,
+    `${PR7}&pane=section&section=sec_allowlist`,
+    withCode("h_shutdown", [992, 1003], [997, 998]),
+  );
+  const rows = tile.locator("tbody tr");
+  // The hunk's header, the removed line and the twelve lines.
+  await expect(rows).toHaveCount(14);
+  await expect(rows.nth(4)).toContainText("Shutdown:     queue.Shutdown,");
+  await expect(tile.locator("tbody tr[data-focus]")).toHaveCount(2);
+  await shot("code-tile-diff");
+  await open(
+    page,
+    `${PR7}&pane=section&section=sec_allowlist`,
+    withCode("h_routes", [17, 49], [45, 46]),
+  );
+  await expect(rows).toHaveCount(13);
+  await shot("code-tile-folded");
+  await tile.getByRole("button", { name: "Show all 33 lines" }).click();
+  await expect(rows).toHaveCount(34);
+  await tile.getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true }).click();
+  await expect(page).toHaveURL(/tile_item=oss%2Finternal%2Fuiserver%2Fremote\.go/);
   expect(errors).toEqual([]);
 });
 
@@ -114,7 +174,8 @@ test("a section's views switch, keep their place in the address and reset per se
   page,
 }) => {
   const errors = watchErrors(page);
-  await page.setViewportSize({ width: 1440, height: 900 });
+  // Narrow enough that the section's views share one column.
+  await page.setViewportSize({ width: 1280, height: 900 });
   await open(page, `${PR7}&pane=section&section=sec_allowlist`);
   const views = page.getByRole("tablist", { name: "Section views" });
   await expect(views.getByRole("tab")).toHaveText([
@@ -151,6 +212,234 @@ test("a section's views switch, keep their place in the address and reset per se
   );
   await page.goBack();
   await expect(page).not.toHaveURL(/section_view/);
+  expect(errors).toEqual([]);
+});
+
+test("a wide section shows its Overview beside its other views, which stay in sight", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  // The column starts collapsed, the Overview taking the section, until opened.
+  await expect(page.locator("[data-section-body]")).toBeVisible();
+  await expect(page.locator("[data-section-side]")).toHaveCount(0);
+  await page.getByRole("button", { name: "Expand section views" }).click();
+  const views = page.getByRole("tablist", { name: "Section views" });
+  // The Overview has its own column, so it leaves the row; Code is first.
+  await expect(views.getByRole("tab")).toHaveText(["Code 1", "Tests 1", "Session 0", "Docs 1"]);
+  await expect(views.getByRole("tab", { name: "Code" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("[data-section-body]")).toBeVisible();
+  const side = page.locator("[data-section-side]");
+  const diff = side.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" });
+  await expect(diff).toBeVisible();
+  const overview = await page.locator("[data-section-body]").boundingBox();
+  const beside = await side.boundingBox();
+  expect(beside!.x).toBeGreaterThan(overview!.x + overview!.width);
+  await views.getByRole("tab", { name: "Tests" }).click();
+  await expect(page).toHaveURL(/section_view=tests/);
+  await expect(page.locator("[data-section-body]")).toBeVisible();
+  // The views' column stays put while the Overview scrolls under it.
+  const top = (await side.boundingBox())!.y;
+  await page.mouse.wheel(0, 600);
+  await expect.poll(async () => (await side.boundingBox())!.y).toBeLessThanOrEqual(top);
+  await expect(views).toBeInViewport();
+  expect(await overflows(page)).toBe(false);
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    await page.evaluate(() => document.querySelector(".local-main")!.scrollTo({ top: 0 }));
+    await views.getByRole("tab", { name: "Code" }).click();
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `section-split-1920-${scheme}.png`) });
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
+test("Where this fits opens a file whole beside the context when wide, in a dialog when narrow", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.route(/\/api\/file\?/, (route) => {
+    const path = new URL(route.request().url()).searchParams.get("path")!;
+    const content = Array.from(
+      { length: 120 },
+      (_, n) => `func line${n + 1}() string { return "${path}" } // a long line of the file, whole`,
+    ).join("\n");
+    return route.fulfill({
+      json: { path, content: `package x\n\n${content}\n`, truncated: false },
+    });
+  });
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await open(page, `${PR7}&pane=section&section=context`);
+  const split = page.locator("[data-context-split]");
+  await expect(split).toBeVisible();
+  await expect(page.locator("[data-context-file]")).toHaveCount(0);
+  await page.getByRole("button", { name: "daemon.go" }).click();
+  const column = page.locator("[data-context-file]");
+  await expect(
+    column.getByRole("region", { name: "Contents of oss/internal/cli/daemon.go" }),
+  ).toBeVisible();
+  // Its diff never opens: the address stays on Where this fits.
+  await expect(page).not.toHaveURL(/tile=code/);
+  await expect(page.getByRole("button", { name: "daemon.go" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  const context = await split.locator("> div").first().boundingBox();
+  expect((await column.boundingBox())!.x).toBeGreaterThan(context!.x + context!.width);
+  // The code scrolls in the column, which stays in sight.
+  const code = column.getByRole("region");
+  await expect.poll(() => code.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect(column).toBeInViewport();
+  await page.getByRole("button", { name: "remote.go" }).click();
+  await expect(
+    column.getByRole("region", { name: "Contents of oss/internal/uiserver/remote.go" }),
+  ).toBeVisible();
+  expect(await overflows(page)).toBe(false);
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `context-file-1920-${scheme}.png`) });
+    }
+  }
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expect(split).toHaveCount(0);
+  await page.getByRole("button", { name: "server.go" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "oss/internal/uiserver/server.go" }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("region")).toContainText("package x");
+  if (SHOTS) {
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `context-file-900-${scheme}.png`) });
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
+test("a section keeps the reading measure until its side column opens, then takes the whole pane", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 2560, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const pane = page.locator("#review-section");
+  const section = page.locator("[data-section-split]");
+  await expect(page.locator("[data-section-body]")).toBeVisible();
+  const paneWidth = (await pane.boundingBox())!.width;
+  expect(paneWidth).toBeGreaterThan(1600);
+  expect((await section.boundingBox())!.width).toBeLessThanOrEqual(1480);
+  await page.getByRole("button", { name: "Expand section views" }).click();
+  await expect(page.locator("[data-section-side]")).toBeVisible();
+  await expect.poll(async () => (await section.boundingBox())!.width).toBeGreaterThan(1480);
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS, `section-split-2560-${scheme}.png`) });
+    }
+  }
+  await page.getByRole("button", { name: "Collapse section views" }).click();
+  await expect.poll(async () => (await section.boundingBox())!.width).toBeLessThanOrEqual(1480);
+  expect(errors).toEqual([]);
+});
+
+test("a wide section's excerpts open in its side column, which collapses and resizes", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist&section_view=tests`);
+  await page.getByRole("button", { name: "Expand section views" }).click();
+  const views = page.getByRole("tablist", { name: "Section views" });
+  await expect(views.getByRole("tab", { name: "Tests" })).toHaveAttribute("aria-selected", "true");
+  const side = page.locator("[data-section-side]");
+  const overview = page.locator("[data-section-body]");
+  const pageTop = () => page.evaluate(() => document.querySelector(".local-main")!.scrollTop);
+  const diff = side.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" });
+  // Opening a row shows its first excerpt beside the Overview, which stays
+  // where it was. (In sight first: Playwright scrolls to what it clicks.)
+  await overview.getByRole("button", { name: /Deny by default/ }).scrollIntoViewIfNeeded();
+  const before = await pageTop();
+  await overview.getByRole("button", { name: /Deny by default/ }).click();
+  await expect(page).toHaveURL(/section_view=code/);
+  await expect(views.getByRole("tab", { name: "Code" })).toHaveAttribute("aria-selected", "true");
+  await expect(diff).toBeInViewport();
+  await expect(overview).toBeVisible();
+  expect(await pageTop()).toBe(before);
+  // Closing it leaves the column as it is.
+  await views.getByRole("tab", { name: "Tests" }).click();
+  await overview.getByRole("button", { name: /Deny by default/ }).click();
+  await expect(views.getByRole("tab", { name: "Tests" })).toHaveAttribute("aria-selected", "true");
+  // An excerpt pressed opens Code there too.
+  await overview.getByRole("button", { name: /Deny by default/ }).click();
+  await views.getByRole("tab", { name: "Tests" }).click();
+  await overview
+    .getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true })
+    .and(page.getByTitle(/^Diff hunk/))
+    .click();
+  await expect(page).toHaveURL(/section_view=code/);
+  await expect(diff).toBeInViewport();
+  expect(await pageTop()).toBe(before);
+  // The views' row stays at the top of the column, above what scrolls.
+  const scroller = page.locator("[data-section-side-body]");
+  await scroller.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const row = (await page.locator("[data-section-side-tabs]").boundingBox())!;
+  expect(Math.abs(row.y - (await side.boundingBox())!.y)).toBeLessThan(2);
+  await expect(views).toBeInViewport();
+  // The column collapses to a strip, which the Overview widens into, and
+  // stays collapsed; an excerpt opens it again.
+  const narrow = (await overview.boundingBox())!.width;
+  await side.getByRole("button", { name: "Collapse section views" }).click();
+  await expect(side).toHaveCount(0);
+  await expect.poll(async () => (await overview.boundingBox())!.width).toBeGreaterThan(narrow);
+  await page.reload();
+  const expand = page.getByRole("button", { name: "Expand section views" });
+  await expect(expand).toBeVisible();
+  await overview.getByRole("button", { name: /Deny by default/ }).click();
+  await overview
+    .getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true })
+    .and(page.getByTitle(/^Diff hunk/))
+    .click();
+  await expect(
+    side.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" }),
+  ).toBeInViewport();
+  await side.getByRole("button", { name: "Collapse section views" }).click();
+  await expand.click();
+  await expect(views).toBeVisible();
+  // `]` folds it and opens it again; Control+] is the right-hand sidebar's.
+  await page.keyboard.press("]");
+  await expect(side).toHaveCount(0);
+  await page.keyboard.press("]");
+  await expect(views).toBeVisible();
+  const sidebarFolded = page.getByRole("button", { name: /^Expand (conversation|side pane)$/ });
+  const folded = await sidebarFolded.count();
+  await page.keyboard.press("Control+]");
+  await expect(sidebarFolded).toHaveCount(1 - folded);
+  await expect(views).toBeVisible();
+  await page.keyboard.press("Control+]");
+  await expect(sidebarFolded).toHaveCount(folded);
+  // Its divider resizes it from the keyboard too, and the width is kept.
+  const divider = page.getByRole("separator", { name: "Resize section views" });
+  const width = Number(await divider.getAttribute("aria-valuenow"));
+  await divider.focus();
+  await page.keyboard.press("Shift+ArrowLeft");
+  await expect(divider).toHaveAttribute("aria-valuenow", String(width + 64));
+  await page.reload();
+  await expect(divider).toHaveAttribute("aria-valuenow", String(width + 64));
+  expect(await overflows(page)).toBe(false);
   expect(errors).toEqual([]);
 });
 
@@ -300,6 +589,33 @@ test("tiles being made stand on their sections as pending cards", async ({ page 
   await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
 });
 
+test("the Overview shows the tiles added to it and the cards of those being made", async ({
+  page,
+}) => {
+  const added = {
+    id: "added_images_0a1b2c3d4e",
+    type: "prose",
+    owner: "overview",
+    title: "Screens after the change",
+    state: "ready" as const,
+    cites: [],
+    data: { text: "The Tests view lists each test by name.", anchors: [] },
+    added: true,
+    from: 1,
+  };
+  const document = { ...REVIEW_1303, tiles: [...REVIEW_1303.tiles, added] };
+  const drafts = [{ tile: "draft_1", title: "Retry timeline", phase: "writing" }];
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7, { document, drafts });
+  const tile = page.locator(`[role="figure"][data-tile="${added.id}"]`);
+  await expect(tile.getByRole("heading", { name: "Screens after the change" })).toBeVisible();
+  await expect(page.locator('[data-tile-draft="draft_1"]')).toContainText("Retry timeline");
+  // Neither stands on a section of How it works.
+  await open(page, `${PR7}&pane=section&section=context`, { document, drafts });
+  await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
+  await expect(page.locator(`[data-tile="${added.id}"]`)).toHaveCount(0);
+});
+
 /** A session at work on #7 and two decisions it made, as the daemon lists
  *  them, so the side pane has Sessions, Commits and Decisions. */
 async function withSessionWork(page: Page) {
@@ -381,8 +697,10 @@ test("the rail's Sessions, Commits and Decisions are plain rows that open their 
     .getByRole("button", { name: /Resolve the conflict with the base/ })
     .first()
     .click();
-  await expect(page).toHaveURL(/pane=session&session=running-on-7/);
-  // The group's row stays current on its item.
+  // A session opens on its own page, and Back returns to the list.
+  await expect(page).toHaveURL(/page=sessions&session=claude-code%3Arunning-on-7/);
+  await page.goBack();
+  await expect(page).toHaveURL(/pane=sessions/);
   await expect(sessions).toHaveAttribute("aria-pressed", "true");
   await rail.getByRole("button", { name: /^Decisions/ }).click();
   await expect(page).toHaveURL(/pane=decisions/);
@@ -420,6 +738,48 @@ test("Files changed names the open file once, in its diff's header", async ({ pa
   await expect(file.getByText("oss/internal/uiserver/remote.go", { exact: true })).toHaveCount(1);
 });
 
+for (const [width, height] of [
+  [1280, 860],
+  [720, 480],
+] as const) {
+  test(`Files changed reveals the selected diff at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: width === 720 ? "dark" : "light" });
+    await open(page, `${PR7}&pane=tile&tile=code`);
+    const files = page.getByRole("navigation", { name: "Changed files" });
+    const path = "oss/internal/uiserver/remote.go";
+    await files
+      .getByRole("button", { name: /^remote\.go/ })
+      .first()
+      .click();
+    const diff = page.getByRole("article", { name: `${path} diff` });
+    const header = diff.getByText(path, { exact: true });
+    await expect(header).toBeVisible();
+    if (SHOTS) {
+      mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({
+        path: join(SHOTS, `file-selected-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await expect(header).toBeInViewport();
+    await page.keyboard.press("j");
+    await expect(diff).toHaveCount(0);
+    await page.keyboard.press("k");
+    await expect(header).toBeInViewport();
+    await expect(page).toHaveURL(/tile_item=oss%2Finternal%2Fuiserver%2Fremote\.go/);
+
+    // A row lower in the scrollable list still opens a diff in view.
+    await files
+      .getByRole("button", { name: /^remote_test\.go/ })
+      .first()
+      .click();
+    const laterPath = "oss/internal/uiserver/remote_test.go";
+    const laterDiff = page.getByRole("article", { name: `${laterPath} diff` });
+    await expect(laterDiff.getByText(laterPath, { exact: true })).toBeInViewport();
+  });
+}
+
 test("every pull request opens on the rail, with no setting to choose a page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, "repository=acme%2Fdemo&pr=7");
@@ -456,6 +816,49 @@ test("a baum.review/1 version draws its own Summary and sections in the rail", a
   expect(errors).toEqual([]);
 });
 
+test("a section's tile, washed while j is on it, keeps a gutter round its content", async ({
+  page,
+}) => {
+  test.skip(!SHOTS, "a picture for REVIEW_VIEW_SHOTS");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const tile = page.locator('[data-tile="dg_allowlist"]');
+  await expect(tile).toBeVisible();
+  for (let i = 0; i < 20 && (await tile.getAttribute("data-review-block-active")) === null; i++)
+    await page.keyboard.press("j");
+  await expect(tile).toHaveAttribute("data-review-block-active", "");
+  // The wash reaches past the tile's edge, so the picture takes a margin.
+  mkdirSync(SHOTS, { recursive: true });
+  const box = (await tile.boundingBox())!;
+  const clip = { x: box.x - 24, y: box.y - 24, width: box.width + 48, height: box.height + 48 };
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.screenshot({ path: join(SHOTS, `section-active-tile-${scheme}.png`), clip });
+  }
+});
+
+test("j and k go through a points block row by row, and Enter opens the row", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const points = page.locator('[data-block="points"] [data-point]');
+  await expect(points.first()).toBeVisible();
+  const active = page.locator("[data-review-block-active]");
+  // To the first row: the list itself is not a stop.
+  for (let i = 0; i < 20; i++) {
+    await page.keyboard.press("j");
+    if ((await active.getAttribute("data-point")) !== null) break;
+  }
+  await expect(points.nth(0)).toHaveAttribute("data-review-block-active", "");
+  await page.keyboard.press("j");
+  await expect(points.nth(1)).toHaveAttribute("data-review-block-active", "");
+  await expect(page.locator('[data-block="points"][data-review-block-active]')).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(points.nth(1).getByRole("button").first()).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("k");
+  await expect(points.nth(0)).toHaveAttribute("data-review-block-active", "");
+});
+
 test("k back to the first block, and to the first place, shows the review's header again", async ({
   page,
 }) => {
@@ -479,4 +882,97 @@ test("k back to the first block, and to the first place, shows the review's head
   await expect.poll(top).toBeGreaterThan(0);
   await page.keyboard.press("Shift+K");
   await expect.poll(top).toBe(0);
+});
+
+test("shows the linked issue beneath the pull request title", async ({ page }) => {
+  // Other tests disconnect the fixture's GitHub account. Supply its PR
+  // description here and exercise the daemon's provider registry and resolver.
+  await page.route("**/api/prs/description?*", (route) =>
+    route.fulfill({ json: { body: "Tracks https://linear.app/acme/issue/DEMO-42" } }),
+  );
+  await signedIn(page, PR7);
+  const issue = page.getByRole("link", { name: /DEMO-42 Improve review navigation/ });
+  await expect(issue).toHaveAttribute("href", "https://linear.app/acme/issue/DEMO-42");
+  await expect(issue).toContainText("In progress");
+});
+
+test("a failed disconnect keeps the connection and can be tried again", async ({ page }) => {
+  let attempts = 0;
+  await page.route("**/api/integrations/linear/disconnect", (route) => {
+    attempts++;
+    return attempts === 1 ? route.fulfill({ status: 503 }) : route.fulfill({ status: 204 });
+  });
+  await page.route("**/api/integrations", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "linear",
+          name: "Linear",
+          state: attempts < 2 ? "connected" : "disconnected",
+          account: attempts < 2 ? "Sam" : undefined,
+        },
+      ],
+    }),
+  );
+  await signedIn(page, "page=settings&section=connections");
+  const panel = page.getByRole("region", { name: "Linear", exact: true });
+  await panel.getByRole("button", { name: "Disconnect" }).click();
+  await expect(page.getByText("Could not change the connection.", { exact: false })).toBeVisible();
+  await panel.getByRole("button", { name: "Disconnect" }).click();
+  await expect(panel.getByText("Disconnected", { exact: true })).toBeVisible();
+});
+
+test("j and k go through the Overview: its summary, the risk, the diagram and each ask", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7);
+  const active = page.locator("[data-review-block-active]");
+  await expect(page.getByRole("region", { name: "Risk" })).toBeVisible();
+  await page.keyboard.press("j");
+  await expect(active).toContainText("A paired phone can now reach the daemon");
+  await page.keyboard.press("j");
+  await expect(active).toHaveAttribute("aria-label", "Risk");
+  await page.keyboard.press("j");
+  await expect(active).toHaveAttribute("data-tile", "dg_shape");
+  await page.keyboard.press("j");
+  await expect(active).toContainText("Review on the phone");
+  await page.keyboard.press("j");
+  await expect(active).toContainText("An encrypted relay run by baum");
+  await page.keyboard.press("k");
+  await page.keyboard.press("k");
+  await expect(active).toHaveAttribute("data-tile", "dg_shape");
+  // The keys stay on the Overview: Shift+J is what leaves it.
+  await expect(page).not.toHaveURL(/pane=/);
+});
+
+test("j and k step through a section's files, and read through one taller than the pane", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  // Without smooth scrolling, each key's scroll is done when it is read.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist&section_view=code`);
+  const file = page.locator('[data-review-block]:has(article[aria-label$="remote.go diff"])');
+  await expect(file).toBeVisible();
+  const top = () => page.evaluate(() => document.querySelector(".local-main")!.scrollTop);
+  await page.keyboard.press("j");
+  await expect(file).toHaveAttribute("data-review-block-active", "");
+  // The file runs past the pane: j reads on down it, and k back up.
+  const before = await top();
+  await page.keyboard.press("j");
+  await expect.poll(top).toBeGreaterThan(before);
+  await expect(file).toHaveAttribute("data-review-block-active", "");
+  const further = await top();
+  await page.keyboard.press("k");
+  await expect.poll(top).toBeLessThan(further);
+  // On to its end, where j, on the section's last file, stops.
+  // (Pressed while polled: the diff can still grow as its code is drawn.)
+  await expect
+    .poll(async () => {
+      await page.keyboard.press("j");
+      return file.evaluate((el) => el.getBoundingClientRect().bottom <= window.innerHeight + 1);
+    })
+    .toBe(true);
+  await expect(file).toHaveAttribute("data-review-block-active", "");
 });

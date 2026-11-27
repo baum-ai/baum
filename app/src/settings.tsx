@@ -9,6 +9,7 @@ import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentType,
@@ -50,6 +51,7 @@ import {
   type GitHubConnection,
   type Repository,
   type DiagnosticReport,
+  type IssueParts,
   type DecisionSettings,
   type PromptEntry,
   type RepositoryPromptEntry,
@@ -69,6 +71,7 @@ import {
 } from "./repositories";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection } from "./list";
+import { IntegrationConnections } from "./integrations";
 import { GitHubConnectionSection } from "./github-connection";
 import { OrganizationAccessNotice } from "./organization-access";
 import { messages as githubMessages } from "./github-auth";
@@ -123,6 +126,7 @@ import {
 } from "./desktop/setup-model";
 import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
+import { ReportProblemDialog } from "./report-problem";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
 import { AppearanceSection } from "./settings-appearance";
@@ -185,6 +189,7 @@ export const settingsSections = [
   "appearance",
   "reviews",
   "fixes",
+  "panel",
   "connections",
   "computer",
   "prompts",
@@ -196,6 +201,7 @@ const sectionTitles: Record<SettingsSection, string> = {
   appearance: "Appearance",
   reviews: "Reviews",
   fixes: "Fixes",
+  panel: "Session panel",
   connections: "Connections",
   computer: "This computer",
   prompts: "Prompts",
@@ -215,7 +221,7 @@ const SECTION_CONTROLS = [
 
 /** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
  *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
- *  previous section from anywhere, and 1 to 8 jump to one. j/↓ and k/↑ step
+ *  previous section from anywhere, and 1 to 9 jump to one. j/↓ and k/↑ step
  *  through the shown section's controls; from the section list j goes to its
  *  first control and k to its last, as Enter, l or → go to the first. Enter or
  *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
@@ -1270,9 +1276,9 @@ const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
   { value: "right", label: "Right" },
 ];
 
-/** The session panel's setting: the agent and model a new session opens with
- *  (the fix agent's unless chosen), the access it gets, and the edge the
- *  panel opens from. */
+/** Settings › Session panel: the agent and model a new session opens with
+ *  (the fix agent's unless chosen), the access it gets and the edge of the
+ *  window the panel opens from. */
 export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly string[] }) {
   const [saved, setSaved] = useState<PanelSettings | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -1375,18 +1381,26 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
             onChange={(mode) => change({ mode })}
           />
         </SettingRow>
-        <SettingRow label="Opens from" detail="The edge of the window the panel slides in from.">
+        <SettingRow
+          label="Opens from"
+          detail="The edge of the window the session panel slides in from."
+        >
           <SegmentedControl
             label="Opens from"
             value={draft.position}
             items={panelPositions}
-            onChange={(position) => change({ position })}
+            onChange={(position) => {
+              // Saves only the position, so a model that follows the fix
+              // agent's is not saved as the panel's own.
+              setDraft({ ...draft, position });
+              save({ position });
+            }}
           />
         </SettingRow>
       </div>
       <p className="settings-footnote">
-        Changes apply to the next session you start; a session keeps the agent and access it started
-        with.
+        Agent and access changes apply to the next session you start; a session keeps the agent and
+        access it started with.
       </p>
     </section>
   );
@@ -1849,8 +1863,12 @@ export function SettingsPage({
     },
     {
       id: "fixes",
-      sub: `${defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews"} · session panel`,
+      sub: defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews",
       tone: fix && !fix.fixable ? "caution" : undefined,
+    },
+    {
+      id: "panel",
+      sub: "Agent, access and position",
     },
     {
       id: "connections",
@@ -2043,14 +2061,12 @@ export function SettingsPage({
             )
           ) : section === "fixes" ? (
             defaults ? (
-              <>
-                <FixesSection defaults={defaults} changed={agentsChanged} signedOut={signedOut} />
-                {/* The panel's agent follows the fix agent unless chosen. */}
-                <SessionPanelSection signedOut={signedOut} />
-              </>
+              <FixesSection defaults={defaults} changed={agentsChanged} signedOut={signedOut} />
             ) : (
               loading
             )
+          ) : section === "panel" ? (
+            <SessionPanelSection signedOut={signedOut} />
           ) : section === "prompts" ? (
             <PromptsSection prompts={prompts} />
           ) : section === "tiles" ? (
@@ -2074,11 +2090,12 @@ export function SettingsPage({
                 title="Connections"
                 detail={
                   setup.desktop
-                    ? "GitHub, where baum finds pull requests, and the coding agents it follows."
-                    : "GitHub, where baum finds pull requests."
+                    ? "Manage connected services and the coding agents baum follows."
+                    : "Manage the services connected to baum."
                 }
               />
               <GitHubConnectionSection onChanged={authChanged} />
+              <IntegrationConnections />
               {setup.desktop ? <AgentHooksPanel setup={setup} /> : null}
               {setup.feedback}
             </section>
@@ -2846,32 +2863,52 @@ function DiagnosticsDialog({
   close: () => void;
   onReport: (report: DiagnosticReport | null) => void;
 }) {
-  const dialog = useModal();
+  const [problem, setProblem] = useState<{ parts: IssueParts | null } | null>(null);
+  const reportOpener = useRef<HTMLButtonElement>(null);
+  const dialog = useModal(problem === null);
   const title = useRef<HTMLHeadingElement>(null);
   // Open on the title rather than on the close control, the first button.
   useEffect(() => title.current?.focus({ preventScroll: true }), []);
+  // The report replaces Diagnostics in the top layer while it is open.
+  // Return to its trigger when the Diagnostics dialog opens again.
+  useLayoutEffect(() => {
+    if (problem !== null) return;
+    reportOpener.current?.focus({ preventScroll: true });
+    reportOpener.current = null;
+  }, [problem]);
   return (
-    <dialog
-      ref={dialog}
-      onCancel={close}
-      aria-labelledby="diagnostics-dialog-title"
-      className={dialogClassName({ size: "wide" })}
-    >
-      <DialogHeader aside={<CloseButton onClick={close} />}>
-        <DialogTitle
-          ref={title}
-          id="diagnostics-dialog-title"
-          tabIndex={-1}
-          className="outline-none"
-        >
-          Check this computer
-        </DialogTitle>
-        <DialogDetail>
-          What baum needs here, what it found, and how to fix each problem.
-        </DialogDetail>
-      </DialogHeader>
-      <DiagnosticsSection onReport={onReport} />
-    </dialog>
+    <>
+      <dialog
+        ref={dialog}
+        onCancel={close}
+        aria-labelledby="diagnostics-dialog-title"
+        className={dialogClassName({ size: "wide" })}
+      >
+        <DialogHeader aside={<CloseButton onClick={close} />}>
+          <DialogTitle
+            ref={title}
+            id="diagnostics-dialog-title"
+            tabIndex={-1}
+            className="outline-none"
+          >
+            Check this computer
+          </DialogTitle>
+          <DialogDetail>
+            What baum needs here, what it found, and how to fix each problem.
+          </DialogDetail>
+        </DialogHeader>
+        <DiagnosticsSection
+          onReport={onReport}
+          onProblem={(parts, opener) => {
+            reportOpener.current = opener;
+            setProblem({ parts });
+          }}
+        />
+      </dialog>
+      {problem ? (
+        <ReportProblemDialog parts={problem.parts} close={() => setProblem(null)} />
+      ) : null}
+    </>
   );
 }
 

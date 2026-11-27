@@ -10,6 +10,7 @@ import {
 import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
 import { parseSort, sortBy } from "./pr-sort";
 import { SortButton } from "./sort-menu";
+import { useTopLayer } from "./top-layer";
 import {
   Fragment,
   useEffect,
@@ -22,7 +23,9 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { createPortal } from "react-dom";
 import { formatCount } from "@baum/viewer/components/format";
+import { type Activity, activityCount, activityText, sumActivity } from "./pr-activity";
 import {
   BranchIcon,
   ChevronDownIcon,
@@ -1013,13 +1016,19 @@ export function ColourSwatches({
   color: current,
   pick,
   className,
+  raised = false,
 }: {
   color: InboxColor;
   pick: (color: InboxColor) => void;
   className?: string;
+  /** Drawn as a menu over the page, in the top layer (`useTopLayer`). */
+  raised?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useTopLayer(ref, raised);
   return (
     <div
+      ref={ref}
       role="radiogroup"
       aria-label="Colour"
       className={className ? `inbox-swatches ${className}` : "inbox-swatches"}
@@ -1081,6 +1090,7 @@ function InboxHeadEdit({
           <ColourSwatches
             color={inbox.color}
             className="inbox-head-swatches"
+            raised
             pick={(color) => {
               colours.close();
               if (color !== inbox.color) update({ color });
@@ -1161,9 +1171,13 @@ export function UpNextPage({
   updateInbox,
   inboxSaves = 0,
   repositories = [],
+  activity = () => undefined,
   Link,
 }: {
   inbox: UpNextState;
+  /** What happened on a pull request since its page was last open
+   *  (`usePullActivity`), which its row counts. */
+  activity?: (pr: Entry["pull_request"]) => Activity | undefined;
   /** Every pull request read, open or not, for what a group's panel says of
    *  members the queue does not list, as those merged. */
   entries?: Entry[];
@@ -1856,6 +1870,7 @@ export function UpNextPage({
                     pick={select}
                     inGroup={!!group}
                     now={now}
+                    activity={activity(row.entry.pull_request)}
                   />
                 </li>
               );
@@ -1897,6 +1912,9 @@ export function UpNextPage({
                             on={entry.key === line?.key}
                             tabbable={entry.key === tabbable}
                             pick={select}
+                            activity={sumActivity(
+                              entry.members.map((member) => activity(member.entry.pull_request)),
+                            )}
                           />
                         </li>
                         {groupOpen(entry) ? entry.members.map((row) => member(row, entry)) : null}
@@ -1997,7 +2015,7 @@ export function UpNextPage({
           />
           <KeyBar place="inbox" className="upnext-keys" />
         </div>
-        <div ref={detail} className="upnext-detail">
+        <div key={line?.key} ref={detail} className="upnext-detail">
           {loading ? (
             <div className="upnext-panel">
               <LoadingStatus block>Loading your inbox…</LoadingStatus>
@@ -2125,6 +2143,7 @@ function ListRow({
   pick,
   inGroup = false,
   now,
+  activity,
 }: {
   row: Row;
   on: boolean;
@@ -2134,6 +2153,7 @@ function ListRow({
   inGroup?: boolean;
   /** For whether its pull request's data is too old to call a review current. */
   now: number;
+  activity?: Activity;
 }) {
   const pr = row.entry.pull_request;
   // The section heading already names the kind, so the line starts with the
@@ -2198,7 +2218,23 @@ function ListRow({
       {hot ? (
         <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
       ) : null}
+      <UnreadBadge activity={activity} />
     </button>
+  );
+}
+
+/** How many things happened on a pull request since its page was last open,
+ *  in the row's top right corner as a messaging app counts unread messages;
+ *  what they were is its tooltip and is read after the row. */
+function UnreadBadge({ activity }: { activity?: Activity }) {
+  const count = activityCount(activity);
+  if (!activity || count === 0) return null;
+  const text = `${activityText(activity)} since you last opened it`;
+  return (
+    <span className="upnext-unread" title={text}>
+      <span aria-hidden="true">{count > 99 ? "99+" : formatCount(count)}</span>
+      <span className="sr-only">, {text}</span>
+    </span>
   );
 }
 
@@ -2232,6 +2268,7 @@ function GroupListRow({
   on,
   tabbable,
   pick,
+  activity,
 }: {
   line: GroupRow;
   /** The group's latest review job. */
@@ -2241,6 +2278,8 @@ function GroupListRow({
   on: boolean;
   tabbable: boolean;
   pick: (key: string) => void;
+  /** Its members' activity, added up. */
+  activity?: Activity;
 }) {
   const { group, members } = line;
   const hot = members.some((member) => (member.entry.risk_score?.score ?? 0) >= 5);
@@ -2286,6 +2325,7 @@ function GroupListRow({
             title="Critical risk"
           />
         ) : null}
+        <UnreadBadge activity={activity} />
       </button>
     </div>
   );
@@ -3001,19 +3041,44 @@ function SnoozeMenu({
   snooze: (until: SnoozeEnd) => void;
   now: number;
 }) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuFocus = useMenuFocus(menu, () => setMenu(false));
+  const trigger = useRef<HTMLButtonElement>(null);
+  const { ref: popup, onKeyDown } = useMenuFocus(menu, () => setMenu(false));
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const anchor = trigger.current;
+    const panel = popup.current;
+    const floating = panel?.parentElement;
+    if (!anchor || !panel || !floating) return;
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const height = panel.offsetHeight;
+      const gap = panel.offsetTop;
+      const below = rect.bottom + gap;
+      const top = below + height <= window.innerHeight - 4 ? below : rect.top - height - gap;
+      floating.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - panel.offsetWidth - 4))}px`;
+      floating.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4)) - gap}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [menu, popup]);
   useEffect(() => {
     if (!menu) return;
     const close = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
+      const target = event.target as Node;
+      if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setMenu(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, [menu]);
+  }, [menu, popup]);
   return (
-    <div className="upnext-snooze" ref={menuRef}>
+    <>
       <button
+        ref={trigger}
         type="button"
         className={cn("upnext-secondary", SECONDARY)}
         aria-haspopup="menu"
@@ -3026,23 +3091,34 @@ function SnoozeMenu({
           s
         </kbd>
       </button>
-      {menu ? (
-        <div role="menu" className="upnext-menu" {...menuFocus}>
-          {options.map((option, index) => (
-            <button
-              key={option.label}
-              type="button"
-              role="menuitem"
-              onClick={() => snooze(option.until)}
-            >
-              <span className="upnext-menu-key">{index + 1}</span>
-              <span className="upnext-menu-label">{option.label}</span>
-              <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
+      {menu
+        ? createPortal(
+            <div className="fixed top-0 left-0 z-30">
+              <div
+                role="menu"
+                aria-label="Snooze"
+                className="upnext-menu"
+                ref={popup}
+                onKeyDown={onKeyDown}
+              >
+                {options.map((option, index) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => snooze(option.until)}
+                  >
+                    <span className="upnext-menu-key">{index + 1}</span>
+                    <span className="upnext-menu-label">{option.label}</span>
+                    <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 

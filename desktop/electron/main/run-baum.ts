@@ -44,6 +44,40 @@ export function childPath(app: AppProcess): string | null {
   return withoutDir(PATH, APPDIR, app.platform);
 }
 
+/** Takes other AppImages' mounts out of `app.env`, in place, and returns the
+ *  names of the variables it changed. An AppImage started by another one
+ *  inherits that one's runtime variables: the Tauri app's updater (0.2.x)
+ *  started its Electron successor with a PATH, LD_LIBRARY_PATH, GTK and XDG
+ *  variables pointing into the old mount, which stayed mounted while the new
+ *  app ran, so setup found the old bundled baum first on the PATH and the
+ *  daemon and terminals would have inherited it. An entry is another
+ *  AppImage's when it lies inside a `.mount_` directory other than this
+ *  app's own `APPDIR`; a variable left with no entries is removed. Linux
+ *  only, where AppImages run. */
+export function dropForeignMounts(app: AppProcess): string[] {
+  if (app.platform !== "linux") return [];
+  const changed: string[] = [];
+  for (const [name, value] of Object.entries(app.env)) {
+    if (value === undefined || !value.includes(".mount_")) continue;
+    const entries = value.split(":");
+    const kept = entries.filter((entry) => !inForeignMount(app, entry));
+    if (kept.length === entries.length) continue;
+    changed.push(name);
+    if (kept.every((entry) => entry === "")) delete app.env[name];
+    else app.env[name] = kept.join(":");
+  }
+  return changed;
+}
+
+/** Whether `path` lies inside another AppImage's mount (see
+ *  `dropForeignMounts`). */
+export function inForeignMount(app: AppProcess, path: string): boolean {
+  if (app.platform !== "linux") return false;
+  if (!path.split("/").some((part) => part.startsWith(".mount_"))) return false;
+  const own = runningAsAppImage(app) ? app.env.APPDIR : undefined;
+  return own === undefined || own === "" || !startsWith(path, own, app.platform);
+}
+
 /** `path` without the entries inside `dir`. */
 export function withoutDir(path: string, dir: string, platform: Platform): string {
   const kept = splitPaths(path, platform).filter((entry) => !startsWith(entry, dir, platform));

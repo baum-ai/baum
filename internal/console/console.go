@@ -62,6 +62,8 @@ const (
 	MaxMessageBytes = 64 << 10
 	// MaxTitleRunes bounds the title taken from the first message.
 	MaxTitleRunes = 80
+	// MaxQueued bounds the messages queued while a turn runs.
+	MaxQueued = 20
 	// MaxPages bounds the pages a conversation remembers being asked from;
 	// the oldest are dropped.
 	MaxPages = 20
@@ -83,8 +85,16 @@ const (
 var (
 	// ErrNotFound is a conversation that does not exist.
 	ErrNotFound = errors.New("conversation not found")
-	// ErrBusy is a message to a conversation whose agent is still answering.
+	// ErrBusy is queued messages sent now while the agent is still
+	// answering.
 	ErrBusy = errors.New("the agent is still answering the last message")
+	// ErrRunningElsewhere is a message to a conversation whose agent session
+	// another process runs now, such as the person's terminal that resumed
+	// it: two would write the same session.
+	ErrRunningElsewhere = errors.New("This session is running in a terminal. Continue it there, or exit it and try again in a minute.")
+	// ErrQueuedNotFound is a queued message that is no longer queued: sent
+	// or removed.
+	ErrQueuedNotFound = errors.New("the message is no longer queued")
 	// ErrClosed is a message to, or a stop of, a closed conversation.
 	ErrClosed = errors.New("the conversation is closed")
 	// ErrShuttingDown is a conversation opened or a message sent once the
@@ -142,6 +152,10 @@ type Conversation struct {
 	// in an empty directory instead of a checkout of it: no clone, or a head
 	// that could not be fetched or checked out.
 	DirectoryNote string `json:"directory_note,omitempty"`
+	// Resumed is set when the conversation continues a session the person
+	// started elsewhere, in the directory it worked in: the person's own,
+	// so the sessions there stay theirs.
+	Resumed bool `json:"resumed,omitempty"`
 	// Session is the agent's session id once the agent reported it; every
 	// later turn resumes it.
 	Session string `json:"session,omitempty"`
@@ -160,6 +174,24 @@ type Conversation struct {
 	// lower bound.
 	CostUSD     *float64 `json:"cost_usd,omitempty"`
 	CostPartial bool     `json:"cost_partial,omitempty"`
+	// Queued are the messages sent while a turn ran, oldest first. They go
+	// together as the next turn once the running one answers; a turn that
+	// was stopped or failed leaves them until the person sends them
+	// (SendQueued), sends another message (which they go before) or removes
+	// them.
+	Queued []Queued `json:"queued"`
+	// ArchivedAt is when the person archived it (Archive): the list leaves
+	// it out, and what baum made for it is gone.
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+}
+
+// Queued is a message waiting for the running turn to end.
+type Queued struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+	// Page is the page it was sent from.
+	Page     *agentcontext.PageContext `json:"page,omitempty"`
+	QueuedAt time.Time                 `json:"queued_at"`
 }
 
 // Defaults are what a conversation opens with when the request leaves them
@@ -224,7 +256,16 @@ type Options struct {
 	// whether or not the tracker lists it, never from a path a request
 	// names. Nil answers every conversation's transcript as unavailable.
 	Transcript func(w http.ResponseWriter, r *http.Request, agent, id string)
-	Log        *slog.Logger
+	// SessionDirectory is the directory the agent's session id worked in,
+	// read from its transcript, for a conversation that resumes it; its
+	// error says why it cannot be. Nil resumes none.
+	SessionDirectory func(ctx context.Context, agent, id string) (string, error)
+	// SessionRunning is whether something runs the agent's session id now
+	// with activity after since, when the conversation's last turn ended,
+	// such as a terminal that resumed it; a turn waits until nothing does.
+	// Nil finds none.
+	SessionRunning func(agent, id string, since time.Time) bool
+	Log            *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 }
@@ -318,7 +359,9 @@ func New(opts Options) (*Service, error) {
 		cancel()
 		return nil, err
 	}
-	for _, c := range all {
+	// Least recently updated first, so the conversation last updated on a
+	// session holds it, as it did before the restart.
+	for _, c := range slices.Backward(all) {
 		s.indexDirectory(c)
 		s.indexSession(c)
 	}
@@ -340,6 +383,11 @@ type CreateRequest struct {
 	// Page is the page the person opened it from, which decides its
 	// directory: a pull request's page gets a checkout of the pull request.
 	Page *agentcontext.PageContext `json:"page,omitempty"`
+	// Resume is a session of Agent to continue, such as one that ended in
+	// the person's terminal: the conversation resumes it in the directory
+	// it worked in, whatever Page is. A conversation already continuing it
+	// is answered instead of a new one.
+	Resume string `json:"resume,omitempty"`
 }
 
 // Create opens a conversation: it chooses and, when needed, makes its
@@ -397,14 +445,28 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	defer cancel()
 	defer context.AfterFunc(s.base, cancel)()
 	id := newID()
-	placed, err := s.place(ctx, id, request.Page)
+	var placed placement
+	var err error
+	if request.Resume != "" {
+		// One at a time per session, so two requests make one conversation.
+		defer s.lockRepository("resume:" + request.Agent + ":" + request.Resume)()
+		if c, ok, err := s.resuming(request.Agent, request.Resume); err != nil || ok {
+			return c, err
+		}
+		placed.dir, err = s.resumeDirectory(ctx, request.Agent, request.Resume)
+	} else {
+		placed, err = s.place(ctx, id, request.Page)
+	}
 	if err != nil {
 		return Conversation{}, err
 	}
+	if placed.unlock != nil {
+		defer placed.unlock()
+	}
 	now := s.opts.Now().UTC()
-	c := Conversation{ID: id, Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,
+	c := Conversation{ID: id, Session: request.Resume, Resumed: request.Resume != "", Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,
 		Repository: placed.repository, PullRequest: placed.number, Branch: placed.branch, CreatedWorktree: placed.created,
-		CreatedBranch: placed.newBranch, DirectoryNote: placed.note, Pages: []agentcontext.PageContext{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
+		CreatedBranch: placed.newBranch, DirectoryNote: placed.note, Pages: []agentcontext.PageContext{}, Queued: []Queued{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
 	if request.Page != nil {
 		c.Pages = addPage(c.Pages, *request.Page)
 	}
@@ -412,6 +474,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 		return Conversation{}, err
 	}
 	s.indexDirectory(c)
+	s.indexSession(c)
 	s.mu.Lock()
 	// The person is on the page they opened the conversation from, so it is
 	// the page every token, the new one included, has open.
@@ -427,6 +490,40 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	return c, nil
 }
 
+// resuming is the open conversation that already continues the agent's
+// session, if one does.
+func (s *Service) resuming(agentName, session string) (Conversation, bool, error) {
+	list, err := s.store.list()
+	if err != nil {
+		return Conversation{}, false, err
+	}
+	for _, c := range list {
+		if c.Agent == agentName && c.Session == session && c.State != StateClosed {
+			return c, true, nil
+		}
+	}
+	return Conversation{}, false, nil
+}
+
+// resumeDirectory is where the agent's session worked, which must still be
+// a directory for the agent to find the session again.
+func (s *Service) resumeDirectory(ctx context.Context, agentName, session string) (string, error) {
+	if s.opts.SessionDirectory == nil {
+		return "", invalid("this daemon cannot continue sessions")
+	}
+	dir, err := s.opts.SessionDirectory(ctx, agentName, session)
+	if err != nil {
+		return "", invalid("%s", err.Error())
+	}
+	if !filepath.IsAbs(dir) {
+		return "", invalid("The session's transcript does not say where it worked.")
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return "", invalid("The session worked in %s, which is no longer on this computer.", dir)
+	}
+	return dir, nil
+}
+
 // Get returns one conversation.
 func (s *Service) Get(_ context.Context, id string) (Conversation, error) {
 	return s.store.get(id)
@@ -437,14 +534,25 @@ func (s *Service) List(context.Context) ([]Conversation, error) {
 	return s.store.list()
 }
 
-// Send starts a turn: the agent answers message in the conversation's
-// session, in the background. page, when set, is the page it was sent from.
-// It answers at once, with the conversation running; Progress and the
-// events follow the turn.
+// Send sends a message from page (nil when unknown). While the agent answers
+// it is queued (Queued) and goes with the others queued as the next turn;
+// otherwise it starts a turn at once, after any messages still queued.
 func (s *Service) Send(_ context.Context, id, message string, page *agentcontext.PageContext) (Conversation, error) {
 	message = strings.TrimSpace(message)
 	if message == "" || len(message) > MaxMessageBytes || !utf8.ValidString(message) {
 		return Conversation{}, invalid("a message is 1 to %d bytes of text", MaxMessageBytes)
+	}
+	if page != nil {
+		if err := page.Validate(); err != nil {
+			return Conversation{}, invalidPage(err)
+		}
+	}
+	// Its session running while no turn of its own runs is another's, such
+	// as the person's terminal; UpdatedAt is when its last turn ended.
+	// Asked outside the lock: it may read Claude Code's process registry.
+	if c, err := s.store.get(id); err == nil && c.State != StateRunning && c.Session != "" &&
+		s.opts.SessionRunning != nil && s.opts.SessionRunning(c.Agent, c.Session, c.UpdatedAt) {
+		return Conversation{}, ErrRunningElsewhere
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -459,7 +567,122 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	case StateClosed:
 		return Conversation{}, ErrClosed
 	case StateRunning:
+		return s.queueLocked(c, message, page)
+	}
+	queued := append(slices.Clone(c.Queued), Queued{Text: message, Page: page})
+	if len(queuedText(queued)) > MaxMessageBytes {
+		return Conversation{}, invalid("the queued messages and this one are more than %d bytes together; remove some first", MaxMessageBytes)
+	}
+	// The person is on the page this message came from; queued messages
+	// sent later name theirs for their turn alone.
+	if page != nil {
+		s.setPageLocked(*page)
+	}
+	return s.startLocked(c, queued)
+}
+
+// queueLocked adds a message to a running conversation's queue. s.mu is
+// held.
+func (s *Service) queueLocked(c Conversation, message string, page *agentcontext.PageContext) (Conversation, error) {
+	if len(c.Queued) >= MaxQueued {
+		return Conversation{}, invalid("at most %d messages wait for the agent; remove one first", MaxQueued)
+	}
+	queued := append(slices.Clone(c.Queued), Queued{ID: newID(), Text: message, Page: page, QueuedAt: s.opts.Now().UTC()})
+	if len(queuedText(queued)) > MaxMessageBytes {
+		return Conversation{}, invalid("the queued messages are more than %d bytes together; remove one first", MaxMessageBytes)
+	}
+	c.Queued = queued
+	if err := s.store.save(c); err != nil {
+		return Conversation{}, err
+	}
+	s.publish(Event{Conversation: c.ID, Kind: EventQueued, State: c.State})
+	return c, nil
+}
+
+// RemoveQueued removes a message from the conversation's queue.
+func (s *Service) RemoveQueued(_ context.Context, id, queued string) (Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, err := s.store.get(id)
+	if err != nil {
+		return Conversation{}, err
+	}
+	i := slices.IndexFunc(c.Queued, func(q Queued) bool { return q.ID == queued })
+	if i < 0 {
+		return Conversation{}, ErrQueuedNotFound
+	}
+	c.Queued = slices.Delete(slices.Clone(c.Queued), i, i+1)
+	if err := s.store.save(c); err != nil {
+		return Conversation{}, err
+	}
+	s.publish(Event{Conversation: c.ID, Kind: EventQueued, State: c.State})
+	return c, nil
+}
+
+// SendQueued sends the queued messages now, as one turn: those a stopped or
+// failed turn left. It refuses while the agent answers (ErrBusy), since they
+// go by themselves once it has.
+func (s *Service) SendQueued(_ context.Context, id string) (Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping {
+		return Conversation{}, ErrShuttingDown
+	}
+	c, err := s.store.get(id)
+	if err != nil {
+		return Conversation{}, err
+	}
+	switch {
+	case c.State == StateClosed:
+		return Conversation{}, ErrClosed
+	case c.State == StateRunning:
 		return Conversation{}, ErrBusy
+	case len(c.Queued) == 0:
+		return Conversation{}, ErrQueuedNotFound
+	}
+	return s.startLocked(c, c.Queued)
+}
+
+// sendQueuedAfter starts the next turn with the queued messages once the
+// turn l ran has answered. A turn stopped (also by a Stop that lands as it
+// answers, before the next turn starts), failed or cut short by shutdown
+// leaves them queued for the person to send or remove.
+func (s *Service) sendQueuedAfter(id string, l *live) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping || l.stopped || s.live[id] != l {
+		return
+	}
+	c, err := s.store.get(id)
+	if err != nil || c.State != StateIdle || c.Error != "" || len(c.Queued) == 0 {
+		return
+	}
+	if _, err := s.startLocked(c, c.Queued); err != nil {
+		s.opts.Log.Warn("queued messages not sent", "conversation", id, "error", err)
+		c.Error = bounded("The queued messages were not sent: "+err.Error(), maxError)
+		if saveErr := s.store.save(c); saveErr == nil {
+			s.publish(Event{Conversation: id, Kind: EventFinished, State: c.State})
+		}
+	}
+}
+
+// queuedText is the messages as one prompt, a blank line between them.
+func queuedText(queued []Queued) string {
+	texts := make([]string, len(queued))
+	for i, q := range queued {
+		texts[i] = q.Text
+	}
+	return strings.Join(texts, "\n\n")
+}
+
+// startLocked starts a turn with the messages, the last one's page the
+// turn's, and empties the queue. s.mu is held.
+func (s *Service) startLocked(c Conversation, messages []Queued) (Conversation, error) {
+	id := c.ID
+	message := queuedText(messages)
+	var page *agentcontext.PageContext
+	for _, m := range messages {
+		page = cmp.Or(m.Page, page)
 	}
 	if info, err := os.Stat(c.Directory); err != nil || !info.IsDir() {
 		return Conversation{}, invalid("the conversation's directory %s is gone; start a new conversation", c.Directory)
@@ -469,10 +692,6 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 		return Conversation{}, err
 	}
 	if page != nil {
-		if err := page.Validate(); err != nil {
-			return Conversation{}, invalidPage(err)
-		}
-		s.setPageLocked(*page)
 		c.Pages = addPage(c.Pages, *page)
 	}
 	// The turn is about the page it is sent from, else the one open now: a
@@ -485,7 +704,7 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	if c.Title == "" {
 		c.Title = title(message)
 	}
-	c.State, c.Error, c.UpdatedAt = StateRunning, "", s.opts.Now().UTC()
+	c.State, c.Error, c.UpdatedAt, c.Queued = StateRunning, "", s.opts.Now().UTC(), []Queued{}
 	if err := s.store.save(c); err != nil {
 		return Conversation{}, err
 	}
@@ -493,7 +712,10 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	l.cancel, l.done, l.stopped = cancel, make(chan struct{}), false
 	l.progress = Progress{Conversation: id, State: StateRunning, Session: c.Session}
 	s.turns.Add(1)
-	go s.turn(ctx, c, message, l)
+	go func() {
+		s.turn(ctx, c, message, l)
+		s.sendQueuedAfter(id, l)
+	}()
 	s.publish(Event{Conversation: id, Kind: EventState, State: c.State})
 	return c, nil
 }
@@ -505,8 +727,12 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 	s.mu.Lock()
 	l := s.live[id]
 	var done chan struct{}
-	if l != nil && l.cancel != nil {
+	if l != nil {
+		// Also when the turn has just ended: its queued messages then wait
+		// for the person rather than going on their own.
 		l.stopped = true
+	}
+	if l != nil && l.cancel != nil {
 		l.cancel()
 		done = l.done
 	}
@@ -551,10 +777,11 @@ func (s *Service) Close(ctx context.Context, id string) (Conversation, error) {
 	if c.State == StateClosed {
 		return c, nil
 	}
-	c.State, c.UpdatedAt = StateClosed, s.opts.Now().UTC()
+	c.State, c.UpdatedAt, c.Queued = StateClosed, s.opts.Now().UTC(), []Queued{}
 	if err := s.store.save(c); err != nil {
 		return Conversation{}, err
 	}
+	s.indexSession(c)
 	s.publish(Event{Conversation: id, Kind: EventState, State: c.State})
 	return c, nil
 }

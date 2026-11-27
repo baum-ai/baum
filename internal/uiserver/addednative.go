@@ -116,7 +116,7 @@ func (a LocalAPI) addNative(ctx context.Context, c repos.Clone, number int, by s
 	if err := a.roomFor(ctx, pr, id); err != nil {
 		return AddedTile{}, err
 	}
-	section := shown.sectionFor(strings.TrimSpace(add.Section), reviewv2.HunkIDs(tile.Cites))
+	section := shown.place(strings.TrimSpace(add.Section), reviewv2.HunkIDs(tile.Cites))
 	if err := a.Added.Add(ctx, pr, addedtiles.Added{Tile: id, Kind: addedtiles.KindNative, Name: add.Type, Digest: addedtiles.NativeDigest, Section: section, By: by}); err != nil {
 		return AddedTile{}, err
 	}
@@ -137,23 +137,6 @@ func nativeTileID(typ string) (string, error) {
 	return "added_" + typ + "_" + hex.EncodeToString(b[:]), nil
 }
 
-// sectionFor is where a native tile added to the shown version goes, as
-// section is for a library tile: the section asked for (a tile asked for
-// stands for its section), else the one whose hunks it cites most, else
-// context; with neither, none, so the page places it.
-func (s shownVersion) sectionFor(asked string, hunks []string) string {
-	if owner, ok := s.owners[asked]; ok {
-		asked = owner
-		if owner == reviewv2.OwnerOverview {
-			asked = ""
-		}
-	}
-	if asked == "" && len(hunks) == 0 {
-		return ""
-	}
-	return reviewv2.OwnerFor(s.Review, asked, hunks)
-}
-
 // codeExcerpt is a code tile's data from what the agent named ({hunk,
 // lines}): the lines of the hunk's new side, read from the file at the
 // version's head, so the excerpt is the pull request's code and never the
@@ -161,7 +144,7 @@ func (s shownVersion) sectionFor(asked string, hunks []string) string {
 func (a LocalAPI) codeExcerpt(ctx context.Context, c repos.Clone, shown shownVersion, raw json.RawMessage) (json.RawMessage, reviewv2.Anchor, error) {
 	var code reviewv2.CodeData
 	if err := strictData(raw, &code); err != nil || code.Hunk == "" || code.Text != "" {
-		return nil, reviewv2.Anchor{}, errors.New(`A code tile's data is {"hunk": a hunk's id, "lines": [first, last]} (lines optional); the host reads the code`)
+		return nil, reviewv2.Anchor{}, errors.New(`A code tile's data is {"hunk": a hunk's id, "lines": [first, last], "focus": [line, …]} (lines and focus optional); the host reads the code`)
 	}
 	var hunk *bundle.Hunk
 	for _, h := range library.DiffOf(shown.Document) {
@@ -183,6 +166,10 @@ func (a LocalAPI) codeExcerpt(ctx context.Context, c repos.Clone, shown shownVer
 		}
 		first, last = code.Lines[0], code.Lines[1]
 	}
+	if len(reviewv2.FocusWithin(code.Focus, first, last)) != len(code.Focus) {
+		return nil, reviewv2.Anchor{}, fmt.Errorf("focus names each line once, within the excerpt, %d to %d", first, last)
+	}
+	code.Focus = reviewv2.FocusWithin(code.Focus, first, last)
 	if last-first+1 > maxCodeLines {
 		return nil, reviewv2.Anchor{}, fmt.Errorf("A code tile shows at most %d lines: name fewer with lines", maxCodeLines)
 	}

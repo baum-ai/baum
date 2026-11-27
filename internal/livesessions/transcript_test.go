@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -197,12 +198,13 @@ func TestTranscriptIsReadOnlyFromTheAgentsOwnStore(t *testing.T) {
 	if f.renders.Load() != 0 {
 		t.Fatalf("%d transcripts were rendered", f.renders.Load())
 	}
-	// A session the tracker does not list is not found, whatever the disk has.
+	// Get serves only a session the tracker lists; the route reads one it
+	// does not from the agent's own store, and says when that has none.
 	if _, err := f.live.Get(context.Background(), "claude-code", "s1.jsonl"); !errors.Is(err, ErrNotTracked) {
 		t.Fatalf("untracked: %v", err)
 	}
-	if code, _, _ := get(t, f.live.Handler(), "/api/live-sessions/codex/s1/transcript"); code != http.StatusNotFound {
-		t.Fatalf("another agent's session: %d", code)
+	if code, body, raw := get(t, f.live.Handler(), "/api/live-sessions/codex/s1/transcript"); code != http.StatusOK || body.Available {
+		t.Fatalf("another agent's session: %d %s", code, raw)
 	}
 }
 
@@ -356,5 +358,107 @@ func TestTranscriptReadsAnUntrackedSession(t *testing.T) {
 	// A tracked session reads as the tracker has it.
 	if answer, err := f.live.Read(ctx, "claude-code", "s1", "", ""); err != nil || answer.Session.State == StateEnded {
 		t.Fatalf("tracked = %+v, %v", answer.Session, err)
+	}
+}
+
+func TestTranscriptRouteReadsASessionTheTrackerNoLongerLists(t *testing.T) {
+	f := newTranscriptFixture(t)
+	ended := filepath.Join(f.home, ".claude", "projects", "-work-demo", "ended-1.jsonl")
+	write(t, ended, claudeTurn("ended-1", 1, "Fix the retry", "Done."))
+	code, body, raw := get(t, f.live.Handler(), "/api/live-sessions/claude-code/ended-1/transcript")
+	if code != http.StatusOK || !body.Available || body.Live || body.Transcript == nil {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if strings.Contains(raw, f.home) {
+		t.Errorf("the answer carries the home directory: %s", raw)
+	}
+}
+
+func TestSessionDirectoryIsWhereTheTranscriptSaysTheSessionWorked(t *testing.T) {
+	f := newTranscriptFixture(t)
+	// Tracked, and found by its id once the tracker no longer lists it.
+	ended := filepath.Join(f.home, ".claude", "projects", "-work-other", "ended-1.jsonl")
+	write(t, ended, `{"type":"user","cwd":"/work/other","sessionId":"ended-1","message":{"role":"user","content":"hi"}}`+"\n")
+	var missing *Unavailable
+	// Written moments ago, it may still be running where the tracker cannot see.
+	if err := os.Chtimes(ended, f.clock.now, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.live.SessionDirectory(AgentClaudeCode, "ended-1"); !errors.As(err, &missing) {
+		t.Errorf("a session written moments ago: %v", err)
+	}
+	quiet := f.clock.now.Add(-time.Hour)
+	if err := os.Chtimes(ended, quiet, quiet); err != nil {
+		t.Fatal(err)
+	}
+	// The transcript's directory is cleaned for this system's paths.
+	if dir, err := f.live.SessionDirectory(AgentClaudeCode, "ended-1"); err != nil || dir != filepath.Clean("/work/other") {
+		t.Errorf("ended-1: %q %v", dir, err)
+	}
+	// One a process runs, such as the person's terminal, though the tracker
+	// does not list it, is continued where it runs. Windows cannot tell a
+	// Claude Code process yet (proc_windows.go).
+	if runtime.GOOS != "windows" {
+		entry := filepath.Join(f.home, ".claude", "sessions", fmt.Sprintf("%d.json", os.Getpid()))
+		write(t, entry, fmt.Sprintf(`{"pid":%d,"sessionId":"ended-1","status":"idle"}`, os.Getpid()))
+		if _, err := f.live.SessionDirectory(AgentClaudeCode, "ended-1"); !errors.As(err, &missing) || missing.Reason != RunningElsewhere {
+			t.Errorf("a session a process runs: %v", err)
+		}
+		if err := os.Remove(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One the tracker lists as running is continued where it runs.
+	if _, err := f.live.SessionDirectory(AgentClaudeCode, "s1"); !errors.As(err, &missing) {
+		t.Errorf("a running session: %v", err)
+	}
+	for _, agent := range []string{AgentClaudeCode, AgentCursor} {
+		if _, err := f.live.SessionDirectory(agent, "nowhere"); !errors.As(err, &missing) {
+			t.Errorf("%s: %v", agent, err)
+		}
+	}
+}
+
+func TestASessionRunsWhileItsHooksSayItHasNotEnded(t *testing.T) {
+	f := newTranscriptFixture(t)
+	const id = "019f0000-0000-7000-8000-0000000000d1"
+	codexEvent := func(name string, at time.Time) {
+		t.Helper()
+		e := hookevents.New(hookevents.KindAgent, "codex", name, "/work/demo", "test")
+		f.clock.now, e.Time = at, at
+		e.Session = &hookevents.Session{ID: id, Cwd: "/work/demo"}
+		if !apply(f.tracker, e) {
+			t.Fatalf("%s not applied", name)
+		}
+	}
+	if f.live.Running(AgentCodex, id, time.Time{}) {
+		t.Fatal("running before any hook")
+	}
+	// A panel turn (codex exec) that started and ended.
+	turn := f.clock.now
+	codexEvent("session-start", turn)
+	codexEvent("session-end", turn.Add(time.Second))
+	turnEnded := turn.Add(2 * time.Second)
+	if f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("running once the panel's turn ended")
+	}
+	// A panel turn whose last hook (a stop, with no end) came in the
+	// millisecond its end was stored in, to the millisecond.
+	lastStop := turnEnded.Add(10 * time.Second).Add(400 * time.Microsecond)
+	codexEvent("session-start", lastStop.Add(-time.Second))
+	codexEvent("stop", lastStop)
+	turnEnded = lastStop.Truncate(time.Millisecond)
+	if f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("the panel's own last turn counted as another")
+	}
+	// The person resumed it in a terminal.
+	codexEvent("session-start", turnEnded.Add(time.Minute))
+	if !f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("not running while a terminal has it")
+	}
+	// Its terminal exited, and Codex's app server unloaded it.
+	codexEvent("session-end", turnEnded.Add(2*time.Minute))
+	if f.live.Running(AgentCodex, id, turnEnded) {
+		t.Error("running once it ended")
 	}
 }

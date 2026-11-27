@@ -436,7 +436,9 @@ the method and confidence of each. Both open each other through
 `ReviewListSlot` the `sessions` and `commits` props take, with the rail's
 labels. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
 puts the host's own content under a session opened alone, such as its
-transcript. The pane is then headed by the session's title, with its agent,
+transcript. Its `open` option (the slot's `open`) takes a session the host
+opens somewhere of its own instead, with the prompt a link named, whenever one
+is selected; returning false leaves it to the pane. The pane is then headed by the session's title, with its agent,
 branch, start, duration and files edited on one line (the rail leads back to
 the list) and its linked commits as links under it, and draws no
 card for it. `SessionCard`'s `headless` draws a session open with no header of
@@ -535,6 +537,17 @@ helpers the card uses) and what the host adds:
   and the reply is set as long text (`Markdown`'s `reading`). Notes are small
   print, and runs of tool calls start folded. The desktop app's transcript
   page uses it.
+
+A long session renders its last 30 turns first, and its earlier turns only
+as the reader comes within 3,000 px of the first one rendered, 100 at a time,
+as a React transition, so turns nobody scrolls up to cost nothing. A "Show
+earlier turns" button above the list does the same for keyboards and screen
+readers. The browser's find does not reach turns still to come. The turns the
+reader is among stay where they are as earlier ones come in above (the
+transcript moves its scroller by their height when the list is in view or
+above it, since WebKit does not anchor the scroll). A transcript given a
+`focusTurn`, a server render, and a browser without `IntersectionObserver`
+have every turn at once.
 
 A prompt can carry `images`, each a `src` the host serves and an `alt`: they
 show under its text as thumbnails that open in the image viewer. Agent
@@ -826,7 +839,12 @@ comment's own markup cannot create these links.
 A host can put its own row under a hunk of a `CodeDiff` file with `afterHunk`
 (the app's overview tabs pin the notes that cite each hunk there): a row
 across the table, in the page's own font, drawn only for a hunk it returns
-something for.
+something for. A line marked `focus` carries a bar at its edge and bold line
+numbers (and says "Highlighted line" to a screen reader), and the hunk's
+other lines are dimmed (the app's code tile marks the lines its model
+highlights). `foldable={false}` drops a file's fold chevron, for a host that
+folds the lines itself. `codeDiffHunk` (`patch.ts`) turns an indexed
+hunk's diff into a `CodeDiff` hunk.
 
 ## Schema
 
@@ -961,13 +979,15 @@ origins while sharing one stored image.
 
 Description images and prompt images open in one viewer
 (`components/image-viewer`). It opens as large as the screen allows, enlarging
-an image past its own pixels, and keeps the image's proportions. Its corner
-drags to scale the image; until then it refits when the window changes size.
-A click on the backdrop, the close control or Escape closes it. Its
-full-screen control fills the screen through the browser's Fullscreen API
-(on the dialog's content, since a dialog itself cannot go full screen), or
-covers the window where the host does not grant it. Escape leaves full screen
-before it closes the viewer.
+an image past its own pixels, and keeps the image's proportions. Any edge or
+corner of the image drags to scale it, up to that fit; the corners carry a
+visible bracket so people find it. The dialog stays centred as it resizes.
+Until a drag, and again after "Fit to screen", it refits when the window
+changes size. The size dragged
+to is remembered in `localStorage` as a share of that fit, and later images,
+of any shape, open at the same share. Its "Fit to screen" control returns to
+the full fit and forgets the share. A click on the backdrop, the close control
+or Escape closes it.
 
 An indexed attachment whose `content_type` is `video/…` (local desktop reviews
 only) draws as a muted `<video>` with native controls that loads only its
@@ -995,11 +1015,16 @@ GitHub carries the leaving mark.
 
 On review pages, `]` toggles the right-hand Details/Activity pane: its saved
 fold on wide screens, or its sheet on narrow screens. Text fields and open
-dialogs keep the key. A host’s forced fold remains in force. Opening the pane
+dialogs keep the key. A host that keeps `]` for itself passes `sidePaneKey="Control+]"`, and the pane then takes Ctrl+] instead (the desktop app does). A host’s forced fold remains in force. Opening the pane
 with `]` focuses the pane itself, drawn without a ring, so it has the keys
 (as a click in it gives them): while it does, `h` and `l` step through its tabs
 (wrapping, as the arrows do on the strip), and from a focused tab move the focus with them, and Esc blurs the focus, giving the keys
 back to the review. Text fields and menus in the pane keep them.
+
+`[` folds or unfolds the rail of sections on the left on wide screens (only
+where a host's `places` let the rail fold), or opens and closes its sheet on
+narrow screens, leaving the focus where it is. Text fields and open dialogs
+keep the key.
 
 Continuation summaries and standalone system-reminder turns are collapsed by
 default to a labelled disclosure with their turn number and time. Expanding

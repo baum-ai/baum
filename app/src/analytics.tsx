@@ -608,6 +608,21 @@ const rowHeads = (
 
 function Breakdown({ data }: { data: Analytics }) {
   const [by, setBy] = useState<"agent" | "model" | "repository">("agent");
+  const [overflows, setOverflows] = useState(false);
+  const scroll = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = scroll.current;
+    const table = element?.firstElementChild;
+    if (!element || !table || typeof ResizeObserver !== "function") return;
+    const measure = () => setOverflows(element.scrollWidth > element.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    observer.observe(table);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <Card
       id="analytics-breakdown"
@@ -626,7 +641,13 @@ function Breakdown({ data }: { data: Analytics }) {
         />
       }
     >
-      <div className="analytics-scroll">
+      <div
+        ref={scroll}
+        className="analytics-scroll analytics-breakdown-scroll"
+        role="region"
+        aria-label="Breakdown table"
+        tabIndex={overflows ? 0 : undefined}
+      >
         {by === "model" ? (
           <table className="analytics-table">
             <thead>

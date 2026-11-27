@@ -14,8 +14,8 @@
 // module when it attaches to a daemon, loses it, or starts connecting.
 //
 // On macOS and Windows a left click opens the panel (panel.ts), a small window
-// drawn like a menu with meters, and a right click this menu. Linux tray hosts
-// report no clicks, so there the menu is all, with plan usage as lines of text.
+// drawn like a menu with meters, and a right click this menu. On Linux a left
+// click opens the app (on hosts that activate the icon on one), and the menu is the only view of the tray, with plan usage as lines of text.
 //
 // This file holds the rules and the scheduling. It never imports `electron`:
 // the menu is plain data (`MenuItemSpec`), what the tray does to the rest of

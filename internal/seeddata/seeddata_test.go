@@ -186,12 +186,12 @@ func TestDefaultsMeetTheCriteria(t *testing.T) {
 	if testing.Short() {
 		t.Skip("writes the full dataset")
 	}
-	// The profiling scripts that use the full dataset run on Linux and
-	// macOS only, and writing it spawns thousands of git processes, which
-	// takes over 8 minutes on the Windows runner. The small datasets above
-	// cover the same code there.
-	if runtime.GOOS == "windows" {
-		t.Skip("the full dataset is only used on Linux and macOS")
+	// Writing it spawns thousands of git processes, which takes over 8
+	// minutes on the Windows runner and over 10 on the macOS one with the
+	// race detector, against 4 on Linux. The counts it checks are the same
+	// on every OS, and the small datasets above cover the same code there.
+	if runtime.GOOS != "linux" {
+		t.Skip("the full dataset is checked on Linux")
 	}
 	requireGit(t)
 	o := Defaults()

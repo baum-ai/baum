@@ -241,7 +241,7 @@ var settingsTargetSections = []struct{ prefix, section string }{
 	{agentcontext.TargetTileType, agentcontext.SectionTiles},
 }
 
-var sectionTitles = map[string]string{"general": "General", "appearance": "Appearance", "reviews": "Reviews", "fixes": "Fixes", "connections": "Connections",
+var sectionTitles = map[string]string{"general": "General", "appearance": "Appearance", "reviews": "Reviews", "fixes": "Fixes", "panel": "Session panel", "connections": "Connections",
 	"computer": "This computer", "prompts": "Prompts", "registration": "Registration", agentcontext.SectionTiles: "Tile library"}
 
 // checkSection refuses a target of another section than the one open, which

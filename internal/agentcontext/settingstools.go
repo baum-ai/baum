@@ -33,6 +33,7 @@ var (
 		"appearance":  {"settings_appearance"},
 		"reviews":     {"settings_reviews"},
 		"fixes":       {"settings_fixes"},
+		"panel":       {"settings_panel"},
 		"connections": {"settings_connections"},
 		"computer":    {"settings_computer", "diagnostics_summary"},
 		"prompts":     {"prompts", "prompt"},
@@ -146,6 +147,12 @@ func (s *Server) settingsTools() []Tool {
 		Scope:       ScopeGlobal,
 		Projected:   []string{"/api/settings"},
 		Call:        callSettingsFixes,
+	}, {
+		Name:        "settings_panel",
+		Description: "What the Settings page's Session panel section shows: the agent a new session in the session panel opens with (claude-code or codex) and its model, whether each is the person's choice (panel) or follows the fix agent (fix), the access a new session gets (mode: auto, full or workspace), and the edge of the window the panel opens from (position: bottom, top, left or right).",
+		Scope:       ScopeGlobal,
+		Projected:   []string{"/api/settings/panel"},
+		Call:        callSettingsPanel,
 	}, {
 		Name: "settings_connections",
 		Description: "What the Settings page's Connections section shows. GitHub: the connection's state (connected, disconnected, pending while a sign-in waits, loading), its host (github.com, or other host), the signed-in login, where the token in use comes from (source: baum for the app's sign-in, environment or config_file) and whether that overrides the app's sign-in, whether the saved sign-in was granted workflow access, an error code and message, and the organizations the sign-in cannot reach. Never the token, nor a sign-in's code or address. " +
@@ -424,6 +431,27 @@ func (s *Server) callSettingsReviews(ctx context.Context, c CallContext, _ json.
 		out.Unavailable = append(out.Unavailable, "decision_capture")
 	}
 	return compactJSON(out)
+}
+
+// callSettingsPanel answers the session panel's defaults in force, field by
+// field, so nothing the route might add later is passed on unread.
+func callSettingsPanel(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
+	body, _, err := c.get(ctx, "/api/settings/panel", nil)
+	if err != nil {
+		return "", errors.New("the session panel settings are unavailable now")
+	}
+	var panel struct {
+		Agent       string `json:"agent"`
+		Model       string `json:"model"`
+		Mode        string `json:"mode"`
+		Position    string `json:"position"`
+		AgentSource string `json:"agent_source"`
+		ModelSource string `json:"model_source"`
+	}
+	if json.Unmarshal(body, &panel) != nil {
+		return "", errors.New("the session panel settings are not readable")
+	}
+	return compactJSON(panel)
 }
 
 func callSettingsFixes(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
