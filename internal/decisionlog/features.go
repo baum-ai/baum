@@ -652,6 +652,7 @@ type FeatureOptions struct {
 	// building runs the stage on the repository's building version, for a
 	// first build.
 	building bool
+	adaptive bool
 }
 
 // featureRun is one repository's run of placement or the text stage.
@@ -695,6 +696,9 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 	state := VersionCurrent
 	if o.building {
 		state = VersionBuilding
+		if o.adaptive {
+			state = VersionAdaptiveBuilding
+		}
 	}
 	var err error
 	r.version, err = featureVersion(ctx, w.Store.db, repository, state, !o.DryRun, r.now)

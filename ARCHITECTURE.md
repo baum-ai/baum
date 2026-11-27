@@ -7612,7 +7612,23 @@ input hash is unchanged), and at most weekly, when the features'
 fingerprint changed, consolidates them (`FeatureWorker.Consolidate`,
 `consolidate.Public`: one merge call, at most three split calls, every call
 made before a write, each write checked against the membership versions it
-read). A first build (`FeatureWorker.Build`) lists a repository's whole
+read). A new desktop-requested build (`FeatureWorker.Build` with
+`BuildOptions.Adaptive`) uses the `features/adaptive` protocol over a pinned
+checkout and host-managed PR evidence. `adaptivebuild.go` drives valid
+request/checkpoint/finish task steps through `generate.RunTask`; semantic work
+steps are independent of JSON validation repairs. `feature_build_state` pins
+catalog/head/source evidence and accepts checkpoints by sequence compare-and-swap.
+`feature_scope` retains purpose, boundaries and source references after a first
+membership. Source-only scope identities materialize inside placement's
+transaction. An additive unique active-candidate index protects adaptive
+`building_adaptive` versions from older legacy writers. The host fetches code
+only for requested selected PRs, checkpoints progress and promotes only when all
+selected work is settled with concise text. It has per-unit recovery guards and
+soft exploration guidance, no outer performance deadline. Coverage remains
+readable after promotion. Existing stopped legacy builds explicitly resume
+under their original workflow; a replacement archives only the candidate.
+
+The explicit legacy full-history path lists a repository's whole
 history once (`FeatureWorker.ListHistory`), reads its paths, seeds a new
 `building` version from a feature taxonomy (`featureseed.go`), running
 feature discovery first when there is none newer than the version

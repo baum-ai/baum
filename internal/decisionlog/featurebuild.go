@@ -33,6 +33,10 @@ const (
 
 // BuildOptions change a first build.
 type BuildOptions struct {
+	// Adaptive asks a source-capable agent to choose history and checkpoint work.
+	// The CLI retains its explicit legacy full-history mode.
+	Adaptive bool
+
 	// DryRun estimates and writes nothing.
 	DryRun bool
 	// Backend and Model, when set, replace the configured ones.
@@ -56,6 +60,8 @@ const (
 
 // BuildProgress is a build's progress.
 type BuildProgress struct {
+	Coverage *BuildCoverage `json:"coverage,omitempty"`
+
 	Phase string `json:"phase"`
 	// Placed counts the pull requests placed or skipped of Total.
 	Placed, Total int
@@ -92,6 +98,8 @@ type BuildEstimate struct {
 
 // BuildReport says what Build did; no pull request, feature or reply text.
 type BuildReport struct {
+	Coverage *BuildCoverage `json:"coverage,omitempty"`
+
 	Repository string `json:"repository"`
 	Version    int64  `json:"version"`
 	// PullRequests are those this run listed to place.
@@ -281,6 +289,12 @@ type buildRun struct {
 // version. A dry run reports the estimate in Stopped's place and writes
 // nothing.
 func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o BuildOptions) (BuildReport, error) {
+	if o.Adaptive {
+		return w.buildAdaptive(ctx, repository, dir, o)
+	}
+	if err := w.Store.requireLegacyBuild(ctx, repository); err != nil {
+		return BuildReport{Repository: repository, Stopped: "workflow_mismatch"}, err
+	}
 	report := BuildReport{Repository: repository}
 	estimate, err := w.EstimateBuild(ctx, repository, dir, o)
 	if err != nil {
