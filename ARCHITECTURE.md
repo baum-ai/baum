@@ -2149,7 +2149,7 @@ sentences and 320 characters, the area required), `CheckTile` (title within
 80, caption within 200, native data within `tiles/view`'s limits through
 `view.CheckNative`, a code tile's hunk and lines on its new side, and its
 focus lines within them) and
-`CheckOverview` (summary text, verdict line within 120 and at most three
+`CheckOverview` (summary text, verdict line within 120 characters and two sentences and at most three
 points within 200, `risk_why` within two sentences and 260 characters,
 screenshots and intent that the pull request has, videos that are its
 video clips, a main diagram that is a tile). Every model text is refused the word "evidence" and hunk IDs, and
@@ -2907,8 +2907,14 @@ the levels of `agent/orchestrate` instead of the staged review:
    types, the code tile and the dedicated types the run offers
    (`orchestrate.Registry`: baum's library and the person's saved types,
    `generate.Tiles`). Only a map that fails after its repair fails the run.
-2. **Sections and context.** One section agent per logical section and the
-   context agent run at once. A section whose hunks are unchanged since the
+2. **Sections, then context.** One section agent per logical section runs
+   at once with the others. Once every section is written (or reused, or
+   failed), the context agent writes "Where this fits" with the sections'
+   gists, bodies and risks in its input, so it says only what a reader needs
+   that the sections do not; it shares the sections' call and token budgets
+   and ends with the tiles' time, and the sections' tiles are drawn while it
+   runs. The context is written again on every version, so it always reads
+   the current sections. A section whose hunks are unchanged since the
    previous version, under its ID or renamed, keeps its text and tiles
    without a call; a kept tile whose type is no longer offered with the
    definition it was filled with stays under its ID and brief, pending, and

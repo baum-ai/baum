@@ -37,8 +37,9 @@ directory.
 - `verdict`: what to do. `decision` is `approve` when the code can merge as
   it is (low risks may remain), `look_first` when a section deserves a look
   before approval, `request_changes` for a concrete defect, a change a
-  reviewer asked for that the code still lacks included. `text` is one line,
-  at most 120 characters, saying what to do. `points` are only what blocks
+  reviewer asked for that the code still lacks included. `text` is one short line,
+  at most 120 characters, saying what to do: one sentence is best, two
+  short ones are fine. `points` are only what blocks
   the merge (merge another pull request first, make a decision, fix
   something): at most three, each one plain sentence of at most 200
   characters saying what the problem is and what to do, with the `section`

@@ -15,9 +15,10 @@ import (
 )
 
 // middleLevels runs the section level and the tile level: the section
-// agents and the context agent at once, the mechanical section's summary
-// by the host, the reused sections without calls, and each tile as soon as
-// its owner is written (the overview's main diagram at once).
+// agents at once, the mechanical section's summary by the host, the reused
+// sections without calls, then the context agent with the sections' text,
+// and each tile as soon as its owner is written (the overview's main
+// diagram at once).
 func (o *orchestration) middleLevels(ctx context.Context) {
 	o.mu.Lock()
 	sections := slices.Clone(o.plan.Sections)
@@ -55,7 +56,7 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	o.budget.expect(2, tileCalls)
 	o.step("Writing " + count(len(toWrite), "section"))
 
-	var tiles, middle sync.WaitGroup
+	var tiles, written sync.WaitGroup
 	ownedBy := func(owner string) []reviewv2.Tile {
 		var out []reviewv2.Tile
 		for _, t := range planned {
@@ -85,16 +86,16 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	// A written section's mandatory tiles start once its text is in, as its
 	// own do, but never pass through it: a section cannot drop them.
 	for _, s := range toWrite {
-		middle.Go(func() {
+		written.Go(func() {
 			list := o.sectionLevel(ctx, s, histories[s.ID], ownedBy(s.ID))
 			startTiles(s.ID, append(list, mandatory[s.ID]...))
 		})
 	}
-	middle.Go(func() {
-		o.contextLevel(ctx)
-		startTiles(reviewv2.OwnerContext, append(ownedBy(reviewv2.OwnerContext), mandatory[reviewv2.OwnerContext]...))
-	})
-	middle.Wait()
+	// The context reads what the sections say, so it says only what they
+	// do not; their tiles are drawn meanwhile.
+	written.Wait()
+	o.contextLevel(ctx)
+	startTiles(reviewv2.OwnerContext, append(ownedBy(reviewv2.OwnerContext), mandatory[reviewv2.OwnerContext]...))
 	o.budget.close(1)
 	if n := o.pendingTiles(); n > 0 {
 		o.step("Drawing " + count(n, "tile"))
@@ -553,14 +554,17 @@ func (o *orchestration) claimProposal(result *sectionResult) {
 	}
 }
 
-// contextLevel writes "Where this fits". A context that fails is left out.
+// contextLevel writes "Where this fits", once the sections are written,
+// from their text. A context that fails is left out.
 func (o *orchestration) contextLevel(ctx context.Context) {
+	o.step("Writing the context")
 	o.mu.Lock()
 	p := o.plan
+	sections := o.orderedSections()
 	o.mu.Unlock()
 	var accepted *reviewv2.Context
 	c := call{level: LevelContext, id: "context", label: "context", instructions: o.prompt.Context, schema: ContextSchema(),
-		input: basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p)}
+		input: basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p) + "\n" + sectionsText(sections)}
 	c.check = func(reply []byte, lenient bool) string {
 		x, findings := checkContext(reply, o.facts, lenient)
 		if findings == "" {

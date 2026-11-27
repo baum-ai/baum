@@ -279,7 +279,7 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 	if out.Generation.Map.Status != StatusRan || out.Generation.Overview.Status != StatusRan || out.Generation.Sections["sec_deps"].Status != StatusSkipped {
 		t.Errorf("generation: %+v", out.Generation)
 	}
-	if want := []string{"Mapping the pull request", "Writing 2 sections", "Writing the overview"}; !slices.Equal(steps[:2], want[:2]) || steps[len(steps)-1] != want[2] {
+	if want := []string{"Mapping the pull request", "Writing 2 sections", "Writing the overview"}; !slices.Equal(steps[:2], want[:2]) || steps[len(steps)-1] != want[2] || !slices.Contains(steps, "Writing the context") {
 		t.Errorf("steps: %v", steps)
 	}
 	if out.Levels[LevelMap].Calls != 1 || out.Levels[LevelSections].Calls != 2 || out.Levels[LevelTiles].Calls != 2 || out.Levels[LevelOverview].Calls != 1 || out.Calls != 7 {
@@ -312,6 +312,15 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 	}
 	if !f.requests["map"].PersistSession || f.requests["overview"].ResumeSession == "" {
 		t.Error("the overview did not resume the map's session")
+	}
+	// The context is written once the sections are, from their text.
+	for _, stage := range []string{"section-sec-retry", "section-sec-api"} {
+		if f.starts["context"] < f.ends[stage] {
+			t.Errorf("the context started before %s ended", stage)
+		}
+	}
+	if in := f.requests["context"].Prompt; !strings.Contains(in, "The sections (model-written data") || !strings.Contains(in, "If the cap is zero the wait never grows") {
+		t.Error("the context does not read the sections' text")
 	}
 	if strings.Contains(f.requests["section-sec-retry"].Prompt, "patch") && strings.Contains(f.requests["section-sec-retry"].Prompt, "@@") {
 		t.Error("a section's input carries patches")
@@ -582,6 +591,8 @@ func TestMapTimeFloor(t *testing.T) {
 		// The later levels keep their shares' ends.
 		{"sections unchanged", 10 * time.Minute, LevelSections, 6*time.Minute + 30*time.Second},
 		{"overview unchanged", 10 * time.Minute, LevelOverview, 10 * time.Minute},
+		// The context, written after the sections, ends with the tiles.
+		{"context with the tiles", 10 * time.Minute, LevelContext, 9 * time.Minute},
 		// A long limit's share is above the floor.
 		{"map share", 30 * time.Minute, LevelMap, 6 * time.Minute},
 		// A short limit caps the map at the end of the sections' share.

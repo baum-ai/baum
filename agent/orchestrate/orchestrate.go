@@ -4,12 +4,13 @@
 //  1. The map: one agent call (persistent session) groups the hunks into
 //     sections by behaviour, judges each section's level and plans at most
 //     eight tiles. A map that fails, after its repair, fails the run.
-//  2. The sections: one section agent per logical section and the context
-//     agent, at once (at most Run.Concurrency calls; one at a time on a
-//     backend that cannot run calls at once). The mechanical section's
-//     summary is the host's. A section whose hunks are unchanged since the
-//     previous baum.review/2 version keeps its text and tiles without a
-//     call.
+//  2. The sections: one section agent per logical section, at once (at
+//     most Run.Concurrency calls; one at a time on a backend that cannot
+//     run calls at once). The mechanical section's summary is the host's. A
+//     section whose hunks are unchanged since the previous baum.review/2
+//     version keeps its text and tiles without a call. Then the context
+//     agent, with the sections' text, so it says only what they do not; it
+//     shares the sections' budgets and ends with the tiles' time.
 //  3. The tiles: one tile agent per planned tile, each starting as soon as
 //     its owner is written (the overview's main diagram once the map is in).
 //     Native types share one tile prompt with each type's part; dedicated
@@ -67,7 +68,8 @@ var Levels = []string{LevelMap, LevelSections, LevelContext, LevelTiles, LevelOv
 
 // Shares split a run's call and token budgets and its time limit between the
 // map, the sections with the context, the tiles and the overview, in that
-// order. What a level leaves flows to the next.
+// order. What a level leaves flows to the next. The context, written after
+// the sections, ends with the tiles' time (levelEnd).
 var Shares = [4]float64{0.20, 0.45, 0.25, 0.10}
 
 // MinMapTime is the least time the map gets when the run's time limit
@@ -161,8 +163,9 @@ type Run struct {
 	// the last is delivered replaces any still waiting. Nil publishes none.
 	Draft func(reviewv2.Document)
 	// Step receives the level the run is at, in words ("Mapping the pull
-	// request", "Writing 3 sections", "Drawing 4 tiles", "Writing the
-	// overview"); calls come from the run's goroutines, one at a time.
+	// request", "Writing 3 sections", "Writing the context", "Drawing 4
+	// tiles", "Writing the overview"); calls come from the run's goroutines,
+	// one at a time.
 	Step func(string)
 	// Record receives every call's prompt, input and reply (replay).
 	Record func(Call)
@@ -358,6 +361,11 @@ func levelEnd(started, deadline time.Time, level string) time.Time {
 		return time.Duration(float64(total) * cumulative)
 	}
 	index := levelIndex(level)
+	if level == LevelContext {
+		// The context is written after the sections, while their tiles are
+		// drawn: it ends with the tiles.
+		index = levelIndex(LevelTiles)
+	}
 	if index != 0 {
 		return started.Add(end(index))
 	}

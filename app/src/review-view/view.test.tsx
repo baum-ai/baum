@@ -181,7 +181,7 @@ describe("the review page's rail", () => {
     );
     // One label, right above the first routine section.
     const labels = [...rail(container).querySelectorAll("[data-rail-group]")];
-    expect(labels.map((each) => each.textContent)).toEqual(["Routine"]);
+    expect(labels.map((each) => each.textContent)).toEqual(["Low risk"]);
     expect(labels[0]!.parentElement!.contains(railRow(container, "Dependencies"))).toBe(true);
   });
 
@@ -2178,6 +2178,7 @@ describe("a brief, for a small change", () => {
     const order = [
       "A paired phone can now reach the daemon",
       "Safe to merge as it is.",
+      "Deny by default.",
       "The change",
       "remoteRoutes is what a paired phone may ask of the daemon",
       "What was asked",
@@ -2191,8 +2192,8 @@ describe("a brief, for a small change", () => {
       "Safe to merge as it is.",
     );
     expect(view.querySelector('[aria-label="Risk"] li[data-check="risk"]')).toBeNull();
-    // What the section says follows the diff, without the gist that would
-    // restate the summary above it.
+    // What the section says comes before the diff, without the gist that
+    // would restate the summary above it.
     const section = view.querySelector<HTMLElement>("[data-brief-section]")!;
     expect(section.querySelector("[data-section-body]")).not.toBeNull();
     expect(section.querySelector("[data-section-gist]")).toBeNull();

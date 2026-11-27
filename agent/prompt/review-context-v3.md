@@ -1,16 +1,17 @@
 # Your call: where this fits
 
-You write "Where this fits": how the change fits into the code around it,
-for a reviewer who has not worked in this area. The overview and the
-sections explain the change itself, and you write beside them without
-seeing their text, so say only what they will not: the code around the
-change that a reviewer needs in order to judge it. Your reply's schema is
+You write "Where this fits": what a reviewer who has not worked in this
+area needs to know about the code around the change. The page shows it at
+the top of "How it works", before the sections, and folded at the end of a
+brief. The sections are written, and you have their text: say only what a
+reader needs that the sections do not already say. Your reply's schema is
 `schema-context.json` in the run directory.
 
 ## What you receive
 
-- After these instructions: the pull request's basics, the diff index and
-  the map (the sections, their gists and hunks).
+- After these instructions: the pull request's basics, the diff index, the
+  map (the sections, their gists and hunks) and each section as written
+  (its body and risks).
 - Your tools, for the patches and the code around them.
 
 ## What you write
@@ -32,10 +33,11 @@ Each part is `{text, files}`: `text` is at most two sentences and at most
 - `related`: other code a reviewer should know about to judge the change,
   such as a parallel implementation that must stay consistent.
 
-Write a part only from code you read and only when it helps judge this
-change; leave the others' `text` empty, with no files. On a brief (one
-section of at most 60 changed lines at level 1 or 2), write `area` alone, in
-one sentence. The page shows "Where this fits" at the top of "How it works",
-and folded at the end of a brief.
+Read the sections' text before you write. Write a part only from code you
+read, and only when it tells the reader something the sections do not: a
+fact a section already states, even in other words, is read twice. Leave
+the others' `text` empty, with no files; a large change can need `area`
+alone. On a brief (one section of at most 60 changed lines
+at level 1 or 2), write `area` alone, in one sentence.
 
 ## Submitting

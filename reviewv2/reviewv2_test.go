@@ -414,6 +414,17 @@ func has(findings []string, part string) bool {
 	return slices.ContainsFunc(findings, func(f string) bool { return strings.Contains(f, part) })
 }
 
+func TestCheckOverviewAcceptsTwoSentenceVerdict(t *testing.T) {
+	refs := RefsOf(fixtureBundle(t))
+	d := authored(t)
+	d.Summary.Verdict = &Verdict{Decision: "approve", Text: "Approve. Only one time limit changes, and it is easy to revert.", Points: []VerdictPoint{}}
+	for _, f := range CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs) {
+		if strings.Contains(f, "verdict") {
+			t.Errorf("two-sentence verdict refused: %s", f)
+		}
+	}
+}
+
 func TestChecks(t *testing.T) {
 	refs := RefsOf(fixtureBundle(t))
 	base := authored(t)
@@ -519,6 +530,22 @@ func TestChecks(t *testing.T) {
 			d.Overview.Diagram = &missing
 			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
 		}, `"tl_gone" is not a tile`},
+		{"verdict three sentences", func(d Document) []string {
+			d.Summary.Verdict.Text = "Approve. Only a limit changes. It is easy to revert."
+			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
+		}, "verdict.text: it has 3 sentences; write at most 2"},
+		{"verdict too long", func(d Document) []string {
+			d.Summary.Verdict.Text = "Approve. " + strings.Repeat("Long words fill it. ", 6)
+			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
+		}, "verdict.text: it is"},
+		{"verdict empty", func(d Document) []string {
+			d.Summary.Verdict.Text = " "
+			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
+		}, "verdict.text: it is empty"},
+		{"verdict lines", func(d Document) []string {
+			d.Summary.Verdict.Text = "Approve.\n- one\n- two"
+			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
+		}, "verdict.text: it spans lines"},
 		{"verdict points", func(d Document) []string {
 			p := VerdictPoint{Text: "One."}
 			d.Summary.Verdict.Points = []VerdictPoint{p, p, p, p}

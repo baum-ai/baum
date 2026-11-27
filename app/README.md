@@ -3031,7 +3031,7 @@ lists, in order:
   caution and critical colours, the rest quiet), named for assistive
   technology in the row's description. The sections that want a look come
   first, then the routine ones (mechanical, or rated 1 of 5) under a quiet
-  **Routine** label, each group in the review's own order, since sections
+  **Low risk** label (words a reader knows without the rubric), each group in the review's own order, since sections
   often build on each other (`listedSections`; the keys step through the same
   order). A review whose sections are all routine has no label.
 - A row gains a tick once the reader has been through its section: they
@@ -3109,9 +3109,9 @@ builds the rail's model (the sections and the file list) from it.
   (`BRIEF_LINES`, added and removed), has an assessed risk of 1 or 2, and has
   nothing placed on "Where this fits". The rail then has no How it works:
   Overview, Files changed and the viewer's rows. Under what to decide the Overview
-  shows **The change** (every changed file's diff, as a section's Code view
-  draws it) and what the one section says (its body and risks, without its
-  gist, which would restate the summary), then the Overview's usual parts, and
+  shows what the one section says (its body and risks, without its gist, which
+  would restate the summary) and then **The change** (every changed file's
+  diff, as a section's Code view draws it), then the Overview's usual parts, and
   last "Where this fits" in a fold that starts closed, its files opening in
   the dialog. An address that names the section, a risk or a tile of it shows
   the Overview. There is no setting: a review that stops qualifying (a second
