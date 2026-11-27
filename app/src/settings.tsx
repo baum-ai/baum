@@ -997,7 +997,7 @@ function ReviewsSection({
       <SectionHead
         id="settings-reviews-heading"
         title="Reviews"
-        detail="Which pull requests baum reviews on its own, and the agent that writes the reviews."
+        detail="Which pull requests baum reviews on its own, the agent that writes the reviews, and how the review page reads."
         status={status}
       />
       {error ? <Alert>{error}</Alert> : null}
@@ -1007,6 +1007,7 @@ function ReviewsSection({
           Install one and open it in your terminal to sign in; baum doesn't switch to another agent.
         </p>
       ) : null}
+      <h3 className="settings-subhead">Automatic reviews</h3>
       <div className="local-panel settings-list">
         <SettingRow
           pick
@@ -1060,6 +1061,9 @@ function ReviewsSection({
             </select>
           </SettingRow>
         ) : null}
+      </div>
+      <h3 className="settings-subhead">Agent and model</h3>
+      <div className="local-panel settings-list">
         <SettingRow
           pick
           label="Agent"
@@ -1098,7 +1102,6 @@ function ReviewsSection({
             />
           </div>
         </SettingRow>
-        <TileReviewsRow />
         <AccountAdvanced
           id={draft.backend === "codex" ? "review-codex-home" : "review-claude-config-dir"}
           backend={draft.backend}
@@ -1110,7 +1113,37 @@ function ReviewsSection({
       <p className="settings-footnote">
         Changes save as you make them and apply to the next review in every repository.
       </p>
+      <h3 className="settings-subhead">Review page</h3>
+      <div className="local-panel settings-list">
+        <TileReviewsRow />
+        <HowItWorksRow />
+      </div>
     </section>
+  );
+}
+
+/** How the review page lays out How it works, on this device. */
+function HowItWorksRow() {
+  const { preferences, update, ready } = usePreferences();
+  return (
+    <>
+      <SettingRow
+        label="How it works"
+        htmlFor="how-it-works-layout"
+        detail="A page per section suits reading with the keyboard. One scrolling page suits a mouse."
+      >
+        <select
+          id="how-it-works-layout"
+          disabled={!ready}
+          className={cn(SELECT_FIELD, "settings-select")}
+          value={preferences.how_it_works}
+          onChange={(event) => update({ how_it_works: event.target.value as HowItWorksChoice })}
+        >
+          <option value="pages">A page per section</option>
+          <option value="one_page">One scrolling page</option>
+        </select>
+      </SettingRow>
+    </>
   );
 }
 
@@ -3599,7 +3632,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Keyboard, review page and plan usage preferences on this device."
+        detail="Keyboard and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -3641,22 +3674,6 @@ function GeneralSection() {
             checked={preferences.key_hints}
             onChange={(event) => update({ key_hints: event.target.checked })}
           />
-        </SettingRow>
-        <SettingRow
-          label="How it works on a review"
-          htmlFor="how-it-works-layout"
-          detail="A page per section suits reading with the keyboard. One scrolling page suits a mouse."
-        >
-          <select
-            id="how-it-works-layout"
-            disabled={!ready}
-            className={cn(SELECT_FIELD, "settings-select")}
-            value={preferences.how_it_works}
-            onChange={(event) => update({ how_it_works: event.target.value as HowItWorksChoice })}
-          >
-            <option value="pages">A page per section</option>
-            <option value="one_page">One scrolling page</option>
-          </select>
         </SettingRow>
       </div>
       <h3 className="settings-subhead">Plan usage</h3>
