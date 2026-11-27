@@ -1129,4 +1129,14 @@ describe("isBrief", () => {
     const tile = REVIEW.tiles.find((each) => each.id !== REVIEW.overview.diagram)!;
     expect(isBrief({ ...small, tiles: [{ ...tile, owner: CONTEXT_ID }] })).toBe(false);
   });
+
+  it("is never a baum.review/1 version, whose section pages the viewer draws", () => {
+    // The same small review as a stored baum.review/1 document: the model
+    // the rail reads is converted from it.
+    const converted = reviewOf(chromeOf(small));
+    expect(converted).not.toBe(small);
+    expect(isBrief({ ...converted })).toBe(true);
+    expect(isBrief(converted)).toBe(false);
+    expect(listedSections(converted).map((each) => each.id)).toEqual([section.id]);
+  });
 });

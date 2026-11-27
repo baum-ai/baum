@@ -93,6 +93,9 @@ export function servedReview(document: ReviewDocument | null | undefined): Revie
 }
 
 const converted = new WeakMap<ReviewDocument, ReviewV2>();
+/** The reviews converted from a baum.review/1 version, whose pages the
+ *  viewer draws: they are never a brief. */
+const legacy = new WeakSet<ReviewV2>();
 
 /** The baum.review/2 document the tabs read for a review: the one it was
  *  served with, else the review converted on its own (no tiles, no overview
@@ -108,6 +111,7 @@ export function reviewOf(document: ReviewDocument): ReviewV2 {
     // viewer draws: no "Where this fits" place of its own.
     review = { ...fromV1(document), context: null };
     converted.set(document, review);
+    legacy.add(review);
   }
   return review;
 }
@@ -149,8 +153,11 @@ export const BRIEF_LINES = 60;
  *  no How it works. A change qualifies when it is small enough to read whole
  *  and nothing in the review asks for a closer look: one section, none left
  *  over from earlier commits, at most BRIEF_LINES changed lines, an assessed
- *  risk of 1 or 2, and nothing placed on "Where this fits". */
+ *  risk of 1 or 2, and nothing placed on "Where this fits". A baum.review/1
+ *  version never is: the viewer draws its Summary and section pages, so its
+ *  section has no place on the Overview and must stay in the rail. */
 export function isBrief(review: ReviewV2): boolean {
+  if (legacy.has(review)) return false;
   if (review.sections.length !== 1 || review.sections[0]!.derived.state === "stale") return false;
   const score = review.summary.risk_score;
   if (!score || score.status !== "assessed" || score.score === null || score.score > 2)
