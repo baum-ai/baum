@@ -77,6 +77,7 @@ export function ViewPane({
             idPrefix={prefix}
             historical={historical}
             go={go}
+            context={context}
           />
         ) : place.tab === "sections" ? (
           <SectionsTab

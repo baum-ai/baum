@@ -300,8 +300,9 @@ function useWideSection(root: RefObject<HTMLElement | null>) {
 
 /** A section's Overview: its frame (the gist, then its risks last) around the
  *  body its agent composed, drawn block by block in order: prose, points,
- *  notes and the section's tiles. */
-function SectionOverview({
+ *  notes and the section's tiles. A brief leaves the gist out (`bare`): its
+ *  summary stands right above. */
+export function SectionOverview({
   document,
   review,
   section,
@@ -309,7 +310,9 @@ function SectionOverview({
   idPrefix,
   drafts,
   onRetryDetails,
+  bare = false,
 }: {
+  bare?: boolean;
   document: ReviewDocument;
   review: ReviewV2;
   section: V2Section;
@@ -328,7 +331,7 @@ function SectionOverview({
   // prose already opens with it (a section read from an older document).
   const lead = section.body.find((block) => block.type === "prose");
   const gist =
-    section.gist && !(lead?.type === "prose" && lead.text.trim().startsWith(section.gist))
+    !bare && section.gist && !(lead?.type === "prose" && lead.text.trim().startsWith(section.gist))
       ? section.gist
       : "";
   return (
@@ -744,15 +747,19 @@ const CONTEXT_PARTS: { key: keyof V2Context; label: string }[] = [
  *  on, then the tiles placed on it. A file it names opens whole, at the
  *  review's head (never its diff: the context is about the code around the
  *  change): in a column beside the context when the section is wide enough,
- *  as the other sections show their views, else in a dialog over the page. */
-function WhereThisFits({
+ *  as the other sections show their views, else in a dialog over the page.
+ *  `plain` is the context inside a brief's fold: no heading of its own, and
+ *  its files always in the dialog. */
+export function WhereThisFits({
   document,
   review,
   ctx,
   idPrefix,
   drafts,
   pending,
+  plain = false,
 }: {
+  plain?: boolean;
   document: ReviewDocument;
   review: ReviewV2;
   ctx: TileContext;
@@ -766,7 +773,7 @@ function WhereThisFits({
   const root = useRef<HTMLDivElement>(null);
   const wide = useWideSection(root);
   const named = useMemo(() => contextFiles(document, context), [document, context]);
-  const split = wide && source !== null && named.length > 0;
+  const split = !plain && wide && source !== null && named.length > 0;
   const [stored, store] = useStoredSetting(SIDE_COLLAPSED_KEY);
   const collapsed = stored !== "false";
   const [picked, setPicked] = useState<string | null>(null);
@@ -829,7 +836,7 @@ function WhereThisFits({
   );
   return (
     <div ref={root} className="space-y-7">
-      <CardHeader size="pane" title="Where this fits" />
+      {plain ? null : <CardHeader size="pane" title="Where this fits" />}
       {split && shown ? (
         <ContextFileSplit
           collapsed={collapsed}

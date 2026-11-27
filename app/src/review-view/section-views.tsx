@@ -442,7 +442,7 @@ function useTestHunks(
   return loaded;
 }
 
-function SectionFiles({
+export function SectionFiles({
   document,
   files,
   context,

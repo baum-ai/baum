@@ -1892,3 +1892,92 @@ describe("j and k on Files changed", () => {
     expect(steps.current?.item?.previous?.label).toBe("Previous item");
   });
 });
+
+/** #1303 cut down to a change small enough to read whole: one section, its
+ *  one 49-line hunk, a risk of 1 and a verdict with no points. */
+function smallReview(over: Partial<ReviewV2> = {}): ReviewV2 {
+  const section = REVIEW_1303.sections.find((each) => each.hunks.includes("h_routes"))!;
+  return {
+    ...REVIEW_1303,
+    summary: {
+      ...REVIEW_1303.summary,
+      verdict: { decision: "approve", text: "Safe to merge as it is.", points: [] },
+      risk_score: { ...REVIEW_1303.summary.risk_score!, score: 1, reasons: [] },
+    },
+    overview: { ...REVIEW_1303.overview, screenshots: [], videos: [], diagram: null },
+    sections: [{ ...section, hunks: ["h_routes"], risks: [] }],
+    tiles: [],
+    index: {
+      ...REVIEW_1303.index,
+      hunks: REVIEW_1303.index.hunks.filter((hunk) => hunk.id === "h_routes"),
+    },
+    ...over,
+  };
+}
+
+describe("a brief, for a small change", () => {
+  it("drops How it works from the rail and reads whole on the Overview", async () => {
+    const small = smallReview();
+    const container = await page("", review1303(small));
+    expect(railRows(container).map(rowLabel)).toEqual(["Overview", "Files changed"]);
+    const view = panel(container);
+    const text = view.textContent ?? "";
+    const order = [
+      "A paired phone can now reach the daemon",
+      "Safe to merge as it is.",
+      "The change",
+      "remoteRoutes is what a paired phone may ask of the daemon",
+      "What was asked",
+      "Where this fits",
+    ].map((part) => text.indexOf(part));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect(order).toEqual(order.toSorted((a, b) => a - b));
+    // The verdict's line stands in the risk card though it has no points.
+    expect(view.querySelector('[aria-label="Risk"] [data-brief-verdict]')?.textContent).toBe(
+      "Safe to merge as it is.",
+    );
+    // What the section says follows the diff, without the gist that would
+    // restate the summary above it.
+    const section = view.querySelector<HTMLElement>("[data-brief-section]")!;
+    expect(section.querySelector("[data-section-body]")).not.toBeNull();
+    expect(section.querySelector("[data-section-gist]")).toBeNull();
+    // The context waits folded at the end.
+    const context = view.querySelector<HTMLDetailsElement>("details[data-brief-context]")!;
+    expect(context.open).toBe(false);
+    expect(context.textContent).toContain("Area");
+  });
+
+  it("shows the Overview for an address that names its section", async () => {
+    const small = smallReview();
+    const container = await page(
+      `pane=section&section=${small.sections[0]!.id}`,
+      review1303(small),
+    );
+    expect(railRow(container, "Overview").getAttribute("aria-pressed")).toBe("true");
+    expect(panel(container).querySelector("[data-brief-section]")).not.toBeNull();
+  });
+
+  it("keeps the full layout for a change with more to read", async () => {
+    const section = smallReview().sections[0]!;
+    for (const review of [
+      // A second section.
+      smallReview({ sections: [section, { ...section, id: "sec_other", title: "Other" }] }),
+      // A risk worth a closer look.
+      smallReview({
+        summary: {
+          ...smallReview().summary,
+          risk_score: { ...REVIEW_1303.summary.risk_score!, score: 3 },
+        },
+      }),
+      // More lines than read at a glance.
+      smallReview({ index: REVIEW_1303.index }),
+    ]) {
+      const container = await page("", review1303(review));
+      expect(railRows(container).map(rowLabel)).toContain("How it works");
+      expect(panel(container).querySelector("[data-brief-section]")).toBeNull();
+      act(() => root?.unmount());
+      root = null;
+      document.body.replaceChildren();
+    }
+  });
+});
