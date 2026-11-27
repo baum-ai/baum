@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS capture_attempt(
 CREATE INDEX IF NOT EXISTS capture_attempt_session ON capture_attempt(agent, session_id, started_at);
 CREATE INDEX IF NOT EXISTS capture_attempt_started ON capture_attempt(started_at);`
 
+const sourceSchema = `
+CREATE TABLE IF NOT EXISTS capture_source(agent TEXT NOT NULL, session_id TEXT NOT NULL, source_json TEXT NOT NULL,
+  PRIMARY KEY(agent, session_id));
+CREATE TABLE IF NOT EXISTS decision_source(decision_id TEXT PRIMARY KEY, source_json TEXT NOT NULL);`
+
 // indexSchema indexes capture_session by repository, which the decisions
 // page, its coverage counts, the people count and the feature assigner
 // filter on: each reached every session through a scan. The decisions are
@@ -114,7 +119,7 @@ func Open(path string, o OpenOptions) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, now: time.Now}
-	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable + relevanceSchema)
+	_, err = db.Exec(schema + sourceSchema + featureSchema + indexSchema + timelineRevisionTable + relevanceSchema)
 	if err == nil {
 		err = installTimelineRevision(context.Background(), db)
 	}
@@ -154,7 +159,7 @@ func openReadOnly(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable + relevanceSchema)
+	_, err = db.Exec(schema + sourceSchema + featureSchema + indexSchema + timelineRevisionTable + relevanceSchema)
 	if err == nil {
 		err = installTimelineRevision(context.Background(), db)
 	}
@@ -185,6 +190,7 @@ type Session struct {
 	SkipReason string
 	Failures   int
 	UpdatedAt  time.Time
+	Source     *SourceContext
 }
 
 // Session reads the session's row; false when it has none.
@@ -207,6 +213,10 @@ backend, model, decisions_json, coverage, skip_reason, failures, updated_at FROM
 		if err := json.Unmarshal([]byte(head.String), &row.Decisions); err != nil {
 			return Session{}, false, fmt.Errorf("decoding the session's head decisions: %w", err)
 		}
+	}
+	row.Source, err = s.sourceContext(ctx, agent, id)
+	if err != nil {
+		return Session{}, false, err
 	}
 	return row, true, nil
 }
@@ -301,6 +311,7 @@ type Extraction struct {
 	Cost *float64
 	// TurnTimes are the times of the root session's turns, by ordinal.
 	TurnTimes map[int]time.Time
+	Source    *SourceContext
 }
 
 // Save makes the extraction the session's head and its decisions the
@@ -403,6 +414,25 @@ decided_at=excluded.decided_at, branch=excluded.branch, obsolete_at=NULL`,
 			}
 			for _, file := range slices.Compact(slices.Sorted(slices.Values(d.Files))) {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO decision_file(decision_id, path) VALUES (?,?)`, d.ID, file); err != nil {
+					return err
+				}
+			}
+		}
+		if e.Source != nil {
+			data, err := json.Marshal(e.Source)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO capture_source(agent,session_id,source_json) VALUES (?,?,?)
+ON CONFLICT(agent,session_id) DO UPDATE SET source_json=excluded.source_json`, e.Agent, e.ID, string(data)); err != nil {
+				return err
+			}
+			for _, d := range e.Decisions {
+				if _, existed := previous[d.ID]; existed {
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO decision_source(decision_id,source_json) VALUES (?,?)
+ON CONFLICT(decision_id) DO NOTHING`, d.ID, string(data)); err != nil {
 					return err
 				}
 			}

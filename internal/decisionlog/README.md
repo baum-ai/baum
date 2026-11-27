@@ -12,8 +12,11 @@ one. A custom prompt is recorded as a `+custom` prompt version. The prompt is
 read for every capture, and a failed read fails the capture rather than
 sending the published prompt in its place. Changing the prompt does not by
 itself extract a covered session again: covered is decided by the transcript
-fingerprint, so the new prompt applies when the transcript next changes or the
-session is forced.
+fingerprint and repository-context version, so the new prompt applies when the
+transcript next changes. The repository context is versioned separately as
+`repository-decisions-v1`, appended to the stored prompt version. A head made
+without repository context misses both the fingerprint and content-hash caches
+once, retaining its existing decisions and stable IDs during the extension.
 
 `baum decisions` uses the registry's prompts when a registry exists, else the
 published prompt.
@@ -64,13 +67,15 @@ not a failure.
    path is stored only once it does. A session whose own files exceed 64 MiB
    is skipped (`too_large`).
 2. When the stored fingerprint (size and modification time of its files) is
-   unchanged and the session is covered, nothing happens, except that a
-   stored path that failed is replaced by the one found. Unreadable Codex
-   skips include a reader version so a parser fix can retry unchanged files.
+   unchanged and the session is covered by the current repository-context
+   version, nothing happens, except that a stored path that failed is replaced
+   by the one found. An unrelated repository change does not remine a covered
+   transcript. Unreadable Codex skips include a reader version so a parser fix
+   can retry unchanged files.
 3. baum's own generation runs are skipped (`generation_run`).
 4. The transcript is rendered and redacted. When it has the head extraction's
-   content hash (an empty head included), the head still covers it and no call
-   is made. When a head exists, the call extends it: the message lists the
+   content hash and the current repository-context version, the head still
+   covers it and no call is made. When a head exists, the call extends it: the message lists the
    existing decisions by handle and then the whole transcript, with a marker
    after the turns the head's prefix covered; existing decisions keep their
    IDs. Otherwise the call reads the whole transcript.
@@ -84,44 +89,41 @@ not a failure.
    follows the resolved backend: `preferences.decisions.model` unless it names
    another provider's family, else `claude-haiku-5-5` for claude and
    `gpt-6-luna` for codex. A backend that does not pass its check is
-   `backend_unavailable`. A backend that cannot make a single structured
-   call is `backend_unsupported` too.
-7. The cost is reserved before the call: the prompt's byte bound and 16,384
-   output tokens at the model's list price. Claude Code caches the prompt, so
-   claude's call is reserved at the cache-write rate when that is higher. It
-   may make a second call, after the harness rejected its first reply against
-   the schema; that resends the cached prompt, so it is reserved at the
-   cache-read rate plus another reply. The Codex CLI has no option capping the
-   reply, so its 16,384 tokens are an estimate rather than a limit. Prices
-   only report: a model the price list does not price runs, reserved at 0.
-   There is no spending cap: as for reviews, each call keeps its token and
-   time budgets.
-8. The attempt is recorded as pending and the completion made: one request for
-   anthropic; `claude -p` with no tools besides its structured reply, which
-   normally ends after one call and may retry a rejected reply once; or one
-   `codex exec` turn with its shell tools off, normally one request (a call to
-   a tool Codex still offers, such as its patch or plan tool, makes another
-   within the turn). The completion, a retry included, has 10 minutes, the
-   default `pass_timeout` of a review pass: a backend still running then is
-   stopped and the attempt fails (reason `timeout`), so a hung backend does
-   not hold up the sessions queued behind it. The attempt is settled with its
-   cost from the reported usage, priced as reviews price theirs
-   (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
-   split not reported, or several calls
-   whose prompt sizes may straddle a long-prompt tier) the cost is estimated
-   at the lowest rates the usage could have been billed at; it is unknown only
-   when the call reported no tokens or its model has no rates. It is also settled with how many replies the harness
-   rejected against the schema (`rejections`; the last one's reason goes to
-   the private log with the attempt's stage, item and id). An attempt still
-   pending when the daemon starts is settled as abandoned. A reply stands
-   when the ledger cannot be written after it; the failure is logged.
+   `backend_unavailable`.
+7. A read-only source snapshot is exported from an available registered clone
+   of the repository, using the session's observed commit when known, else the
+   clone's head only when it is on the session's branch. No remote fetch is
+   required. A missing commit, clone or matching branch is `source_unavailable`,
+   retried as a backend-unavailable skip; existing decisions stay readable.
+   The snapshot's `source.json` records the repository, revision, resolution,
+   omissions from the configured checkout caps, and the limitation that
+   uncommitted files are not included (the transcript may describe them).
+   Source selection never switches or modifies the person's checkout.
+8. The attempt is recorded as pending and a code-capable agent task runs through
+   `generate.RunTask` on the data extraction backend. It has `head/`, the exact
+   resolved extraction instructions and the cleaned transcript/extension input.
+   Claude Code can Read/Glob/Grep the source; Codex has the review task's read-only
+   source access. Neither uses the tool-disabled `Complete` path. The task returns
+   the original extraction schema inside `extraction`, plus `source_refs`, a list
+   of existing repository-relative files it used for context. Schema/reply
+   checks and source references are validated, with up to two repairs. A failed
+   provider attempt is retried by capture's existing failure/backoff policy.
+
+   The initial reservation estimates the transcript and reply; repository reads
+   and additional task turns can add usage. The ledger records the aggregate
+   actual task usage, priced as reviews price it; unpriced usage stays unknown.
+   There is no spending cap. Configured call/token budgets apply, and the existing
+   capture call timeout (10 minutes by default) includes repairs. A cancelled
+   task is abandoned without changing decisions; a timed-out one fails so it
+   cannot hold the capture queue indefinitely. A ledger write failure is logged
+   without discarding an otherwise usable result.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 
 A failed call is not cached. After 3 failures in a row the session is marked
 `extraction_failed` until its transcript changes. Skips for a missing or
-unsupported backend are tried again the next day or when the transcript
-changes; other skips only when it changes.
+unsupported backend, or missing source are tried again the next day or when
+the transcript changes; other skips only when it changes.
 
 ## Stored data
 
@@ -132,6 +134,13 @@ changes; other skips only when it changes.
   consecutive failures. It is indexed by `(repository, extracted_at)`, which
   the decisions page, its coverage counts, the people count and the feature
   assigner filter on.
+- `capture_source`: the latest successful head extraction's source context,
+  including the version, revision, omissions, limitations and validated source
+  references. `decision_source` keeps the same extraction-level context for each
+  newly created decision; extending a session preserves older decisions' original
+  provenance. Earlier decisions without recorded source remain explicitly
+  without provenance. These additive tables are created on writable open; a
+  read-only old store remains readable without them.
 - `decision` and the `current_decision` view, `decision_file`: the decision
   log. A decision is upserted by ID; decisions a newer extraction no longer
   holds get `obsolete_at` and are never deleted. A decision is

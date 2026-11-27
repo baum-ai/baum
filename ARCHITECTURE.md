@@ -2256,7 +2256,8 @@ Every run has no MCP server: Claude Code gets `--strict-mcp-config` with an empt
 
 A backend may also implement `agent.Completer`: one structured completion
 with a system prompt, a user message and a schema, no working files, used by
-decision capture. It is normally one model call. The anthropic backend makes one Messages call offering only
+single structured-output workflows. Local decision capture instead uses a
+code-capable task (see "Decision capture"). A completion is normally one model call. The anthropic backend makes one Messages call offering only
 the StructuredOutput tool (`tool_choice` auto, one call, since current models
 refuse a forced choice while thinking); claude runs `claude -p` with no tools
 but StructuredOutput, no settings, MCP servers or session persistence, and at
@@ -7565,8 +7566,18 @@ A capture locates the transcript with `livesessions.Locate` (the agent's own
 store, symbolic links resolved, the mapped root session the event's), skips
 files over 64 MiB, baum's own generation runs and prompts over 272,000
 estimated tokens, and reuses, extends or replaces the session's head
-extraction as hosted extraction does. Its structured completion goes through
-the data extraction backend's `agent.Completer`, the reviews' unless the
+extraction as hosted extraction does. Its extraction goes through
+`generate.RunTask` on the data extraction backend, with a pinned read-only
+`head/`, source manifest, resolved extraction instructions and cleaned session
+transcript. The backend's source tools remain available. The task wraps the
+existing extraction schema with validated source references; the `decisions`
+parser/citation validator still interprets the inner reply. `capture_source`
+records the successful head's revision/context and `decision_source` preserves
+new decisions' extraction-level provenance. Context versioning invalidates old
+context-free hits once without remapping unchanged sessions after unrelated
+code changes. Source comes from a recorded session commit, else an available
+clone on its branch; unavailable source preserves decisions and reports a skip.
+The backend follows the reviews' unless the
 preferences choose another (`preferences.decisions.backend`; default models
 `claude-haiku-5-5` and `gpt-6-luna`); cursor-agent has none. A model the price list cannot price
 runs, reserved at 0, and every call is recorded in a ledger that throttles a session (5
