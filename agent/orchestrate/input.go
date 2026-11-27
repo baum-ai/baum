@@ -391,9 +391,10 @@ func previousOverview(previous []byte) string {
 			"verdict": d.Summary.Verdict, "risk_why": d.Summary.RiskWhy, "intent": intent}) + "\n"
 }
 
-// overviewInput is what the overview reads besides the map: each section's
-// result, the tiles, the sessions and the attachments.
-func overviewInput(sections []reviewv2.Section, tiles []reviewv2.Tile, b *bundle.Bundle) string {
+// sectionsText is the sections as written, for the context and the
+// overview: each one's title, gist, level, body and risks, and whether it
+// failed.
+func sectionsText(sections []reviewv2.Section) string {
 	type sec struct {
 		ID     string          `json:"id"`
 		Title  string          `json:"title"`
@@ -410,6 +411,14 @@ func overviewInput(sections []reviewv2.Section, tiles []reviewv2.Tile, b *bundle
 		entry := sec{ID: s.ID, Title: s.Title, Kind: s.Kind, Gist: s.Gist, Level: s.Level, Body: bodyText(s.Body), Risks: s.Risks, Failed: s.Details == "failed"}
 		out.WriteString(jsonText(entry) + "\n")
 	}
+	return out.String()
+}
+
+// overviewInput is what the overview reads besides the map: each section's
+// result, the tiles, the sessions and the attachments.
+func overviewInput(sections []reviewv2.Section, tiles []reviewv2.Tile, b *bundle.Bundle) string {
+	var out strings.Builder
+	out.WriteString(sectionsText(sections))
 	out.WriteString("\nThe tiles:\n")
 	if len(tiles) == 0 {
 		out.WriteString("(none)\n")

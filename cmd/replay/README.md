@@ -124,8 +124,9 @@ content and are never committed.
 
 `--generator v2` writes each case as a baum.review/2 document, as the desktop
 does with tile reviews on once the levels land (`generate.Options.V2`,
-`agent/orchestrate`): the map, then the section agents and the context agent at
-once, each tile once its section is written, and the overview. Every section is
+`agent/orchestrate`): the map, then the section agents at once, the context
+agent once the sections are written, each tile once its owner is written, and
+the overview. Every section is
 written; nothing is reused unless you pass `--reuse`, which lets the
 orchestration reuse a previous version's unchanged sections as the app does (it
 needs a previous version, so it matters for chains). For v2 it also turns on
