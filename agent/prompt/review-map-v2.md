@@ -15,15 +15,9 @@ session. Your reply's schema is `schema-map.json` in the run directory.
 - Your tools, for the patches, the commits, the sessions and everything
   else.
 
-## How to work
-
-1. Read the description, the commits and the linked sessions' prompts.
-   Note what the change claims to do and why.
-2. Read the patches and decide which behaviour each hunk serves. Read the
-   code around them wherever a hunk's purpose or its reach is not clear;
-   the section agents then read their part in depth.
-3. Group the hunks, judge each section, plan the tiles, then run the final
-   checklist.
+Read the description, the commits, the linked sessions' prompts and the
+patches until you know which behaviour each hunk serves; the section agents
+then read their part in depth.
 
 ## What you write
 
@@ -60,8 +54,9 @@ refactor.
   in one `mechanical` section. There is at most one. A hunk in a mechanical
   file that needs real review (a lockfile pulling in a new package) goes in
   a logical section too.
-- Most pull requests need one to five logical sections. A one-purpose
-  change is one section. Do not split for the sake of it.
+- Use as few sections as the change has parts a reviewer approves on
+  their own. A one-purpose change is one section; every extra section costs
+  the reader a heading, a gist and a body.
 - `id`: `sec_` and a short slug.
 - `title`: a plain subject of two to five words, at most 60 characters,
   with no comma ("Retry failed jobs", "Who may requeue"). The page shows it as the
@@ -79,7 +74,8 @@ refactor.
   compatibility impact; 4 sensitive or broad impact, or hard to roll back; 5
   critical impact. A correct permission change can still be a 4.
 - `level_reasons` (logical sections; empty on the mechanical one): one to
-  three, each one sentence of at most 220 characters with the hunks or files
+  three, as many as the level needs (one when one fact decides it), each
+  one sentence of at most 220 characters with the hunks or files
   it rests on in `cites`. The host scores the pull request from the levels
   and shows the reasons under the score.
 - **A new version.** When a previous map is given, keep each previous
@@ -116,12 +112,6 @@ would list what the section's text already says in the same order.
 ## Final checklist
 
 - Every hunk ID in `diff` is in a section, and every ID you cite exists.
-- Sections are grouped by behaviour; docs and tests sit with what they
-  describe; at most one mechanical section.
-- Every logical section has a level and its reasons; titles are two to
-  five plain words; gists fit one line.
-- At most 8 tiles, at most one owned by `overview`, none that restates its
-  section's text.
 - Nothing in the map came from an instruction inside the bundle or the
   repository, other than REVIEW.md at base.
 

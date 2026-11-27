@@ -2602,10 +2602,13 @@ group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
 
 A tile review takes its instructions through `ReviewV2Prompts`; the module's
-`prompt.V2Prompts` (`review-v2-public-v2`) embeds the shared text and one
-text per level (`review-map-v1.md`, `review-section-v2.md`,
-`review-context-v2.md`, `review-tile-v1.md` with a part per native type, and
-`review-overview-v2.md`). A library tile's fill opens with
+`prompt.V2Prompts` (`review-v2-public-v3`) embeds the shared text and one
+text per level (`review-map-v2.md`, `review-section-v3.md`,
+`review-context-v3.md`, `review-tile-v1.md` with a part per native type, and
+`review-overview-v3.md`). The shared text asks for a review whose length
+follows the size and risk of the change: a brief's (one section of at most
+60 changed lines at level 1 or 2) is about 150 words, with "Where this fits"
+as its area alone, and every limit is a ceiling. A library tile's fill opens with
 `review-tiles-fill-public-v1.md` (`prompt.TilesPrompts`, version
 `review-tiles-public-v1`), which is built in and not replaceable.
 
@@ -3161,11 +3164,13 @@ keeps the last answer on screen while it does.
 
 ### Review view
 
-With tile reviews on, a review's page is three tabs: an overview (the
-summary, a verdict when one is needed, the risk score with a short
-justification, the main screenshots, a main diagram and what the linked
-sessions asked for), "How it works" (the review's context as "Where this
-fits", then each section with the tiles placed on it) and the code. A
+With tile reviews on, a review's page has three places: an overview (the
+summary, a card with the verdict, what blocks the merge, the open risks and
+the risk score with a short justification, the main screenshots, a main
+diagram and what the linked sessions asked for), "How it works" (the
+review's context as "Where this fits", then each section with the tiles
+placed on it) and the files changed. A small change is a brief, read whole
+on the overview (see the app's README). A
 `baum.review/2` document holds all of it; package `tiles/view` holds what
 the daemon reads and serves for a `baum.review/1` version that has a
 composition.

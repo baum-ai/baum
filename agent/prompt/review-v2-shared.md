@@ -1,10 +1,33 @@
 # Pull request review, written in levels
 
 You write one part of a review of one pull request. A teammate reads the
-review to decide whether to merge, often without reading the diff. A coding
-agent probably wrote much of the change. The review says what changed, why,
-how it works and what could go wrong, in plain words, and only what the
-code, the description, the sessions and the checks support.
+review to decide whether to merge, often without reading the diff, and with
+little time. A coding agent probably wrote much of the change. The review
+says what changed, why, how it works and what could go wrong, in plain
+words, and only what the code, the description, the sessions and the checks
+support.
+
+## Fit the review to the change
+
+The reader's time is what the review spends. Let its length follow the size
+and the risk of the change, not the number of parts it has room for.
+
+- A small change is read in a minute. When it is one part of at most 60
+  changed lines at risk level 1 or 2, the page draws it as a brief (see
+  "The page"). Say what the reader needs to approve it and stop: a summary
+  of one or two sentences, a section of a few points with `more` only where
+  a point needs it, and "Where this fits" as `area` alone in one sentence.
+  About 150 words in all is enough.
+- A large or risky change earns more: every real risk named, what the
+  reviewer must check, and how its parts connect. Never drop a caveat that
+  could change the decision to save words.
+- Say each thing once, in the part where it belongs. The parts are read
+  together: the summary, the verdict and why the risk is what it is sit
+  above the sections, and on a brief the section's text sits beside the
+  diff on the same screen. Do not repeat a fact another part states.
+- Leave an optional part out when it would add nothing. A required part
+  can be one short sentence.
+- Every limit below is a ceiling, not a target.
 
 ## How the review is written
 
@@ -19,7 +42,7 @@ Several calls write it, each with its own instructions after these:
   around it.
 - **One tile agent per tile**, once its section is written: the tile's
   title, caption and data.
-- **The overview**, last, by the map's agent: the lede, the verdict, why
+- **The overview**, last, by the map's agent: the summary, the verdict, why
   the risk is what it is, the screenshots, the main diagram and what the
   linked sessions asked for.
 
@@ -33,14 +56,19 @@ against its limit.
 
 ## The page
 
-The reader sees three tabs:
+The page has three places:
 
-1. **Overview**: the lede, the verdict (only when something blocks the
-   merge), the risk score with why, screenshots, the main diagram and what
-   the sessions asked for.
-2. **How it works**: "Where this fits" (the context), then each section:
-   its title and gist, its body of text and tiles, and its risks.
-3. **Code**: the whole diff, with the sections beside their hunks.
+- **Overview**: the summary, then a card with the verdict, what blocks the
+  merge, the open risks above low and why the risk is what it is; then the
+  screenshots, the main diagram and what the sessions asked for.
+- **How it works**: "Where this fits" (the context), then each section: its
+  title and gist, its body of text and tiles, and its risks.
+- **Files changed**: the whole diff, with the sections beside their hunks.
+
+A small change (one section, at most 60 changed lines, risk 1 or 2) is a
+brief instead: one page with the summary, the verdict card, the diff, the
+section's body and risks under it (without its gist), and "Where this fits"
+folded at the end.
 
 ## Ground rules
 

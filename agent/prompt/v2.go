@@ -15,21 +15,21 @@ import (
 
 // V2Version is the prompt version of a baum.review/2 generation (the
 // levels of agent/orchestrate). Change it with the text of any of its files:
-// review-v2-shared.md, review-map-v1.md, review-section-v2.md,
-// review-context-v2.md, review-tile-v1.md and its review-tile-<type>-v1.md
-// parts, and review-overview-v2.md.
-const V2Version = "review-v2-public-v2"
+// review-v2-shared.md, review-map-v2.md, review-section-v3.md,
+// review-context-v3.md, review-tile-v1.md and its review-tile-<type>-v1.md
+// parts, and review-overview-v3.md.
+const V2Version = "review-v2-public-v3"
 
 //go:embed review-v2-shared.md
 var v2Shared string
 
-//go:embed review-map-v1.md
+//go:embed review-map-v2.md
 var v2Map string
 
-//go:embed review-section-v2.md
+//go:embed review-section-v3.md
 var v2Section string
 
-//go:embed review-context-v2.md
+//go:embed review-context-v3.md
 var v2Context string
 
 //go:embed review-tile-v1.md
@@ -47,7 +47,7 @@ var v2TileSequence string
 //go:embed review-tile-table-v1.md
 var v2TileTable string
 
-//go:embed review-overview-v2.md
+//go:embed review-overview-v3.md
 var v2Overview string
 
 // The baum.review/2 prompts a host can replace.
