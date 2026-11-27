@@ -173,7 +173,7 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
                     data-rail-group=""
                     className="px-2 pt-2 pb-0.5 text-xs font-medium tracking-[0.08em] text-tertiary uppercase"
                   >
-                    Routine
+                    Low risk
                   </p>
                 ) : null}
                 <SideNavButton

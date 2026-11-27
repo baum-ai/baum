@@ -174,7 +174,7 @@ describe("the review page's rail", () => {
     );
     // One label, right above the first routine section.
     const labels = [...rail(container).querySelectorAll("[data-rail-group]")];
-    expect(labels.map((each) => each.textContent)).toEqual(["Routine"]);
+    expect(labels.map((each) => each.textContent)).toEqual(["Low risk"]);
     expect(labels[0]!.parentElement!.contains(railRow(container, "Dependencies"))).toBe(true);
   });
 

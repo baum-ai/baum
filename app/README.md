@@ -3031,7 +3031,7 @@ lists, in order:
   caution and critical colours, the rest quiet), named for assistive
   technology in the row's description. The sections that want a look come
   first, then the routine ones (mechanical, or rated 1 of 5) under a quiet
-  **Routine** label, each group in the review's own order, since sections
+  **Low risk** label (words a reader knows without the rubric), each group in the review's own order, since sections
   often build on each other (`listedSections`; the keys step through the same
   order). A review whose sections are all routine has no label.
 - A row gains a tick once the reader has been through its section: they
