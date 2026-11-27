@@ -28,8 +28,7 @@ export { KINDS, type Kind, type Route, type Toast } from "./toast.ts";
 
 const SUBMENU_ID = "notifications";
 
-/** What the notifications need of the daemon client (`app_url` in the Rust
- *  shell's `events.rs`). */
+/** What the notifications need of the daemon client (`app_url`). */
 export interface DaemonClient {
   /** `POST /api/auth/exchange`: the daemon's secret app path, `/s/<secret>/`,
    *  as an absolute URL on the daemon's origin. */

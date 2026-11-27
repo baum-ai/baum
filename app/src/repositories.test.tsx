@@ -176,72 +176,66 @@ it("keeps loading, not empty, while the GitHub listing for a new connection is p
   expect(node.querySelector(".repository-name strong")!.textContent).toBe("late/one");
 });
 it.each([
-  ["the app's Add repositories", repositoryCall, "__TAURI_INTERNALS__"],
-  ["desktop setup", setupRepositoryCall, "__TAURI_INTERNALS__"],
-  ["desktop setup in the Electron shell", setupRepositoryCall, "baumDesktop"],
-] as const)(
-  "searches beyond suggestions and picks the result in %s",
-  async (_name, call, global) => {
-    history.replaceState(null, "", "/s/test-ns/");
-    const picked = new Set<string>();
-    const queries: string[] = [];
-    const repository = "new-org/never-contributed";
-    const backend = (action: string, args: { query?: string; repository?: string } = {}) => {
-      if (action === "list") {
-        queries.push(args.query ?? "");
-        return {
-          repositories: args.query ? [{ repository, description: "", clone: "" }] : [],
-          total_count: 200,
-        };
-      }
-      if (action === "pick") picked.add(args.repository!);
-      if (action === "picked") return [...picked].map((repository) => ({ repository }));
-      return {};
-    };
-    vi.stubGlobal(global, {
-      invoke: async (
-        _command: string,
-        args: { action: string; query?: string; repository?: string },
-      ) => backend(args.action, args),
-    });
-    vi.stubGlobal(
-      "fetch",
-      mockStateFetch(async (input, init) => {
-        const url = new URL(String(input), location.origin);
-        const action = url.pathname.endsWith("/github/repositories")
-          ? "list"
-          : url.pathname.endsWith("/repositories")
-            ? init?.method === "POST"
-              ? "pick"
-              : "picked"
-            : "found";
-        return Response.json(
-          backend(action, {
-            query: url.searchParams.get("query") ?? "",
-            ...(init?.body ? JSON.parse(String(init.body)) : {}),
-          }),
-        );
-      }),
-    );
-    const onPicked = vi.fn();
-    await act(async () => root.render(<RepositoryPicker call={call} onPicked={onPicked} />));
-    expect(node.textContent).toContain("No repositories match.");
-    await searchRepositories("new-org never");
-    const checkbox = node.querySelector<HTMLInputElement>(
-      `input[aria-label="Pick ${repository}"]`,
-    )!;
-    expect(checkbox).not.toBeNull();
-    await act(async () => checkbox.click());
-    expect(picked.has(repository)).toBe(true);
-    expect(onPicked).toHaveBeenLastCalledWith(1);
-    expect(queries).toContain("new-org never");
-    await searchRepositories("");
-    expect(queries.at(-1)).toBe("");
-    expect(
-      node.querySelector<HTMLInputElement>(`input[aria-label="Pick ${repository}"]`)!.checked,
-    ).toBe(true);
-  },
-);
+  ["the app's Add repositories", repositoryCall],
+  ["desktop setup", setupRepositoryCall],
+] as const)("searches beyond suggestions and picks the result in %s", async (_name, call) => {
+  history.replaceState(null, "", "/s/test-ns/");
+  const picked = new Set<string>();
+  const queries: string[] = [];
+  const repository = "new-org/never-contributed";
+  const backend = (action: string, args: { query?: string; repository?: string } = {}) => {
+    if (action === "list") {
+      queries.push(args.query ?? "");
+      return {
+        repositories: args.query ? [{ repository, description: "", clone: "" }] : [],
+        total_count: 200,
+      };
+    }
+    if (action === "pick") picked.add(args.repository!);
+    if (action === "picked") return [...picked].map((repository) => ({ repository }));
+    return {};
+  };
+  vi.stubGlobal("baumDesktop", {
+    invoke: async (
+      _command: string,
+      args: { action: string; query?: string; repository?: string },
+    ) => backend(args.action, args),
+  });
+  vi.stubGlobal(
+    "fetch",
+    mockStateFetch(async (input, init) => {
+      const url = new URL(String(input), location.origin);
+      const action = url.pathname.endsWith("/github/repositories")
+        ? "list"
+        : url.pathname.endsWith("/repositories")
+          ? init?.method === "POST"
+            ? "pick"
+            : "picked"
+          : "found";
+      return Response.json(
+        backend(action, {
+          query: url.searchParams.get("query") ?? "",
+          ...(init?.body ? JSON.parse(String(init.body)) : {}),
+        }),
+      );
+    }),
+  );
+  const onPicked = vi.fn();
+  await act(async () => root.render(<RepositoryPicker call={call} onPicked={onPicked} />));
+  expect(node.textContent).toContain("No repositories match.");
+  await searchRepositories("new-org never");
+  const checkbox = node.querySelector<HTMLInputElement>(`input[aria-label="Pick ${repository}"]`)!;
+  expect(checkbox).not.toBeNull();
+  await act(async () => checkbox.click());
+  expect(picked.has(repository)).toBe(true);
+  expect(onPicked).toHaveBeenLastCalledWith(1);
+  expect(queries).toContain("new-org never");
+  await searchRepositories("");
+  expect(queries.at(-1)).toBe("");
+  expect(
+    node.querySelector<HTMLInputElement>(`input[aria-label="Pick ${repository}"]`)!.checked,
+  ).toBe(true);
+});
 it("debounces search and ignores an older search response", async () => {
   vi.useFakeTimers();
   const pending = new Map<string, (value: unknown) => void>();

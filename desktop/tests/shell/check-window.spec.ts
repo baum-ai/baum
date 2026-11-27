@@ -2,8 +2,8 @@
 // window's: a tile spinning in it leaves the main window's heartbeat
 // running, closing the window ends the spinning process within a second, and
 // a window opened again works. Its page can call no command and cannot leave
-// the daemon's origin (README "Tile check window"; the port of the WebKitGTK
-// harness's tests/check-window/check.mjs). Processes are sampled from /proc.
+// the daemon's origin (README "Tile check window"). Processes are sampled
+// from /proc.
 import { expect, test } from "@playwright/test";
 import {
   type Contents,

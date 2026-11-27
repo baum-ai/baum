@@ -112,9 +112,7 @@ function usePeek(folded: boolean) {
   // window's left edge), or an app that loses focus to another window, may
   // never send the sidebar a leave event, so it would stay open over the page.
   // Leaving the document or the window counts as leaving the sidebar, which
-  // also drops an open still waiting on its delay. On Linux under Wayland,
-  // WebKitGTK may not tell the page the pointer left at all, so the desktop
-  // app announces it with `baum:pointer-left` (oss/desktop/src/pointer.rs).
+  // also drops an open still waiting on its delay.
   useEffect(() => {
     const away = () => {
       inside.current = false;
@@ -127,12 +125,10 @@ function usePeek(folded: boolean) {
       if (event.relatedTarget === null) away();
     };
     window.addEventListener("blur", away);
-    window.addEventListener("baum:pointer-left", away);
     document.addEventListener("mouseout", onMouseOut);
     document.addEventListener("visibilitychange", away);
     return () => {
       window.removeEventListener("blur", away);
-      window.removeEventListener("baum:pointer-left", away);
       document.removeEventListener("mouseout", onMouseOut);
       document.removeEventListener("visibilitychange", away);
     };

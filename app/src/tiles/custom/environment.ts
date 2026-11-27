@@ -14,8 +14,7 @@ import { useEffect, useState, useSyncExternalStore, type RefObject } from "react
 type DesktopDeclaration = { tileFrames?: unknown };
 
 /** Whether the page may mount tile frames here: always in a browser; in a
- *  desktop shell (its bridge, `window.baumDesktop` in Electron or
- *  `__TAURI_INTERNALS__` in Tauri, is on the page) only
+ *  desktop shell (its bridge, `window.baumDesktop`, is on the page) only
  *  when the shell declares `window.__BAUM_DESKTOP__ = { tileFrames: true }`.
  *  A shell that declares nothing, or anything else, is an older or
  *  unchecked one (the Windows shell, until its separate check is done), and

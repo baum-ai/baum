@@ -225,16 +225,14 @@ describe("configuration", () => {
     expect(releasePage("1.2.3")).toBe("https://github.com/baum-ai/baum/releases/tag/v1.2.3");
   });
 
-  // The release workflow signs bundles with the key whose public half is
-  // configured here.
+  // The release workflow signs bundles with the key whose public half its
+  // scripts read from updater-key.pub.
   it("trusts only the release key", () => {
     const key = Buffer.from(RELEASE_PUBLIC_KEY, "base64").toString("utf8");
     expect(key.startsWith("untrusted comment: minisign public key: C42ACF774FCC1D5F\n")).toBe(true);
-    const tauri = join(import.meta.dirname, "..", "..", "tauri.conf.json");
-    if (existsSync(tauri)) {
-      const config = JSON.parse(readFileSync(tauri, "utf8"));
-      expect(config.plugins.updater.pubkey).toBe(RELEASE_PUBLIC_KEY);
-    }
+    expect(readFileSync(join(import.meta.dirname, "..", "..", "updater-key.pub"), "utf8")).toBe(
+      key,
+    );
   });
 
   it("only copies the updater can replace install", () => {

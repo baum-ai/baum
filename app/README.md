@@ -3,7 +3,7 @@
 For desktop UI development, run `just desktop::dev` from the repository root
 on Linux in a Wayland or X11 session. The native app and shared daemon run on the
 host; Vite and frontend dependencies stay in Docker. Changes to the daemon-served
-app and `../viewer` hot reload without rebuilding Go or Rust. See
+app and `../viewer` hot reload without rebuilding Go or the shell. See
 [desktop development](../desktop/README.md#development).
 
 A hidden window or closed tray panel makes no requests and repaints nothing,
@@ -50,9 +50,8 @@ JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
 interactions were recorded, without copying the rest, for a scenario to
 wait on (`just desktop::profile`, [desktop](../desktop/README.md#profiling)).
 
-It measures by hand rather than with the Event Timing or Long Tasks APIs,
-which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
-things. Every other build leaves it out, and fails if `__baumPerf` reaches a
+It measures by hand rather than with the Event Timing or Long Tasks APIs.
+Every other build leaves it out, and fails if `__baumPerf` reaches a
 chunk.
 
 The desktop app's own screens are React too: `setup.html` mounts
@@ -115,7 +114,7 @@ specific artwork modules may define literal colors; tests and generated files
 are excluded. Inbox filter color names are persisted palette keys, not CSS colors.
 
 The multi-page production build emits every entry and assembles `../desktop/dist`
-for Tauri, where the connecting screen becomes `index.html`, the page the
+for the desktop app, where the connecting screen becomes `index.html`, the page the
 window opens on; it is taken out of the daemon's copy. Every loading state uses
 one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
 lives only in `src/nine-dots.css`. A page that reads something says which of four things it is
@@ -132,8 +131,8 @@ viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope f
 headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
 under the SIL Open Font License, listed in the third-party notices. Fonts and
 icons are bundled as local assets rather than requiring a network. The setup
-screen keeps its Tauri-local origin and permissions; serving it from the daemon
-or Vite does not grant native access. Setup changes currently require restarting
+screen keeps its bundled origin (`app://bundle`) and the commands that origin
+may call; serving it from the daemon does not grant native access. Setup changes currently require restarting
 `just desktop::dev` to rebuild the embedded assets.
 
 `just local_app::e2e` checks the built app, development proxy and compiled native
@@ -1125,9 +1124,7 @@ over the page, which does not move, and it folds again shortly after the
 pointer leaves or when a link in it is chosen. It folds at once when the
 pointer leaves the window or the window loses focus, since a pointer that
 leaves straight off the rail at the window's edge may never send the rail
-its own leave event. On Linux under Wayland, WebKitGTK may send the page no
-leave at all, so the desktop app announces it with a `baum:pointer-left`
-event; keyboard focus in the rail
+its own leave event. Keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
@@ -2310,10 +2307,10 @@ stays; everywhere else that offers no menu of its own, a right click does nothin
 the tray and the connecting screen).
 
 Undo and redo in text fields are the app's own (`installTextHistory` in
-`src/text-history.ts`, installed by the app and setup windows): the desktop
-app's WebKitGTK web view never undoes on Ctrl+Z, so every text `input` and
-`textarea` keeps a history the app answers ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Shift+Z
-and Ctrl+Y (not on a Mac) from, in a browser too. Typing is one step until a
+`src/text-history.ts`, installed by the app and setup windows), so a field
+behaves the same wherever the app runs: every text `input` and `textarea`
+keeps a history the app answers ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Shift+Z and Ctrl+Y
+(not on a Mac) from, in the desktop app and in a browser. Typing is one step until a
 pause of a second, a caret move or a switch between typing and deleting; a
 paste, a cut or a line break is a step of its own. A step restores the text and
 selection and sends an `input` event, so a React field's `onChange` follows; a
@@ -2596,16 +2593,13 @@ The escape probes on the real frame route (`tile-frames.spec.ts`) use a server
 on port 4170 that must hear nothing.
 The synthetic tiles share a section, so each test serves the document with
 only the ones it drives (`showOnly`, which drops the others' tiles and tile
-blocks). `just local_app::e2e-webkit`
-runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
-macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
+blocks).
 The main suite starts the fixture without custom tiles.
 `e2e/tile-check.spec.ts` (main suite) submits candidates through a route
 only the fixture has (`POST api/tile-checks/submit`) and lets the page's own
 runner draw them: one tile per problem in `e2e/tile-check/`, the built-in
 library types and the starter, which pass, and a busy tile that a runner
-claims and never answers, which hangs. `just local_app::e2e-webkit` runs it
-in WebKit too.
+claims and never answers, which hangs.
 `just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
 (synthetic data) with the Go kit and takes pictures of them in sandboxed
 frames under the frame route's headers, glance at each card size and detail at
@@ -3292,8 +3286,8 @@ their bullets and numbers.
   page opens the shell's check window (`open_check_window`, which loads
   `?page=tile-check`, the runner alone) on a `tile_check` event and closes it
   (`close_check_window`) when a check hangs or after 2 minutes without one.
-  In a browser and on macOS the runner draws inside the page; a desktop shell
-  without frames draws nothing.
+  In a browser the runner draws inside the page; a desktop shell without
+  frames draws nothing.
 - **First-show preflight** (`src/tiles/custom/preflight.ts`). Where the check
   window exists, a custom tile that is not of a built-in type waits (its
   box's `data-frame-state` reads `checking`) while the daemon draws its data

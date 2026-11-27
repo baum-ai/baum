@@ -2,8 +2,7 @@
 // preload's `baumDesktop.invoke`, which sends them over one IPC channel. A
 // call runs only when it comes from the main frame of one of the app's own
 // windows, at a page whose role (resolved from the window, the frame's
-// origin and path) the command table (commands.ts) allows. This replaces
-// Tauri's capability files and its per-origin command checks.
+// origin and path) the command table (commands.ts) allows.
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from "electron";
 import { INVOKE_CHANNEL, type InvokeResult } from "../shared/contract.ts";
 import { type CommandContext, dispatch, isCommand, type Role } from "./commands.ts";
@@ -117,7 +116,7 @@ function isArgs(value: unknown): value is Record<string, unknown> {
 }
 
 /** Answers one invoke. Refusals say only that the command is not allowed,
- *  as Tauri's did, whatever the reason. */
+ *  whatever the reason. */
 export async function answer(
   event: Sender,
   state: BridgeState,

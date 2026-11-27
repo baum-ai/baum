@@ -1580,9 +1580,9 @@ faint edge the page draws, under a "Custom tile" caption. A tile still being
 written (`pending`) is drawn as built-in ones are, without a frame.
 
 - **Where.** `environment.ts` decides once: in a browser frames mount; in a
-  desktop shell (`__TAURI_INTERNALS__` on the page) only when the shell set
+  desktop shell (`window.baumDesktop` on the page) only when the shell set
   `window.__BAUM_DESKTOP__ = { tileFrames: true }` (an own property, exactly
-  `true`) by init script before the page's scripts, which it does once it
+  `true`) from its preload before the page's scripts, which it does once it
   refuses frame navigations to anything but the daemon's pages and its
   commands are out of a frame's reach. Otherwise every custom tile says
   "Custom tiles aren't available in this version of the desktop app yet".
@@ -1627,8 +1627,7 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   on it is not a click; the page cannot see clicks inside a frame). The page
   looks as its window loses or regains focus and whenever the frame speaks;
   a frame holding the keyboard otherwise loses it to the page's element that
-  last had it, else by `iframe.blur()` (Chromium), else to the body (WebKit
-  keeps focus in the frame through `blur()`). A fourth taking unmounts it.
+  last had it, else by `iframe.blur()`. A fourth taking unmounts it.
   The gift ends when the keyboard comes back to the page.
 - **Asking the page.** `jump`, `ask` and `key` count only from a detail the
   reader gave the keyboard while the page has focus. `jump` and `ask` also
@@ -1789,24 +1788,23 @@ also reports `timeout` (5 s after `init`, or the kit's own at 3 s), the kit's er
 `render_failed`, `empty`, `overflow_glance`, `overflow_x`,
 `unresolved_citation` and `slow` from the ready metrics, and `layout_loop`
 when a detail set to the height it asks for keeps growing by the same
-amount. It may run in a hidden window, which on Linux WebKitGTK runs no
-animation frames, ResizeObserver or IntersectionObserver callbacks and runs
-timers about once a second while its layout and fonts are right; so it
+amount. It may run in a hidden window, where animation frames and observer
+callbacks need not run while layout and fonts are right; so it
 measures with layout reads and messages after the kit settled on its fonts,
 and uses timers only as deadlines. For the same reason it drives frames
 itself rather than through `TileFrame`, which mounts on an
 IntersectionObserver and follows heights by animation frame.
 
 Where it runs: when the desktop shell declares
-`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one:
-the Electron shell, and the Tauri shell on Linux), the main page calls
+`window.__BAUM_DESKTOP__.checkWindow === true` (the desktop app provides
+one), the main page calls
 the shell's `open_check_window` on a queued check, which loads
 `?page=tile-check` in a hidden window with its own renderer process, and
 `close_check_window` on `hung` (ending that process and the loop with it) or
 after 2 minutes without a check; the shell's commands are sent one after
 another, so the `queued` the daemon announces again for waiting checks after
 a hang reopens the window. Anywhere else frames are allowed (a
-browser, the Tauri shell on macOS) the main page draws queued checks inside itself,
+browser) the main page draws queued checks inside itself,
 where a hang freezes the page until the daemon gives up on the job. A shell
 that allows no frames draws nothing, and checks are `unavailable`.
 
@@ -1818,7 +1816,7 @@ frame's own failure faces show those); `hang` shows "This tile stopped
 responding when it was checked." and the frame route refuses the type. Each
 pair is asked about once per page, one pair at a time: a preflight request
 stays open until its tile is drawn, and the check window shares the page's
-connections to the daemon (WebKit opens at most 6 to one host), so a page
+connections to the daemon (Chromium opens at most 6 to one host), so a page
 asking for all its tiles at once would leave the check window none to claim
 them with. A browser skips the preflight.
 
@@ -8551,8 +8549,8 @@ Hooks…".
 
 ## Desktop app
 
-`desktop/` is a Tauri v2 shell, a Rust crate outside the Go module's
-packages. It bundles the release `baum` binary and depends on it only through
+`desktop/` is an Electron shell (TypeScript in `desktop/electron/`) outside
+the Go module's packages. It bundles the release `baum` binary and depends on it only through
 `baum daemon ensure --json` and the daemon's private credential file.
 Everything that knows where the daemon lives stays in Go. The shell owns the
 window, its navigation policy and the reconnect screen, the tray (job counts,
@@ -8565,8 +8563,8 @@ reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics`, sets
 `PUT /api/automatic` and, once when first-run setup finishes, sends
 `POST /api/automatic/catch-up` (see "Setup catch-up"), with the launch token
 as a bearer, over the app API the window uses. It also owns first-run setup
-(`src/onboarding.rs`, `src/install.rs`, `../app/src/desktop/setup.tsx`): a bundled screen,
-with its own narrow capability, from which the user installs the bundled
+(`electron/main/onboarding.ts`, `electron/main/install.ts`, `../app/src/desktop/setup.tsx`): a bundled screen,
+with its own narrow set of commands, from which the user installs the bundled
 `baum` as the `baum` command on the login shell's `PATH` (a symbolic link to a
 stable path of the bundled binary; an AppImage and Windows run and link a
 copy in the app's data directory, which Windows adds to the user `PATH`;
@@ -8575,7 +8573,7 @@ native `baum@baum` marketplace plugins; after that the window opens the
 daemon's diagnostics page. The `setup` section of the native shell's
 `desktop.json` records onboarding and the command links/copies it installed;
 its other sections hold notification settings, zoom and failed updates.
-Section updates share one lock and atomic file replacement, and the file is
+Section updates replace one section at a time with an atomic file replacement, and the file is
 readable before the daemon connects. Agent registries own plugin installation
 and enablement. Plugin status/install/removal use the resolved login shell PATH,
 with an inherited-PATH fallback warning if resolution fails. Command removal

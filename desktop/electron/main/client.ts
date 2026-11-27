@@ -8,8 +8,7 @@
 // JSON, which the daemon requires of every non-GET request. The capability
 // is only ever sent in an `Authorization` header, never in a URL or a log.
 //
-// Node's HTTP client speaks HTTP/1.1 where the Rust shell wrote HTTP/1.0 by
-// hand; it still sends `Connection: close` and reads the body to the end.
+// Every request sends `Connection: close` and reads the body to the end.
 //
 // API (every function rejects with an `Error` whose message is safe to show):
 //   request(launch, method, path, json, timeoutMs) -> { status, body }

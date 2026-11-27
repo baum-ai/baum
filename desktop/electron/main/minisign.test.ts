@@ -140,7 +140,7 @@ describe("minisign", () => {
     );
   });
 
-  // Made by minisign 0.12 in the desktop-test image (minisign -G -W, then
+  // Made by minisign 0.12 in the desktop-electron image (Dockerfile) (minisign -G -W, then
   // -S and -S -l with updater-sign.sh's trusted comment), and encoded as
   // updater-sign.sh encodes .sig files.
   it("verifies signatures made by minisign", async () => {
@@ -172,7 +172,7 @@ describe("minisign", () => {
       "C42ACF774FCC1D5F",
     );
     // Made with a throwaway key (minisign -G -W) over "baum", with the
-    // trusted comment the Tauri CLI writes.
+    // trusted comment scripts/updater-sign.sh writes.
     const signature = parseSignature(OTHER_KEY_SIGNATURE);
     expect(() => verifyData(Buffer.from("baum"), signature, release, "1.2.3")).toThrow(
       MinisignError,

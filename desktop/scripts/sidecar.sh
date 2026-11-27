@@ -1,5 +1,6 @@
 #!/bin/sh
-# Builds the baum binary the desktop app bundles, as Tauri expects it:
+# Builds the baum binary the desktop app bundles, where scripts/bundle.sh and
+# an unpackaged app (electron/main/daemon.ts) look for it:
 # desktop/binaries/baum-<target triple>[.exe]. Run from the module root
 # (oss/). The target defaults to the Go host platform.
 set -eu

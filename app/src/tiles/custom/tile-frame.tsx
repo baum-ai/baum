@@ -661,19 +661,12 @@ export function forgetInput() {
 
 /** Gives the page back the keyboard a frame holds: to the page's element
  *  that last had it (the reader goes on typing where they were), else by
- *  `blur()`, which Chromium honours, else to the body, as WebKit keeps the
- *  focus in the frame through `blur()`. */
+ *  `blur()`. */
 function release(iframe: HTMLIFrameElement) {
   const previous = lastFocused?.deref();
   if (previous?.isConnected) previous.focus({ preventScroll: true });
   if (document.activeElement !== iframe) return;
   iframe.blur();
-  if (document.activeElement !== iframe) return;
-  const body = document.body;
-  const had = body.hasAttribute("tabindex");
-  if (!had) body.tabIndex = -1;
-  body.focus({ preventScroll: true });
-  if (!had) body.removeAttribute("tabindex");
 }
 
 /** Whether the browser reports a user activation now: a click or key press,

@@ -1,4 +1,4 @@
-// The tile check window (src/check_window.rs in the Tauri shell): a second
+// The tile check window: a second
 // window, never shown, where the daemon's page renders custom tiles to check
 // them (`?page=tile-check`). Chromium runs it in renderer processes of its
 // own, so a tile that never yields stalls those and not the main window, and

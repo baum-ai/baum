@@ -1,6 +1,5 @@
-// The bridge to the container's Vite server under development (src/
-// development.rs in the Tauri shell): an unpackaged app run with
-// `BAUM_DESKTOP_DEV_DIR` loads the daemon's pages through Vite's proxy on
+// The bridge to the container's Vite server under development: an
+// unpackaged app run with `BAUM_DESKTOP_DEV_DIR` loads the daemon's pages through Vite's proxy on
 // port 1420 and the setup screen from Vite, so edits reload in place. No
 // credential leaves the normal fragment and cookie exchange; the shared file
 // holds only the daemon's origin.

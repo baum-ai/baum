@@ -1,9 +1,9 @@
-// The app's side of the contract with `baum daemon` (src/daemon.rs in the
-// Tauri shell). The bundled `baum` binary does everything that knows where
-// the daemon lives: `baum daemon ensure --json` starts the user's daemon if
-// none is running and prints its status, whose `state` directory holds the
-// app credential and the logs. This module only runs that command, reads the
-// credential and checks the daemon still answers.
+// The app's side of the contract with `baum daemon`. The
+// bundled `baum` binary does everything that knows where the daemon lives:
+// `baum daemon ensure --json` starts the user's daemon if none is running and
+// prints its status, whose `state` directory holds the app credential and the
+// logs. This module only runs that command, reads the credential and checks
+// the daemon still answers.
 import { spawn } from "node:child_process";
 import { accessSync, constants, lstatSync, readFileSync } from "node:fs";
 import { request } from "node:http";
@@ -102,9 +102,9 @@ export function misplacedMessage(
   return null;
 }
 
-/** Whether `path` is on a read-only file system. The Tauri shell read the
- *  mount's flags with statfs, which Node does not expose; asking for write
- *  access answers EROFS on a read-only mount whatever the file's mode. */
+/** Whether `path` is on a read-only file system. Node does not expose the
+ *  mount's flags (statfs), so this asks for write access, which
+ *  answers EROFS on a read-only mount whatever the file's mode. */
 export function onReadOnlyVolume(path: string): boolean {
   try {
     accessSync(dirname(path), constants.W_OK);
@@ -157,8 +157,7 @@ export interface Cli {
   bundled: string;
   /** Where the app keeps a stable copy of the bundled binary (an AppImage's
    *  mount vanishes when it quits; Windows), a function that refreshes the
-   *  copy if needed and returns it. The setup port (install.rs's
-   *  `refresh_copy`) supplies it; without one the app runs the bundled
+   *  copy if needed and returns it. The setup port supplies it; without one the app runs the bundled
    *  binary. A copy that could not be made is an error the connecting screen
    *  shows, never a fall back to the binary that would vanish. */
   stable?: () => Promise<string>;

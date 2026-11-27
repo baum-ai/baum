@@ -1,5 +1,4 @@
-// Quitting (lifecycle.rs's `quit`, `quit_and_stop` and the no-tray close in
-// the Tauri shell). The daemon outlives the app: Quit ends only the app.
+// Quitting: `quit`, `quit_and_stop` and the no-tray close. The daemon outlives the app: Quit ends only the app.
 // "Quit and stop background reviews" also runs `baum daemon stop`, which
 // cancels running jobs, records them as interrupted and marks the daemon
 // stopped by the user, so agent hooks do not start it again. It asks first

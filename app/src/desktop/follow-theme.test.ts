@@ -11,12 +11,12 @@ const saved: SavedTheme = {
   dark: { base: "dark", tokens: { "--surface-page": "#112233" } },
 };
 
-function bridge(answer: () => unknown, global = "__TAURI_INTERNALS__") {
+function bridge(answer: () => unknown) {
   const invoke = vi.fn(async (command: string) => {
     expect(command).toBe("theme_state");
     return answer();
   });
-  Object.defineProperty(window, global, { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   return invoke;
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -40,7 +40,6 @@ afterEach(() => {
   stop?.();
   stop = undefined;
   vi.unstubAllGlobals();
-  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   Reflect.deleteProperty(window, "baumDesktop");
 });
 
@@ -71,7 +70,7 @@ it("applies the saved theme and follows the system in system mode", async () => 
 });
 
 it("reads the saved theme through the Electron bridge", async () => {
-  const invoke = bridge(() => ({ ...saved, mode: "dark" }), "baumDesktop");
+  const invoke = bridge(() => ({ ...saved, mode: "dark" }));
   stop = followTheme();
   await settle();
   expect(invoke).toHaveBeenCalledWith("theme_state", undefined);
@@ -91,7 +90,6 @@ it("keeps a chosen mode whatever the system does", async () => {
 
 it("falls back to the system's appearance when the state is unavailable or empty", async () => {
   systemDark = true;
-  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   stop = followTheme();
   await settle();
   expect(root.dataset.theme).toBe("dark");

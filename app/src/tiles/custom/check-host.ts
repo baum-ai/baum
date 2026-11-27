@@ -4,12 +4,12 @@ import { framesAllowedHere } from "./environment";
 
 /** Where the render check's runner draws (see "Render check" in
  *  oss/ARCHITECTURE.md). A desktop shell that declares
- *  `window.__BAUM_DESKTOP__.checkWindow === true` (the Electron shell, and
- *  the Tauri shell on Linux) gives it a window of its own, `tile-check`, with
+ *  `window.__BAUM_DESKTOP__.checkWindow === true` (the desktop app does)
+ *  gives it a window of its own, `tile-check`, with
  *  its own renderer process: the main page opens it on the first
  *  `tile_check` event and closes it after a hang (which ends that process,
  *  and the loop with it) or 2 minutes without checks. Anywhere else frames
- *  are allowed (a browser, the Tauri shell on macOS) the runner draws inside
+ *  are allowed (a browser) the runner draws inside
  *  the page; where they are not (a shell that declares no frames), nothing
  *  draws and the daemon answers `unavailable`. */
 

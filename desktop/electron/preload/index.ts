@@ -4,7 +4,7 @@
 // - `window.baumDesktop.invoke(name, args)` sends a command over the one
 //   invoke channel; the main process's guard (bridge.ts) decides whether it
 //   runs. A refused or failed command rejects with its message as a string,
-//   as Tauri's bridge did.
+//   which is what the frontend's (oss/app) error handling expects.
 // - `window.__BAUM_DESKTOP__`, the shell's declaration, when the main process
 //   passed one on the renderer's command line. contextBridge defines both as
 //   read-only properties holding frozen copies.
@@ -33,9 +33,8 @@ if (declaration) {
 }
 
 // The theme the native screens apply, before the page's first paint, so no
-// screen flashes the wrong colours (theme.rs's initialization script in the
-// Tauri shell). Electron has no initialization script, and the main
-// process's `dom-ready` comes after the parser may have painted while
+// screen flashes the wrong colours. Electron has no initialization script, and
+// the main process's `dom-ready` comes after the parser may have painted while
 // `did-start-navigation` still has the old document, so the preload, which
 // runs before any of the page's scripts, asks the main process synchronously
 // and sets the document element as soon as the parser creates it: a

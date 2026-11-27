@@ -2596,57 +2596,54 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
 });
 
-it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
-  "marks signed-out agents in desktop Settings (%s) and says how to sign in",
-  async (global) => {
-    history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
-    stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
-    stubAutomatic();
-    const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
-    const view = {
-      first_run: false,
-      command: {
-        installed: true,
-        target: "/app/baum",
-        plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
-      },
-      hooks: {
-        agents: [
-          { ...agent, agent: "codex", name: "Codex", signed_in: false },
-          { ...agent, agent: "claude-code", name: "Claude Code", signed_in: true },
-        ],
-      },
-    };
-    const invoke = vi.fn(async (command: string) =>
-      command === "setup_state" ? view : { ok: true, lines: [] },
+it("marks signed-out agents in desktop Settings and says how to sign in", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const view = {
+    first_run: false,
+    command: {
+      installed: true,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: {
+      agents: [
+        { ...agent, agent: "codex", name: "Codex", signed_in: false },
+        { ...agent, agent: "claude-code", name: "Claude Code", signed_in: true },
+      ],
+    },
+  };
+  const invoke = vi.fn(async (command: string) =>
+    command === "setup_state" ? view : { ok: true, lines: [] },
+  );
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+    const select = node.querySelector<HTMLSelectElement>("#review-agent")!;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      "Claude Code",
+      "Codex (not signed in)",
+    ]);
+    expect(reviews().querySelector(".settings-caution")).toBeNull();
+    await choose(select, "codex");
+    expect(reviews().textContent).toContain(
+      "Codex isn't signed in, so reviews will fail. Run codex login in a terminal.",
     );
-    Object.defineProperty(window, global, { configurable: true, value: { invoke } });
-    try {
-      await act(async () => root.render(<App />));
-      const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
-      const select = node.querySelector<HTMLSelectElement>("#review-agent")!;
-      expect([...select.options].map((o) => o.textContent)).toEqual([
-        "Claude Code",
-        "Codex (not signed in)",
-      ]);
-      expect(reviews().querySelector(".settings-caution")).toBeNull();
-      await choose(select, "codex");
-      expect(reviews().textContent).toContain(
-        "Codex isn't signed in, so reviews will fail. Run codex login in a terminal.",
-      );
-      // A fix agent of its own gets the same warning.
-      await act(async () =>
-        node.querySelector<HTMLButtonElement>('button[data-section="fixes"]')!.click(),
-      );
-      const fixes = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
-      expect(fixes().querySelector(".settings-caution")).toBeNull();
-      await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
-      expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
-    } finally {
-      Reflect.deleteProperty(window, global);
-    }
-  },
-);
+    // A fix agent of its own gets the same warning.
+    await act(async () =>
+      node.querySelector<HTMLButtonElement>('button[data-section="fixes"]')!.click(),
+    );
+    const fixes = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
+    expect(fixes().querySelector(".settings-caution")).toBeNull();
+    await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
+    expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
+  } finally {
+    Reflect.deleteProperty(window, "baumDesktop");
+  }
+});
 
 it("manages CLI and hooks inline in desktop Settings", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
@@ -2684,7 +2681,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
   const invoke = vi.fn(async (command: string) =>
     command === "setup_state" ? view : { ok: true, lines: ["Installed"] },
   );
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const click = async (label: string) => {
@@ -2723,7 +2720,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     expect(invoke).toHaveBeenCalledWith("install_command", {});
     expect(location.search).toBe("?page=settings&section=computer");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2758,7 +2755,7 @@ it("opens agent hooks from the Codex warning in desktop Settings", async () => {
     },
   };
   const invoke = vi.fn(async () => view);
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const open = [...node.querySelectorAll(".local-notice button")].find(
@@ -2772,7 +2769,7 @@ it("opens agent hooks from the Codex warning in desktop Settings", async () => {
     expect(node.querySelector('button[aria-label="Update Claude Code hooks"]')).toBeNull();
     expect(node.querySelector('button[aria-label="Update Codex hooks"]')).not.toBeNull();
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2812,7 +2809,7 @@ it("offers the desktop-setup command in desktop Settings for an agent that is to
     terminal_setup: command,
   };
   const invoke = vi.fn(async () => view);
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const panel = node.querySelector('[aria-labelledby="hooks-heading"]')!;
@@ -2836,7 +2833,7 @@ it("offers the desktop-setup command in desktop Settings for an agent that is to
     expect(writeText).toHaveBeenCalledWith(command);
     expect(copy.textContent).toBe("Copied");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2853,7 +2850,7 @@ it("says in desktop Settings when neither Claude Code nor Codex is installed", a
     },
     hooks: { agents: [] },
   }));
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const section = node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
@@ -2864,7 +2861,7 @@ it("says in desktop Settings when neither Claude Code nor Codex is installed", a
       [...section.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
     ).toEqual(["claude", "codex"]);
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2921,7 +2918,7 @@ it("sets the desktop window's zoom in Settings and follows the shortcuts", async
       hooks: { agents: [] },
     };
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const select = node.querySelector<HTMLSelectElement>('select[aria-label="Zoom"]')!;
@@ -2938,7 +2935,7 @@ it("sets the desktop window's zoom in Settings and follows the shortcuts", async
     });
     expect(select.value).toBe("0.9");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2956,14 +2953,14 @@ it("hides the zoom card when the desktop app does not offer zoom", async () => {
       hooks: { agents: [] },
     };
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     expect(invoke).toHaveBeenCalledWith("zoom_state", undefined);
     expect(node.querySelector('select[aria-label="Zoom"]')).toBeNull();
     expect(node.textContent).not.toContain("zoom_state not allowed");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -3020,7 +3017,7 @@ it("tells about an app update once in a toast that opens This computer", async (
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const toast = () => node.querySelector(".local-toast");
@@ -3039,7 +3036,7 @@ it("tells about an app update once in a toast that opens This computer", async (
     await act(async () => root.render(<App />));
     expect(toast()).toBeNull();
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -3060,7 +3057,7 @@ it("records a closed app update toast and skips it on This computer", async () =
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const toast = () => node.querySelector(".local-toast");
@@ -3081,7 +3078,7 @@ it("records a closed app update toast and skips it on This computer", async () =
     expect(toast()).toBeNull();
     expect(invoke).toHaveBeenCalledWith("dismiss_update_notice", { version: "0.2.0" });
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -3106,7 +3103,7 @@ it("counts a ready app update on Settings and installs it from This computer", a
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const settings = node.querySelector<HTMLAnchorElement>('.local-rail a[href*="page=settings"]')!;
@@ -3130,7 +3127,7 @@ it("counts a ready app update on Settings and installs it from This computer", a
     expect(invoke).toHaveBeenCalledWith("cancel_update", undefined);
     expect(card().textContent).toContain("baum 0.2.0 is ready");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -3146,7 +3143,7 @@ it("checks for app updates on request and links a copy that cannot update itself
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const settings = node.querySelector('.local-rail a[href*="page=settings"]')!;
@@ -3163,7 +3160,7 @@ it("checks for app updates on request and links a copy that cannot update itself
     expect(card().textContent).toContain("Checking for updates…");
     expect(check.disabled).toBe(true);
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -3180,7 +3177,7 @@ it("counts and links an app update that this copy cannot install", async () => {
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const settings = node.querySelector('.local-rail a[href*="page=settings"]')!;
@@ -3192,7 +3189,7 @@ it("counts and links an app update that this copy cannot install", async () => {
     expect(download.textContent).toBe("Download 0.2.0");
     expect(download.href).toBe("https://github.com/baum-ai/baum/releases/tag/v0.2.0");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -3203,14 +3200,14 @@ it("hides the app update card when the desktop app offers no updater", async () 
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     expect(invoke).toHaveBeenCalledWith("update_state", undefined);
     expect(node.querySelector('section[aria-labelledby="updates-heading"]')).toBeNull();
     expect(node.textContent).not.toContain("update_state not allowed");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -3424,11 +3421,6 @@ it("folds the sidebar opened under the mouse when the pointer or focus leaves th
     await hover();
     expect(rail()).toBe("open");
     await act(async () => window.dispatchEvent(new FocusEvent("blur")));
-    expect(rail()).toBe("folded");
-    // The desktop app's word that the pointer left, where WebKitGTK sends none.
-    await hover();
-    expect(rail()).toBe("open");
-    await act(async () => window.dispatchEvent(new Event("baum:pointer-left")));
     expect(rail()).toBe("folded");
   } finally {
     vi.useRealTimers();

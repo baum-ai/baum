@@ -22,7 +22,7 @@
 type Json = Record<string, unknown>;
 
 /** Parses a JSON object. The parse functions throw an Error whose message
- *  names what could not be read, where the Rust shell returned `Err`. */
+ *  names what could not be read. */
 function parseObject(body: string, what: string): Json {
   let value: unknown;
   try {
@@ -38,9 +38,8 @@ function isObject(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// The field readers are as strict as serde's derive was: a field of the
-// wrong type fails the row, and a missing field takes its default only where
-// the Rust struct had one.
+// The field readers are strict: a field of the wrong type fails the row, and
+// a missing field takes its default only where the reader is given one.
 function text(o: Json, key: string, fallback?: string): string {
   const v = o[key];
   if (v === undefined && fallback !== undefined) return fallback;
@@ -519,7 +518,7 @@ export function parseLive(body: string): NeedsYou[] {
       needs: { key: `${row.agent}:${row.sessionId}`, title, detail },
     });
   }
-  // A wait with no known start sorts first, as an absent value does in Rust.
+  // A wait with no known start sorts first.
   waiting.sort((a, b) => {
     if (a.since !== b.since) {
       if (a.since === null) return -1;

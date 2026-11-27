@@ -1,13 +1,13 @@
 # Desktop app
 
-A [Tauri](https://tauri.app) v2 shell around the user's `baum daemon`. The
-shell adds no review features: the daemon serves the local application
+An [Electron](https://www.electronjs.org) shell around the user's
+`baum daemon`. The shell adds no review features: the daemon serves the local application
 (`../app`) over loopback HTTP, and the window shows it. The shell handles only
 what the operating system has to: the window, the tray, start at login,
 notifications, installing the `baum` command and agent marketplace plugins,
-and later signing and updates.
+and updates.
 
-The app bundles the release `baum` binary next to its executable. `baum`
+The app bundles the release `baum` binary among its resources. `baum`
 itself is unchanged and stays `CGO_ENABLED=0`.
 
 ## Attaching to the daemon
@@ -66,8 +66,8 @@ connecting to the daemon:
 | `theme` | the colour theme the native screens apply: the mode and the theme in each slot |
 | `updates` | versions whose automatic installation failed |
 
-Every change reads the latest document and replaces only its section, under
-one lock shared by all native threads. Setup completion and CLI records are
+Every change reads the latest document and replaces only its section,
+synchronously, so no other change interleaves. Setup completion and CLI records are
 updated independently within their section, so finishing setup while a command
 installation runs preserves both. A private temporary file is flushed and
 renamed into place; on Unix the saved file is mode 0600. Reads of a damaged
@@ -89,29 +89,29 @@ Its rail uses the app sidebar's canvas and Stumpy mark. UI colors come from
 `../viewer/src/components/stumpy-artwork.ts`. Native SVG icon templates reuse
 both sources, resolved by `scripts/prepare-icons.mjs` before rasterization.
 Setup, connecting and tray screens follow the active colour theme, including
-changes while they are open. They cannot ask the daemon (their CSP allows only
-`ipc:`, and `localStorage` is not shared with the daemon's changing loopback
-origin), so the app caches what the saved theme resolves to (`src/theme.rs`):
+changes while they are open. They cannot ask the daemon (their CSP allows no
+`connect-src`, and `localStorage` is not shared with the daemon's changing
+loopback origin), so the app caches what the saved theme resolves to
+(`electron/main/theme.ts`):
 the daemon pages report it with `save_theme` and the screens read it with
 `theme_state`. The app checks only its shape (token names `--[a-z0-9-]{1,40}`, at
 most 40 tokens per theme, values of at most 64 bytes, at most 32 KiB, mode
 `system`, `light` or `dark`, base `light` or `dark`) and refuses anything else
-without changing what is stored. An initialization script on the main window and
-the tray panel applies the saved theme before the first paint; it is built
-when the window is created, so each page load on the main window also pushes the
-current theme with a best-effort `eval` as the load starts (logged if it fails),
-and the page applies the live one right after. The tray panel keeps the theme
-saved at startup until its page applies the current one. Without a saved theme the
-screens follow the system's light or dark. In the Electron shell the main
-window's background colour is the screens' page surface under the active theme
-(`windowBackground` in `electron/main/theme.ts`), updated when the theme or the
-system's appearance changes, so a dark theme opens without a white flash. The
-daemon's launch page, which shows for a moment between the connecting screen
-and the application, paints the application's canvas colour and shows its
-status only when the launch is slow or fails.
+without changing what is stored. The preload applies the saved theme before
+the first paint of every page of the app's windows: it asks the main process
+for it synchronously and sets it on the document element as soon as the
+parser creates it, and the page applies the live one right after. Without a
+saved theme the screens follow the system's light or dark. The main
+window's background colour is the screens' page surface under the active
+theme (`windowBackground` in `electron/main/theme.ts`), updated when the
+theme or the system's appearance changes, so a dark theme opens without a
+white flash. The daemon's launch page, which shows for a moment between the
+connecting screen and the application, paints the application's canvas
+colour and shows its status only when the launch is slow or fails.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
-native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
-`dist/` so setup stays on its local origin with the existing native permissions;
+native assets in `dist/`, where the connecting screen is `index.html`. The app
+serves `dist/` as `app://bundle`, so setup stays on its own origin with its
+own commands;
 daemon-served pages may open the native folder picker (below) or manage
 the bundled CLI and agent hooks directly in Settings. The GitHub step requires a
 connection and at least one picked repository before Continue or the later steps
@@ -438,9 +438,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   the session bus with `busctl` or `gdbus` each time it matters, so a host that
   starts after the app counts; when neither tool exists it assumes no tray and
   keeps the window reachable. A start at login waits up to 10 seconds for the
-  host before it shows the window after all. The deb depends on
-  `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
-  tray library that fails to load leaves the app running without a tray.
+  host before it shows the window after all. A tray that cannot be created
+  leaves the app running without one.
 - **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued"),
   which opens the jobs list while reviews run or wait and is inert otherwise;
   an item for each reason the icon is red, which goes where to look (see
@@ -481,8 +480,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   `tray.html`, created hidden at startup.
 - **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
   disabled line such as "3 pull requests in your Inbox", the tooltip appends
-  it, the dock badge (macOS; any other platform whose window badge Tauri
-  supports, ignored silently elsewhere) shows the count. The tray icon does
+  it, the dock badge (macOS; any other platform where Electron's
+  `app.setBadgeCount` shows one, ignored silently elsewhere) shows the count. The tray icon does
   not: its dot means only that something runs or needs the user. Zero, an
   unknown count and a daemon that is not
   running clear all of them. The daemon counts what the app's Inbox heading
@@ -585,10 +584,10 @@ so OS notification calls do not delay tray updates. It starts beyond the latest
 event and resumes from the last event ID on reconnect. Detaching or replacing
 the daemon closes the old stream immediately (see "Notifications").
 
-The tray menu adds no Tauri capability, and none names a remote URL: the
-tray, the dialogs and the autostart entry are used from Rust only, so pages
-the daemon serves still reach no command or plugin. The tray panel's
-capability (`tray-panel`) lets only its bundled page, in its own window, read
+The tray menu adds no page command, and none names a remote URL: the tray,
+the dialogs and the autostart entry are used from the main process only, so
+pages the daemon serves still reach no command. The tray panel's role
+(`tray-panel` in `electron/main/commands.ts`) lets only its bundled page, in its own window, read
 the tray's last view (`tray_panel`), fit the window to its height
 (`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
 waiting session, or only hide the panel (`close`) (`tray_action`, which
@@ -657,7 +656,7 @@ SMAppService login items replace it.
 ## Notifications
 
 The app turns daemon events into operating system notifications. It reads the
-daemon's `GET /api/events` stream shared with the tray (`src/events.rs`), so they
+daemon's `GET /api/events` stream shared with the tray (`electron/main/events.ts`), so they
 arrive while the window is hidden (closing it hides it) or minimised, for as
 long as the app runs. Where no tray exists, closing the window quits the app
 (see "Tray, closing and quitting"), and notifications stop with it. Pages the
@@ -702,9 +701,9 @@ repository.
 `ARCHITECTURE.md`). The text comes only from fields the daemon already
 redacted: the repository, the pull request title as GitHub returned it
 (control characters stripped, 200 characters at most), the stored risk score,
-the failure category, and an agent session's branch and masked message. A title is shown unchanged; where a Linux
-notification server renders markup, its `<`, `>` and `&` are escaped so the
-title is not interpreted.
+the failure category, and an agent session's branch and masked message. A
+title is shown unchanged. Electron cannot ask a Linux notification server
+whether it renders markup, so the text is sent as it is.
 
 - **Click.** Clicking a notification shows the window if it is hidden or
   minimised, brings it to the front and loads
@@ -712,15 +711,17 @@ title is not interpreted.
   transcript (`?page=sessions&session=<agent>:<id>`) or, for a notice with no
   registered clone, the jobs list (`?page=jobs`). The app learns
   the daemon's secret app path with one `POST /api/auth/exchange` and loads the
-  URL itself; the page's own scripts do not navigate. Linux, macOS and Windows
-  toasts report clicks through `notify-rust`. The logic is unit-tested with a fake
-  platform; no real notification was shown in testing.
+  URL itself; the page's own scripts do not navigate. Electron's
+  `Notification` reports clicks on Linux (the freedesktop notification
+  service), macOS (Notification Center) and Windows (toasts, once the app
+  sets its user model ID). The logic is unit-tested with a fake platform
+  (`electron/main/notifications/`).
 - **Focus.** No notification shows while the window has focus on the same pull
   request (the same clone and number), nor an agent session's while it has
   focus on that session's transcript.
 - **Permission.** The app never asks at launch. The operating system is asked
   when the first notification is due. Linux and Windows have no per-app prompt
-  and macOS prompts when the first notification posts; `notify-rust` does not
+  and macOS prompts when the first notification posts; Electron does not
   report a macOS refusal, so a refusal there simply shows nothing. A refusal
   the platform does report is remembered and the app stops trying; switching a
   kind on again in the menu asks once more.
@@ -732,7 +733,7 @@ title is not interpreted.
   section in the app's config directory
   (`~/.config/com.usebaum.desktop/` on Linux). Those saved settings are the
   only copy of the state: a click on either menu flips them, then both menus
-  are rebuilt or updated from them. Native menus need no page capability.
+  are rebuilt or updated from them. Native menus need no page command.
 - **Authentication.** The daemon accepts one bearer credential for the app,
   the launch capability it already holds for `/api/health`; it has no
   events-only or read-only scope. The app sends the capability only in an
@@ -747,20 +748,20 @@ title is not interpreted.
 
 ## Zoom
 
-The window zooms with the webview's own page zoom (WebKitGTK, WebView2 or
-WKWebView), not CSS or the desktop's scale factor. It therefore works the same on X11,
+The window zooms with the web contents' own page zoom (Chromium's), not CSS
+or the desktop's scale factor. It therefore works the same on X11,
 Wayland, macOS and Windows, and it scales every page the window shows: the
 bundled screens, the daemon's pages and any page added later, without that page
-doing anything (`src/zoom.rs`).
+doing anything (`electron/main/zoom.ts`).
 
 - **Shortcuts.** Ctrl (Cmd on macOS) with `+` or `=` zooms in, `-` zooms out
-  and `0` returns to 100%, from 67% to 200% in browser-like steps. Linux and
-  Windows windows have no menu bar to hold accelerators, so the window injects
-  a small script (`src/zoom.js`) into every page it loads. The script calls
-  `step_zoom` and announces the new level to the page as a `baum:zoom` event.
-  It matches the typed character and, for layouts where it differs (AZERTY's
-  0 key types `à`), the physical key.
-  The webview's built-in zoom keys, mouse-wheel and pinch zoom are not used.
+  and `0` returns to 100%, from 67% to 200% in browser-like steps. The main
+  process reads the keys before the page does (`before-input-event`,
+  `electron/main/zoom-electron.ts`), so they work on every page and platform
+  without a menu bar, and announces the new level to the page as a
+  `baum:zoom` event. It matches the typed character and, for layouts where it
+  differs (AZERTY's 0 key types `à`), the physical key.
+  Chromium's own zoom keys, mouse-wheel and pinch zoom are not used.
 - **Settings.** The desktop Settings page has a Zoom card with the same levels,
   through `zoom_state` and `set_zoom`. It follows changes made by the shortcuts.
   It stays hidden when the app does not offer these commands, as when a
@@ -769,23 +770,7 @@ doing anything (`src/zoom.rs`).
   app's config directory and applied when the window opens and whenever a
   page starts loading. A missing, damaged or unknown level is 100%.
 
-## Pointer leaving the window
-
-On Wayland a pointer leave event carries no position, so GTK3 reports the last
-one it saw, still inside the window after a quick move. WebKitGTK releases
-without the fix for [WebKit bug 326201](https://bugs.webkit.org/show_bug.cgi?id=326201)
-pass that to the page as a move inside it, so the page never learns the pointer
-left: the folded sidebar opened under it stayed open over the page when the
-pointer moved to the bar, an empty workspace or another screen. On Linux the
-main window therefore listens for its web view's own leave events, skipping
-grabs and moves into child widgets, and announces each one to the page as a
-`baum:pointer-left` event (`src/pointer.rs`). The sidebar folds on it as it
-does when the window loses focus.
-
 ## What pages may do
-
-This section describes the Electron shell (`electron/`). Where the Tauri
-shell (`src/`, shipped until the bridge release) differs, a note says so.
 
 - The window loads only the bundled screens and the attached daemon's origin
   (`electron/main/navigation.ts`'s `decide`). Of the bundled files it shows
@@ -829,9 +814,7 @@ shell (`src/`, shipped until the bridge release) differs, a note says so.
   click on a same-window link into one, so no link is dead. Setup opens
   GitHub's device page a few seconds after a sign-in starts, when it can no
   longer ask for a window, through the `open` action of `github_connection`,
-  which opens that fixed address whatever the page passes. The Tauri shell
-  added the command because WKWebView refuses a `target="_blank"` click as a
-  navigation before it asks for a window.
+  which opens that fixed address whatever the page passes.
 - Before the page's own scripts run, the preload (`electron/preload/`)
   defines `window.__BAUM_DESKTOP__` in the main frame of the main window and
   of the check window (below), a frozen object that cannot be replaced, with
@@ -844,8 +827,6 @@ shell (`src/`, shipped until the bridge release) differs, a note says so.
   platform: the shell refuses every navigation of a frame away from the app,
   and Electron runs the preload, and so the command bridge and the
   declaration, in the main frame only (`nodeIntegrationInSubFrames: false`).
-  The Tauri shell declares `tileFrames` on Linux and macOS and `checkWindow`
-  on Linux only (`src/declaration.rs`).
 - No page reaches Node.js or Electron: every window has context isolation,
   a sandboxed renderer and preload, no Node.js integration and no
   `<webview>`, and no web contents the app did not set up opens a window or
@@ -858,8 +839,7 @@ shell (`src/`, shipped until the bridge release) differs, a note says so.
   command windows (the main window and the tray panel; never the check
   window), at a page whose role, resolved from the window and the frame's
   origin and path, the command table (`electron/main/commands.ts`) allows.
-  A refusal says only that the command is not allowed. The Tauri shell
-  grants the same commands through capability files (`capabilities/`).
+  A refusal says only that the command is not allowed.
 - The daemon's pages (`daemon-pages`, the attached daemon's origin in the
   main window) may call CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's
@@ -893,9 +873,7 @@ shell (`src/`, shipped until the bridge release) differs, a note says so.
   screen. The tray panel's page (`tray-panel`, macOS and Windows) may call
   only its own commands.
 - The main process alone opens the browser (`shell.openExternal`) and shows
-  dialogs and notifications. In the Tauri shell the opener, dialog and
-  updater plugins are used only from Rust, the opener's click script is
-  off, and no page is granted any plugin's commands.
+  dialogs and notifications.
 
 The app itself makes no network requests other than loopback requests to the
 daemon and the update checks below. Outside its own configuration and data
@@ -954,10 +932,7 @@ timers are not throttled, so its page runs as a visible one does
   window's frames used, if it is still one of the app's renderers. A page
   that never yields ignores the request and is ended after the wait.
 - It is offered (`checkWindow`) on every platform: the process model is
-  Chromium's everywhere. The Tauri shell offers it on Linux only, where
-  WebKitGTK gives it a web process of its own that the shell ends with
-  `webkit_web_view_terminate_web_process`; on macOS it runs the checks in the
-  main window, and on Windows the page embeds no tile frames.
+  Chromium's everywhere.
 
 The shell harness (Checking navigation, below) checks it on Linux: a mock
 daemon's main page opens the window, whose page holds a sandboxed frame that
@@ -1010,7 +985,7 @@ check window, with an unpackaged app started with
 
 ### Checking navigation
 
-`just desktop::electron-shell-test` (in the `desktop-electron` container;
+`just desktop::shell-test` (in the `desktop-electron` container;
 `pnpm build && pnpm test:shell` in `oss/desktop` elsewhere, which needs
 Xvfb) runs the harness in `tests/shell`, and CI runs it on Linux for every
 change to the desktop app. It launches the built shell with Playwright under
@@ -1096,10 +1071,6 @@ shell stops a frame. In the main window's console:
    runs in a process of its own and leaves the window running (see
    SECURITY.md).
 
-The Tauri shell was checked on Linux by WebKitGTK harnesses
-(`tests/navigation` and `tests/check-window`, now in git history only) and by
-hand on macOS and Windows with the same steps in the Web Inspector.
-
 ## Updates
 
 A release build checks for a newer release about 30 seconds after it starts
@@ -1125,8 +1096,8 @@ minisign signature file whose trusted comment says `version:VERSION`, as
 `scripts/updater-sign.sh` writes it); the app reads it from
 `https://github.com/baum-ai/baum/releases/download/vVERSION/FILE.sig` and
 checks it with the release key's public half, `RELEASE_PUBLIC_KEY` in
-`electron/main/updater.ts` (also `plugins.updater.pubkey` in
-`tauri.conf.json`). Electron's BoringSSL has no BLAKE2b, so
+`electron/main/updater.ts` (also `updater-key.pub`, which the release's
+signing scripts read). Electron's BoringSSL has no BLAKE2b, so
 `electron/main/minisign.ts` brings its own, tested against signatures the
 minisign tool made. The file is checked again just before it is installed.
 electron-updater's own checks come on top: the SHA-512 from the update file
@@ -1199,36 +1170,13 @@ names nothing else the app uses: it sets the feed itself).
 A test build, whose version is a `test` pre-release such as 1.2.3-test.1,
 reads `BAUM_DESKTOP_UPDATE_FEED` (a feed URL; the signature is read beside
 the file there) and `BAUM_DESKTOP_UPDATE_PUBKEY` (a public key in the
-release key's format) for end-to-end tests (`just desktop::bridge-test`).
-Every other version ignores them, and the release workflow refuses to
+release key's format), so an update can be tried end to end: build two test
+versions with `scripts/bundle.sh`, sign the newer one's AppImage with a
+throwaway key (`scripts/updater-sign.sh`, with `UPDATER_PUBKEY` set to that
+key) and serve it with its `latest-linux.yml`. Every other version ignores them, and the release workflow refuses to
 release a test version, so an installed app only ever trusts the release key.
 
-## Electron shell (in progress)
-
-An Electron shell in `electron/` is replacing the Tauri one. The Tauri shell
-(`src/`) stays the shipped app until the migration's bridge release. So far
-the Electron shell:
-
-- Opens the main window on the setup screen or the connecting screen.
-- Attaches to the daemon as described in "Attaching to the daemon", and
-  loads the daemon's pages.
-- Hides the window when it is closed, and keeps a single instance. Where no
-  tray is showing, closing the window asks "Quit baum?" instead.
-- Applies the rules in "What pages may do".
-- Runs first-run setup and "Command Line and Hooks…", and runs the stable
-  copy of `baum` where the app keeps one.
-- Shows the tray, its menu and, on macOS and Windows, its panel. On macOS it
-  also sets the window's menu bar; on Linux and Windows the window has none.
-- Reads the daemon's event stream once, for the tray, the notifications and
-  the health check, which waits 30 seconds while the stream is open.
-- Shows notifications, with their toggles in both menus.
-- Zooms with the shortcuts and Settings, and applies the saved theme before
-  the first paint. The preload asks the main process for the theme.
-- Opens links to other sites in the browser, at most once a second.
-- Saves tile type files, keeps start at login and the AppImage's menu entry
-  current, and quits with or without stopping background reviews.
-- Opens the tile check window, on every platform (see Tile check window).
-- Checks for updates and installs them (see Updates).
+## The shell
 
 - `electron/main/` runs in Node.js in the main process.
 - `electron/preload/` runs sandboxed in each window's main frame. It exposes
@@ -1236,7 +1184,9 @@ the Electron shell:
 - Every command goes over one IPC channel. `electron/main/bridge.ts` runs a
   command only from the main frame of the app's own windows, and only if
   `electron/main/commands.ts` allows it for the page's role.
-- The bundled screens are served from `dist/` as `app://bundle`. The tray panel has its own origin, `app://tray`, so the window's zoom does not scale it.
+- The bundled screens are served from `dist/` as `app://bundle`. The tray
+  panel has its own origin, `app://tray`, so the window's zoom does not
+  scale it.
 - Before each request that carries the credential, the app checks that the
   daemon's process (the status's `pid`) still runs as the user. Once it has
   gone, another user's process could take its loopback port, so the check
@@ -1245,23 +1195,11 @@ the Electron shell:
 - Only the main frame of a page on the app's own origins gets the
   notification, clipboard-write and full-screen permissions; frames inside a
   page, and opaque origins, never do.
-- The app keeps Tauri's identifier (`com.usebaum.desktop`), so it uses the
-  same `desktop.json`. Chromium's files go in `chromium/` under the same
-  folder.
-- In the app, `desktopShell()` (`../app/src/desktop/native.ts`) finds either
-  shell's bridge.
-
-Releases and snapshots ship this shell (see Releases); `just desktop::bundle`
-builds its Linux bundles.
-
-Checks, runs and Linux bundles happen in the `desktop-electron` Docker
-service, whose image (`Dockerfile`) is the release's Linux build image:
-
-```sh
-just desktop::electron-check       # format check, typecheck and unit tests
-just desktop::electron-shell-test  # the harness in tests/shell (see Checking navigation)
-just desktop::electron-fmt         # format
-```
+- The app's identifier is `com.usebaum.desktop`, the Tauri app's, so a copy
+  that updated from it keeps its `desktop.json` and stable `baum` (see Bridge
+  release). Chromium's files go in `chromium/` under the same folder.
+- In the app, `desktopShell()` (`../app/src/desktop/native.ts`) finds the
+  bridge.
 
 To run the app under Xvfb against a real daemon, first build `dist/` and the
 bundled `baum` (`just desktop::frontend`, `just desktop::sidecar`). Then, from
@@ -1282,18 +1220,18 @@ opening a browser. Stop the daemon afterwards with `baum daemon stop`.
 ## Development
 
 `just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
-Desktop check, test, build, bundle, run and dev recipes build that frontend first.
-The Electron app's builds, bundles and runs (`run`, `isolated`, `profile`, and
-the build half of `dev`) happen in the `desktop-electron` Docker service
-(`Dockerfile`) or the `desktop-isolated` service built on it. The Tauri
-shell's Rust builds and checks (`check`, `test`) run in the `desktop-test`
-service (`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development
-packages, and the Tauri CLI) until that shell is removed. The bundled binary
-is built in `oss-test`. From the repository root:
+The build, bundle, run, isolated, profile and dev recipes build that frontend
+first. Checks, builds, bundles and runs (`run`, `isolated`, `profile`, and the
+build half of `dev`) happen in the `desktop-electron` Docker service, whose
+image (`Dockerfile`) is the release's Linux build image, or the
+`desktop-isolated` service built on it. The bundled binary is built in
+`oss-test`. From the repository root:
 
 ```sh
-just desktop::check         # cargo fmt --check, clippy -D warnings, tests, updater-test
-just desktop::test          # tests only; pass cargo test arguments after it
+just desktop::check         # format check, typecheck, unit tests, updater and update file tests
+just desktop::test          # unit tests only; pass vitest arguments after it
+just desktop::shell-test    # the harness in tests/shell (see Checking navigation); needs dist/
+just desktop::fmt           # format
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
 just desktop::build         # unpacked Linux app (electron-builder --dir) in target/electron-builder
 just desktop::bundle        # the release's Linux deb, AppImage and latest-linux.yml in target/release-bundles
@@ -1301,7 +1239,6 @@ just desktop::dmg           # macOS: ad hoc signed DMG and zip in target/local-d
 just desktop::notices       # regenerate ../third_party/electron.txt (Electron's and npm packages' licences)
 just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
-just desktop::bridge-test-mac  # macOS: the Tauri app updates to the Electron app (see Bridge release)
 just desktop::run           # run the app on this Wayland session's display
 just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
 just desktop::profile       # time a scripted journey in the headless app (see Profiling)
@@ -1797,9 +1734,8 @@ little in every interaction.
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
 release runs them, without a Developer ID, so the app is signed ad hoc and not
 notarised. This is a host execution exception, because the bundle needs Apple's
-`lipo`, `codesign` and `hdiutil`. The host needs Rust with the
-`aarch64-apple-darwin` and `x86_64-apple-darwin` targets, the Xcode command line
-tools and the Tauri CLI version the Dockerfile pins. With `--install` it
+`lipo`, `codesign` and `hdiutil`. The host needs Node.js 24, pnpm (through
+`corepack enable`) and the Xcode command line tools. With `--install` it
 replaces `/Applications/baum.app`; quit the app first with Quit and stop
 background reviews, so the next launch starts a daemon from the new binary.
 
@@ -1850,7 +1786,7 @@ repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
 when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
 (written by `scripts/sidecar.sh`) holds a content hash of the Go module under
 `oss/` (`scripts/sidecar-stamp.sh`: sources, `go:embed` files and the built
-viewer and local app, not the frontend sources or the desktop crate). If the
+viewer and local app, not the frontend sources or the shell). If the
 binary or stamp is missing or the hash differs, it says why and rebuilds the
 sidecar in `oss-test` before launching; an unchanged checkout skips the build.
 It then atomically refreshes `target/host-dev/bin/baum` from the sidecar and
@@ -1895,11 +1831,10 @@ under development only, it grants the setup commands to that page on the
 window may navigate only to the setup page there. A packaged app ignores the
 override.
 
-Tauri expects the bundled binary at `binaries/baum-<target triple>`, which
-`scripts/sidecar.sh` builds (run it from the module root; it takes the triple
-as an argument and defaults to the Go host). Every build, including
-`cargo check`, needs it. `binaries/`, `target/` and the generated `gen/` are
-ignored.
+An unpackaged app and `scripts/bundle.sh` take the bundled binary from
+`binaries/baum-<target triple>`, which `scripts/sidecar.sh` builds (run it
+from the module root; it takes the triple as an argument and defaults to the
+Go host). `binaries/`, `target/`, `build/` and `node_modules/` are ignored.
 
 ## Releases
 
@@ -2126,7 +2061,7 @@ and release candidates from `desktop-rc-updates`, which every release
 updates with the rest of the update files. A Tauri copy that updates starts
 as the Electron app with the same identifier, so it finds the same
 `desktop.json` (setup is not shown again), the same stable copy of `baum`,
-menu entry and start at login (see "Electron shell"). Browser storage does
+menu entry and start at login (see "The shell"). Browser storage does
 not carry over: the Tauri app's pages kept only view preferences in
 WebKit's `localStorage` and `sessionStorage` (the folded inbox, the
 sidebar, the pull requests tab, the last inbox, closed build cards,
@@ -2159,49 +2094,33 @@ name the old path after the update, and the Electron app handles both
   directory (`/usr/local/bin`) through the password prompt, once. A cancelled
   prompt leaves the link, and setup and Settings offer Install for it.
 
-`just desktop::bridge-test` checks the bridge end to end on Linux
-(`scripts/bridge-test.sh`): it signs the Electron AppImage and a stand-in
-macOS archive with a throwaway key, writes `latest.json` with
-`updater-manifest.sh` as the release does, has the Tauri crate's
-`bridge_manifest_is_accepted` test check it with tauri-plugin-updater's own
-manifest type and verification rules, then runs a Tauri AppImage built at
-1.2.2 (with the `bridge-test` feature, which installs a downloaded update at
-once, and its updater pointed at a local server) under Xvfb, in the
-`desktop-bridge` service (`bridge.Dockerfile`: the Electron image plus the
-OpenGL libraries a Tauri AppImage takes from the system), with its bundled
-`baum` and a real daemon. The AppImage must be replaced by the Electron one,
-which must start (from the Tauri app's restart, with its arguments) and
-open the daemon's page, not setup, at the zoom `desktop.json` saved, with
-the Tauri app's stable copy of `baum` and menu entry. It then runs the Electron update
-(1.2.3-test.1 to 1.2.4-test.1, through Settings' commands) and a damaged
-signature, which must be rejected and remembered.
-
-`just desktop::bridge-test-mac` checks the macOS bridge on a Mac
-(`scripts/bridge-test-mac.sh`; neither app builds or runs in a container,
-so only its Go build uses Docker). It builds the Tauri app at 1.2.2 (with
-`bridge-test`, its updater pointed at a local server) and the Electron app at
-1.2.3 (ad hoc signed by `macos-finalize.sh`), each with its own version of
-baum, signs the archive with a throwaway key and writes `latest.json` with
-`updater-manifest.sh`. In a throwaway home it starts the Tauri app through
-LaunchServices with start at login on and the command linked in
-`~/.local/bin`. The Tauri app must replace itself with the Electron app,
-which must open the daemon's page at the saved zoom, point the link at its
-bundled baum without a prompt, and take over the Tauri app's daemon through
-the forwarded restart, while the window stays on the daemon's page; `baum`
-on the PATH, and a command run through the old path, must reach the new
-daemon. What neither test can check is
-the signed macOS app: try the first release candidate on a Mac with the
-Tauri app installed, from `/Applications`, before the full release, and
-check that the window stays on the daemon's page for a minute after the
-update and that `baum daemon status` in a new terminal reports the new
-version.
+The release checks `latest.json` as installed Tauri copies read it
+(`updater-manifest.sh write`, then `electron`): every bundle is signed by the
+release key for the announced version and served from its expected URL, the
+version is a semantic version and `pub_date` an RFC 3339 time, as
+tauri-plugin-updater parses them, and each bundle is the Electron app (the
+macOS archive holds one `baum.app` at its root with Electron's `app.asar`
+and an executable `baum-desktop`; the AppImage holds `resources/app.asar`).
+What it cannot check is an installed copy updating: try the first release
+candidate on a Mac and on Linux with the Tauri app installed (on macOS from
+`/Applications`) before the full release, and check on the Mac that the
+window stays on the daemon's page for a minute after the update and that
+`baum daemon status` in a new terminal reports the new version.
 
 Keep publishing `latest.json` for at least three stable releases after the
 first Electron one, so copies that were not running for a while still find
-a way across. Then remove `scripts/updater-manifest.sh` (keeping the
-`signed` check of the update files), the `.app.tar.gz`, `latest.json` and
-their steps in the release workflow, the Tauri crate, and switch the
-downloads Worker's release lookup to `latest-linux.yml`.
+a way across.
+
+Follow-up (written 2026-11-25), once three stable releases have followed
+the first Electron one: remove `scripts/updater-manifest.sh`'s `write`,
+`verify` and `electron` commands and their tests (keeping `signed`, the
+check of the update files), the `.app.tar.gz` and its signature in
+`macos-finalize.sh` and the release, `latest.json` and its steps in the
+release workflow (`desktop-manifest`, and the `desktop-publish` summary),
+`desktop-rc-updates`' copy of it, the downloads Worker's `latest.json`
+lookup (switch it to `latest-linux.yml`), the server test of the Tauri
+app's HTTP/1.0 event stream (`internal/uiserver/rustclient_test.go`), and
+this section.
 
 ### Signing
 
@@ -2212,14 +2131,16 @@ never as repository secrets.
 
 | Secrets | What they enable |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures, `latest.json` and the `latest*.yml` update files. Without them the bundles are published without either, and installed apps are not offered the release. |
+| `TAURI_SIGNING_PRIVATE_KEY` (the minisign secret key file, base64 encoded; the name is the one the Tauri app's releases used), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures, `latest.json` and the `latest*.yml` update files. Without them the bundles are published without either, and installed apps are not offered the release. |
 | `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app, Electron's frameworks and helpers, and the bundled `baum` |
 | `APPLE_API_ISSUER`, `APPLE_API_KEY` (key ID), `APPLE_API_PRIVATE_KEY` (the `.p8` contents) — or `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), `APPLE_TEAM_ID` | notarisation and stapling of the app and the disk image; needs the signing secrets |
 
-The updater key's public half is `plugins.updater.pubkey` in
-`tauri.conf.json`; a test fails if it is not a minisign key or the manifest
-URL changes, and `updater-sign.sh` refuses a signature that key does not
-verify. Rotating the key means shipping a release with the new public key,
+The updater key's public half is `updater-key.pub` (a minisign public key
+file), which `updater-sign.sh` and `updater-manifest.sh` read, and, base64
+encoded, `RELEASE_PUBLIC_KEY` in `electron/main/updater.ts`; a unit test
+fails if the two differ, and `updater-sign.sh` refuses a signature that key
+does not verify. A new key is made with `minisign -G` and stored base64
+encoded. Rotating the key means shipping a release with the new public key,
 signed with the old private key, before signing with the new one.
 
 ### macOS
@@ -2262,16 +2183,21 @@ own ffmpeg (`libffmpeg.dylib` in Electron's framework), the only ffmpeg
 
 The Linux bundles are built with electron-builder in this directory's
 Docker image, on Ubuntu 24.04 (the base image pinned by digest), the oldest
-supported distribution. They require Ubuntu 24.04 or newer, or a compatible
-distribution with glibc 2.39 or newer. Ubuntu 22.04 and Debian 12 are no
-longer supported. Both carry Electron (Chromium) and the bundled `baum` in
+supported distribution: baum supports Ubuntu 24.04 or newer, or a compatible
+distribution with glibc 2.39 or newer, and is tested on nothing older.
+Electron itself is less demanding: its binaries ask for glibc 2.25 or newer,
+and Electron supports the major distributions in the versions both Chromium
+and the distribution still support. Both bundles carry Electron (Chromium,
+with its own codecs) and the bundled `baum` (static, `CGO_ENABLED=0`) in
 `resources/bin`, outside the asar archive. The deb installs the app in
 `/opt/baum`, links `/usr/bin/baum-desktop` to it and `/usr/bin/baum` to the
-bundled `baum`, and depends only on the system libraries Electron needs
-(GTK 3, NSS, libnotify, libsecret and a few X libraries): no WebKitGTK and no
-GStreamer, which `bundle.sh` checks. On systems that restrict unprivileged
-user namespaces it installs electron-builder's AppArmor profile for
-Chromium's sandbox.
+bundled `baum`, and depends on the system libraries Electron loads, as
+electron-builder lists them: `libgtk-3-0`, `libnotify4`, `libnss3`,
+`libxss1`, `libxtst6`, `xdg-utils`, `libatspi2.0-0`, `libuuid1` and
+`libsecret-1-0`, recommending `libappindicator3-1`. The AppImage carries
+everything but glibc and those desktop libraries, which every desktop
+session has. On systems that restrict unprivileged user namespaces the deb
+installs electron-builder's AppArmor profile for Chromium's sandbox.
 
 Video in reviews plays through Electron's own ffmpeg (`libffmpeg.so` beside
 the executable) in both bundles, not the system's. `bundle.sh` checks
@@ -2291,7 +2217,7 @@ this runtime, such as Cursor's, have the same limitation.
 
 User-facing limitations are listed in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
-The app adds itself to the applications menu (`src/menu_entry.rs`): every
+The app adds itself to the applications menu (`electron/main/menu-entry.ts`): every
 start of an installed AppImage writes
 `$XDG_DATA_HOME/applications/baum-appimage.desktop` (default
 `~/.local/share`), naming the AppImage's current path, with `TryExec` so
@@ -2346,15 +2272,19 @@ tools installed after the app or the agent started are found.
 
 ### What is checked where
 
-- `cargo test` (the Tauri shell, `just desktop::check`; not run in CI any more): the updater configuration (key, manifest URL,
-  `requireSignedVersion`, Windows passive install), that release candidates
-  read the `desktop-rc-updates` manifest and full releases the configured one, that the key rejects
-  another key's signature, and the record of failed installs.
+- `electron/main/updater.test.ts` and `minisign.test.ts` (`just
+  desktop::check`, Check, the monorepo's Desktop jobs): the feeds (release
+  candidates read `desktop-rc-updates`, full releases the latest release),
+  the release key (the same as `updater-key.pub`, and it rejects another
+  key's signature), a download signed for another version or damaged is
+  rejected and remembered, and the record of failed installs.
 - `scripts/updater-manifest-test.sh` (Check on Linux, and with the pinned
   minisign on macOS and Windows; the release's `desktop-test`; and `just
   desktop::check`): `updater-sign.sh` signs with a password-protected key
   read from standard input and refuses a wrong password or key, and both
-  scripts refuse an unpinned minisign in release mode; a correctly
+  scripts refuse an unpinned minisign in release mode; `latest.json` parses
+  as tauri-plugin-updater reads it and lists the Electron app
+  (`updater-manifest.sh electron`); a correctly
   signed release passes; a tampered bundle, a signature of another bundle or
   from another key, another platform's bundle, a foreign host, another tag,
   plain `http`, an unknown platform, an announced version the bundles were
@@ -2372,8 +2302,8 @@ tools installed after the app or the agent started are found.
   executable's Electron fuses are those `electron-builder.mjs` sets
   (`scripts/check-fuses.mjs`: no `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` or
   `--inspect`, code only from an `app.asar` it validates on macOS and
-  Windows, no extra `file://` privileges); the AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
-  and links `/usr/bin/baum`; the update file matches the bundles.
+  Windows, no extra `file://` privileges); the AppImage has its magic bytes;
+  the deb links `/usr/bin/baum`; the update file matches the bundles.
 - The release runs the same verification on the real bundles before
   anything is attached, and the app verifies each download again.
 

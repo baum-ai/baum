@@ -213,9 +213,8 @@ describe("notifier", () => {
     expect(platform.asked).toBe(2);
   });
 
-  // The Rust shell tested that the menu thread was not blocked while a
-  // permission request waited on a system prompt. Here a request that waits
-  // must not lose a change the menu makes meanwhile.
+  // A permission request that waits on a system prompt must not lose a change
+  // the menu makes meanwhile.
   it("the menu can change a kind while permission is being asked", async () => {
     let answer: (permission: Permission) => void = () => {};
     const pending = new Promise<Permission>((resolve) => {

@@ -24,7 +24,7 @@ const answers = new Map<string, Promise<"show" | "hung">>();
 
 /** The page's preflights, one after another. Each request stays open until
  *  its tile is drawn, and the check window shares this page's connections to
- *  the daemon (WebKit opens at most 6 to one host): a page with several
+ *  the daemon (Chromium opens at most 6 to one host): a page with several
  *  custom tiles asking at once would hold them all, and the check window
  *  could not claim the jobs it waits on. The daemon draws one at a time
  *  anyway. */

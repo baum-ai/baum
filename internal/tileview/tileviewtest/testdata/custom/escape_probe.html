@@ -71,11 +71,9 @@
         resolve((results.caches = `threw ${error && error.name}`));
       }
     });
-    attempt("parent bridge", () => parent.__TAURI_INTERNALS__);
     attempt("parent desktop bridge", () => parent.baumDesktop);
     attempt("desktop bridge", () => typeof window.baumDesktop);
     attempt("desktop declaration", () => typeof window.__BAUM_DESKTOP__);
-    attempt("webkit handlers", () => Object.keys((window.webkit && window.webkit.messageHandlers) || {}).join(","));
     attempt("window.open", () => window.open(`${outside}/open`));
     attempt("window.open daemon", () => window.open(daemon("/open")));
     for (const dialog of ["alert", "confirm", "prompt"]) {

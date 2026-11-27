@@ -2,8 +2,8 @@
 # Tests scripts/updater-sign.sh and scripts/updater-manifest.sh with a
 # throwaway, password-protected key: a correctly signed release passes, and
 # every kind of tampering fails verification. Needs jq, minisign and base64
-# (the desktop-test image has them); MINISIGN names another minisign, such as
-# the pinned one Check installs on macOS and Windows.
+# (the desktop-electron image has them); MINISIGN names another minisign, such
+# as the pinned one Check installs on macOS and Windows.
 set -euo pipefail
 
 scripts=$(cd "$(dirname "$0")" && pwd)
@@ -16,8 +16,8 @@ base=https://downloads.usebaum.com/update/v1.2.3
 
 minisign=${MINISIGN:-minisign}
 
-# Keys in the Tauri CLI's format: the minisign key file, base64 encoded. The
-# passwords go through standard input, as in the release.
+# Keys as the release's secrets hold them: the minisign key file, base64
+# encoded. The passwords go through standard input, as in the release.
 printf 'release password\nrelease password\n' | "$minisign" -G -f -p "$work/key.pub" -s "$work/key" >/dev/null 2>&1
 printf 'other\nother\n' | "$minisign" -G -f -p "$work/other.pub" -s "$work/other" >/dev/null 2>&1
 export UPDATER_PUBKEY
@@ -228,19 +228,35 @@ chmod +x "$work/crlf-tools/jq" "$work/crlf-tools/minisign"
 pass env PATH="$work/crlf-tools:$PATH" MINISIGN="$work/crlf-tools/minisign" "$manifest" write 1.2.3 "$dir"
 pass env PATH="$work/crlf-tools:$PATH" MINISIGN="$work/crlf-tools/minisign" "$manifest" verify "$dir"
 
-# The bridge release: the macOS archive must hold the Electron app as the
-# Tauri updater installs it. (scripts/bridge-test.sh checks real AppImages.)
+# The bridge release: installed Tauri copies must parse latest.json, and the
+# macOS archive must hold the Electron app as the Tauri updater installs it.
 bridge=$work/bridge
 mkdir -p "$bridge/app/baum.app/Contents/MacOS" "$bridge/app/baum.app/Contents/Resources"
 echo exe >"$bridge/app/baum.app/Contents/MacOS/baum"
-jq -n --arg url "$base/baum-desktop-darwin-universal.app.tar.gz" \
-  '{version: "1.2.3", platforms: {"darwin-aarch64": {url: $url, signature: ""}}}' >"$bridge/latest.json"
+chmod 0755 "$bridge/app/baum.app/Contents/MacOS/baum"
+# bridge_manifest VERSION PUB_DATE
+bridge_manifest() {
+  jq -n --arg url "$base/baum-desktop-darwin-universal.app.tar.gz" --arg version "$1" --arg date "$2" \
+    '{version: $version, pub_date: $date, platforms: {"darwin-aarch64": {url: $url, signature: ""}}}' >"$bridge/latest.json"
+}
+bridge_manifest 1.2.3 2026-11-25T10:00:00Z
 tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" baum.app
 fail "a macOS archive of the Tauri app" "it is not the Electron app" "$manifest" electron "$bridge"
 echo asar >"$bridge/app/baum.app/Contents/Resources/app.asar"
 tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" ./baum.app
 fail "an archive whose root is not baum.app" "outside a top-level baum.app" "$manifest" electron "$bridge"
+chmod 0644 "$bridge/app/baum.app/Contents/MacOS/baum"
 tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" baum.app
+fail "an archive whose executable lost its mode" "is not executable" "$manifest" electron "$bridge"
+chmod 0755 "$bridge/app/baum.app/Contents/MacOS/baum"
+tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" baum.app
+pass "$manifest" electron "$bridge"
+bridge_manifest 1.2 2026-11-25T10:00:00Z
+fail "a version tauri-plugin-updater cannot parse" "not a semantic version" "$manifest" electron "$bridge"
+bridge_manifest 1.2.3 "2026-11-25 10:00"
+fail "a pub_date tauri-plugin-updater cannot parse" "not an RFC 3339 time" "$manifest" electron "$bridge"
+# The pub_date write gives passes too.
+bridge_manifest 1.2.3-rc.1 "$(jq -r .pub_date "$work/good.json")"
 pass "$manifest" electron "$bridge"
 
 exit "$status"

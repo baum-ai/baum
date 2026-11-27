@@ -5,7 +5,7 @@ import { configDir, localDataDir, sessionDataDir } from "./paths.ts";
 const home = "/home/alice";
 
 describe("the app's directories", () => {
-  it("are Tauri's on Linux, honouring absolute XDG variables", () => {
+  it("are the Tauri app's on Linux, honouring absolute XDG variables", () => {
     const linux = { platform: "linux" as const, env: {}, home };
     expect(configDir(linux)).toBe("/home/alice/.config/com.usebaum.desktop");
     expect(localDataDir(linux)).toBe("/home/alice/.local/share/com.usebaum.desktop");
@@ -17,7 +17,7 @@ describe("the app's directories", () => {
     expect(localDataDir(relative)).toBe("/home/alice/.local/share/com.usebaum.desktop");
   });
 
-  it("are Tauri's on macOS", () => {
+  it("are the Tauri app's on macOS", () => {
     const mac = { platform: "darwin" as const, env: { XDG_DATA_HOME: "/ignored" }, home };
     const support = "/home/alice/Library/Application Support/com.usebaum.desktop";
     expect(configDir(mac)).toBe(support);

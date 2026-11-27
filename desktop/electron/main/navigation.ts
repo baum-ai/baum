@@ -1,4 +1,4 @@
-// Where the app's windows may go (src/navigation.rs in the Tauri shell). The
+// Where the app's windows may go. The
 // main window shows only the bundled screens and the daemon's loopback
 // origin and refuses every other navigation, in every frame. Web links open
 // in the default browser only through a request for a new window

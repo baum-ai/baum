@@ -1,6 +1,6 @@
 // What this shell declares to the page in its main window as
 // `window.__BAUM_DESKTOP__`, a frozen object the preload defines in the main
-// frame only (see preload/index.ts; src/declaration.rs in the Tauri shell).
+// frame only (see preload/index.ts).
 import type { Declaration } from "../shared/contract.ts";
 
 /** Electron injects the preload, and so the command bridge, into the main

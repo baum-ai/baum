@@ -1,6 +1,6 @@
 // The adapters between the modules that talk to the attached daemon. Each
-// port took the daemon in the shape its Rust original had; this file is the
-// one place that fits them together, so none of them is rewritten:
+// takes the daemon in a shape of its own; this file is the one place that
+// fits them together:
 //
 // - daemon.ts hands out a `Launch` whose URL is a method; client.ts and
 //   events.ts read `{ url: URL, bearer() }` (`clientLaunch`).
@@ -108,7 +108,7 @@ export class EventFeed {
 }
 
 /** A request whose answer must have one of `ok`'s statuses; resolves to the
- *  body, as the Rust client's `get` did. */
+ *  body. */
 async function body(
   launch: client.Launch,
   method: string,
@@ -164,9 +164,9 @@ export function noticeRoute(route: TrayRoute): NoticeRoute {
 export const STATUS_TIMEOUT = 10_000;
 
 /** How many generation jobs the user's daemon runs, which an update waits
- *  for (daemon.rs's `running_jobs`): `baum daemon status --json` names the
- *  daemon's state directory, whose credential reaches `GET /api/jobs`. 0
- *  when no daemon runs; rejects when one runs but cannot be asked. */
+ *  for: `baum daemon status --json` names the daemon's state
+ *  directory, whose credential reaches `GET /api/jobs`. 0 when no daemon
+ *  runs; rejects when one runs but cannot be asked. */
 export async function runningJobs(cli: string, timeout = STATUS_TIMEOUT): Promise<number> {
   let stdout: string[];
   try {

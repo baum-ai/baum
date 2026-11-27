@@ -10,10 +10,11 @@ import (
 	"time"
 )
 
-// The desktop app reads /api/events with a raw HTTP/1.0 request. This sends
-// exactly that request (see oss/desktop/src/notifications/events.rs) to a real
-// listener: the body must be plain SSE, not chunked, and the cursor beyond the
-// latest event must give a reset and then only new events.
+// The Tauri desktop app, which copies not yet updated past the bridge release
+// still run (oss/desktop/README.md), reads /api/events with a raw HTTP/1.0
+// request. This sends exactly that request to a real listener: the body must
+// be plain SSE, not chunked, and the cursor beyond the latest event must give
+// a reset and then only new events.
 func TestDesktopClientsRawHTTP10Request(t *testing.T) {
 	s, err := New(Options{})
 	if err != nil {

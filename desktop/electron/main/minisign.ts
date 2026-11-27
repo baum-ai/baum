@@ -76,8 +76,8 @@ export function parseSignature(text: string): Signature {
   };
 }
 
-/** A release's `.sig` file: the base64 of the minisign signature file, as the
- *  Tauri CLI and updater-sign.sh write it. */
+/** A release's `.sig` file: the base64 of the minisign signature file, as
+ *  scripts/updater-sign.sh writes it. */
 export function parseReleaseSignature(text: string): Signature {
   const trimmed = text.trim();
   if (!BASE64.test(trimmed)) throw new MinisignError("the update signature is not base64");

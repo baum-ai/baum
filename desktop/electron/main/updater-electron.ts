@@ -140,8 +140,7 @@ export class ElectronUpdaterBackend implements UpdaterBackend {
       updater.once("error", fail);
       this.options.beforeInstall?.();
       try {
-        // Silent: the Windows installer shows no pages (Tauri's "passive"
-        // mode came closest). Then the updated app starts: the AppImage
+        // Silent: the Windows installer shows no pages. Then the updated app starts: the AppImage
         // updater starts it before this one quits, Squirrel.Mac and the
         // Windows installer once it has.
         updater.quitAndInstall(true, true);

@@ -1,9 +1,9 @@
-// The window's menu bar (tray.rs's `install_window_menu` in the Tauri shell).
+// The window's menu bar.
 // Only macOS has one, its global menu bar: the platform's usual menus plus
 // "Command Line and Hooks…" in the application menu, a Background menu with
 // start at login, "Report a problem…" in Help, and the Notifications toggles.
-// On Linux and Windows the window has no menu bar, as under Tauri, and the
-// tray and the app hold these choices.
+// On Linux and Windows the window has no menu bar, and the tray and the app
+// hold these choices.
 //
 // The template is plain data built from the saved settings, which are the
 // only copy of the state: every click goes to `onClick` (the tray's one menu
@@ -24,8 +24,8 @@ export interface WindowMenuState {
   onClick(id: string): void;
 }
 
-/** The macOS menu bar, in the order Tauri's default menu had, with the app's
- *  own items added where the Tauri shell put them. */
+/** The macOS menu bar, in the platform's usual order, with the app's own
+ *  items added after the standard ones. */
 export function windowMenuTemplate(state: WindowMenuState): MenuItemConstructorOptions[] {
   const item = (id: string, label: string): MenuItemConstructorOptions => ({
     id,

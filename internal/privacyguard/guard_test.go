@@ -274,9 +274,9 @@ func moduleRoot(t *testing.T) string {
 }
 
 // desktopBuildOutput is the git-ignored output the walk below would otherwise
-// scan: the desktop app's gigabytes of Rust build files and bundled binary,
-// and the local app's test results, which hold private screenshots.
-var desktopBuildOutput = map[string]bool{"desktop/target": true, "desktop/binaries": true, "desktop/gen": true, "app/test-results": true}
+// scan: the desktop app's bundles and bundled binary, and the local app's
+// test results, which hold private screenshots.
+var desktopBuildOutput = map[string]bool{"desktop/target": true, "desktop/binaries": true, "app/test-results": true}
 
 // trackedFiles returns the git-tracked files below root, slash-separated and
 // relative to root. Outside a git checkout it walks the directory instead.
