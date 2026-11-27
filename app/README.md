@@ -3026,6 +3026,21 @@ lists, in order:
   obsolete section is muted), then **Files changed** with the number of changed
   files. These are the page's places; the rail's other rows are the viewer's.
   A brief (below) has no How it works.
+- A section's row ends with how closely to read it: its level as five steps
+  (the section's `level`, else its derived review score; 4 and 5 in the
+  caution and critical colours, the rest quiet), named for assistive
+  technology in the row's description. The sections that want a look come
+  first, then the routine ones (mechanical, or rated 1 of 5) under a quiet
+  **Routine** label, each group in the review's own order, since sections
+  often build on each other (`listedSections`; the keys step through the same
+  order). A review whose sections are all routine has no label.
+- A row gains a tick once the reader has been through its section: they
+  stayed on it for a moment (`READ_AFTER_MS`, so stepping past with the keys
+  does not count) and then left it. The ticks are kept on this computer
+  (`localStorage`, `baum.review.read`, in `review-view/read-marks.ts`) for
+  each review version, the 200 touched last; a new version starts unread, and
+  an earlier version shown from history marks nothing. There is no way to
+  untick a section yet.
 - **Decisions**, **Sessions** and **Commits** are plain rows, with no
   disclosure and nothing nested under them (`flatRail`; the group page keeps
   the viewer's disclosures). Each has its count and a live or waiting dot, and opens a

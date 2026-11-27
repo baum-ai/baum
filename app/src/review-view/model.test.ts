@@ -1076,6 +1076,60 @@ describe("grouping the changed files", () => {
   });
 });
 
+describe("listedSections' groups", () => {
+  const leveled = (levels: (1 | 2 | 3 | 4 | 5 | "mechanical")[]): ReviewV2 => ({
+    ...REVIEW,
+    context: null,
+    tiles: [],
+    sections: levels.map((level, at) => ({
+      ...REVIEW.sections[0]!,
+      id: `sec_${at}`,
+      title: `Section ${at}`,
+      kind: level === "mechanical" ? "mechanical" : "logical",
+      level: level === "mechanical" ? null : level,
+      derived: { ...REVIEW.sections[0]!.derived, review_score: undefined },
+    })),
+  });
+  const rows = (review: ReviewV2) =>
+    listedSections(review).map((each) => [each.id, each.level ?? null, each.routine ?? false]);
+
+  it("lists the sections that want a look first, then the routine ones, each in the review's order", () => {
+    expect(rows(leveled([1, 3, "mechanical", 2, 4, 1]))).toEqual([
+      ["sec_1", 3, false],
+      ["sec_3", 2, false],
+      ["sec_4", 4, false],
+      ["sec_0", 1, true],
+      ["sec_2", null, true],
+      ["sec_5", 1, true],
+    ]);
+  });
+
+  it("makes no group of a review with only routine sections, or with none", () => {
+    expect(rows(leveled([1, "mechanical", 1]))).toEqual([
+      ["sec_0", 1, false],
+      ["sec_1", null, false],
+      ["sec_2", 1, false],
+    ]);
+    expect(rows(leveled([3, 2]))).toEqual([
+      ["sec_0", 3, false],
+      ["sec_1", 2, false],
+    ]);
+  });
+
+  it("falls back to the derived score for a section without a level", () => {
+    const review = leveled([3, 2]);
+    review.sections[1] = {
+      ...review.sections[1]!,
+      level: null,
+      derived: { ...review.sections[1]!.derived, review_score: 1 },
+    };
+    expect(rows(review)).toEqual([
+      ["sec_0", 3, false],
+      ["sec_1", 1, true],
+    ]);
+  });
+});
+
 describe("isBrief", () => {
   const section = REVIEW.sections.find((each) => each.hunks.includes("h_routes"))!;
   const small: ReviewV2 = {

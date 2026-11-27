@@ -4,6 +4,7 @@ import type {
   IndexedHunk,
   IndexedHunkLine,
   ReviewDocument,
+  RiskScoreLevel,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
 import {
@@ -222,11 +223,18 @@ export type ListedSection = {
   line?: string;
   /** No longer in the pull request's code. */
   obsolete?: boolean;
+  /** How closely to read it, 1 to 5; absent for "Where this fits" and for a
+   *  section the review did not rate. */
+  level?: RiskScoreLevel;
+  /** Listed under Routine: see `listedSections`. */
+  routine?: boolean;
 };
 
 /** How it works lists "Where this fits" first (when the review has a context,
- *  or tiles or pending cards stand on it), then the review's sections in its
- *  order, the ones no longer in the code last. A section's line is its gist
+ *  or tiles or pending cards stand on it), then the review's sections: those
+ *  that want a look, then the routine ones (mechanical, or rated 1 of 5),
+ *  each group in the review's own order, and the ones no longer in the code
+ *  last. A section's line is its gist
  *  (else its summary's first sentence). A brief lists none: its Overview
  *  holds what they would say. */
 export function listedSections(review: ReviewV2): ListedSection[] {
@@ -247,19 +255,32 @@ export function listedSections(review: ReviewV2): ListedSection[] {
           },
         ]
       : [];
-  const sections = review.sections.map(
-    (section): ListedSection => ({
+  const sections = review.sections.map((section): ListedSection => {
+    const level = section.level ?? section.derived.review_score;
+    return {
       id: section.id,
       title: section.title,
       line:
         section.gist || (leadProse(section).trim() ? firstSentence(leadProse(section)) : undefined),
       ...(section.derived.state === "stale" ? { obsolete: true } : {}),
-    }),
-  );
+      ...(level ? { level } : {}),
+      ...(section.kind === "mechanical" || level === 1 ? { routine: true } : {}),
+    };
+  });
+  const live = sections.filter((section) => !section.obsolete);
+  // Routine is a group only beside sections that want a closer look: a review
+  // of nothing but routine sections lists them plainly.
+  const grouped = live.some((section) => section.routine) && live.some((each) => !each.routine);
+  const plain = ({ routine: _routine, ...section }: ListedSection): ListedSection => section;
   return [
     ...listed,
-    ...sections.filter((section) => !section.obsolete),
-    ...sections.filter((section) => section.obsolete),
+    ...(grouped
+      ? [
+          ...live.filter((section) => !section.routine),
+          ...live.filter((section) => section.routine),
+        ]
+      : live.map(plain)),
+    ...sections.filter((section) => section.obsolete).map(plain),
   ];
 }
 

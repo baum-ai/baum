@@ -15,6 +15,7 @@ import { decisionChecks, reviewOf, type ViewTile } from "./model";
 import { steppableViews, useSectionViewKeys, viewKeyStep } from "./section-views";
 import { COMPARED_PANE } from "@baum/viewer/components/review-history";
 import { useViewPlaces } from "./places";
+import { parseReadMarks, READ_AFTER_MS, READ_MARKS_KEY, readMarksKey } from "./read-marks";
 import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
 import { foldedLines } from "../tiles/builtins/code-excerpt";
 import { ColumnsDiagram, comparedText, wordDiff } from "./native-tiles";
@@ -156,6 +157,56 @@ describe("the review page's rail", () => {
     expect(railRow(container, "Files changed").getAttribute("aria-pressed")).toBe("true");
     await click(railRow(container, "Requests"));
     expect(search.get("section")).toBe("sec_requests");
+  });
+
+  it("marks each section's level on its row and lists the routine ones under their own label", async () => {
+    const container = await page();
+    const level = (name: string) =>
+      railRow(container, name).querySelector("[data-rail-level]")?.getAttribute("data-rail-level");
+    expect(level("What a phone can do")).toBe("4");
+    expect(level("Pairing")).toBe("3");
+    // Where this fits is not rated, and neither is a mechanical section.
+    expect(level("Where this fits")).toBeUndefined();
+    expect(level("Dependencies")).toBeUndefined();
+    const described = railRow(container, "What a phone can do").getAttribute("aria-describedby")!;
+    expect(container.ownerDocument.getElementById(described)?.textContent).toBe(
+      "Level 4 of 5: Sensitive or broad impact",
+    );
+    // One label, right above the first routine section.
+    const labels = [...rail(container).querySelectorAll("[data-rail-group]")];
+    expect(labels.map((each) => each.textContent)).toEqual(["Routine"]);
+    expect(labels[0]!.parentElement!.contains(railRow(container, "Dependencies"))).toBe(true);
+  });
+
+  it("ticks a section once the reader has stayed on it and left, and remembers it", async () => {
+    const now = vi.spyOn(Date, "now");
+    try {
+      now.mockReturnValue(1_000_000);
+      const container = await page("pane=section&section=sec_pairing");
+      const ticked = (name: string) =>
+        railRow(container, name).querySelector("[data-rail-read]") !== null;
+      // Stepping straight past a section does not tick it.
+      await click(railRow(container, "Relay connection"));
+      expect(ticked("Pairing")).toBe(false);
+      // Staying on one and then moving on does.
+      now.mockReturnValue(1_000_000 + READ_AFTER_MS);
+      await click(railRow(container, "Overview"));
+      expect(ticked("Relay connection")).toBe(true);
+      expect(ticked("Pairing")).toBe(false);
+      const described = railRow(container, "Relay connection").getAttribute("aria-describedby")!;
+      expect(container.ownerDocument.getElementById(described)?.textContent).toMatch(/\. Read$/);
+      expect(parseReadMarks(localStorage.getItem(READ_MARKS_KEY))).toEqual({
+        [readMarksKey(review1303())]: ["sec_relay"],
+      });
+      // The tick is there on the next visit to the page.
+      act(() => root?.unmount());
+      root = null;
+      document.body.replaceChildren();
+      const again = await page();
+      expect(railRow(again, "Relay connection").querySelector("[data-rail-read]")).not.toBeNull();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("counts the changed files on its row, with no disclosure on it", async () => {
