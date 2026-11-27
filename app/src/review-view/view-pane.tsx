@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ReviewFilesProvider } from "@baum/viewer/components/code-file-link";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { reviewRefs, type ReviewDocument } from "@baum/viewer/review-document";
@@ -16,6 +16,7 @@ import {
   type ReviewV2,
 } from "./model";
 import { OverviewTab } from "./overview-tab";
+import { READ_AFTER_MS, useReadMarks } from "./read-marks";
 import { SectionsTab } from "./sections-tab";
 
 /** The review page for one snapshot of the review (the current version, an
@@ -39,6 +40,29 @@ export function ViewPane({
   const files = useMemo(() => viewFiles(review), [review]);
   const file = place.tab === "code" ? shownFile(files, place.file) : undefined;
   const ctx = useViewTileContext(snapshot, review, historical, context);
+  // A section the reader stayed on is read once they leave it (for another
+  // place, or the page), which ticks its row in the rail. An earlier version
+  // shown from history marks nothing.
+  const { mark } = useReadMarks(historical ? null : snapshot);
+  // `mark` changes with every stored mark; only the section shown restarts
+  // the clock.
+  const marker = useRef(mark);
+  marker.current = mark;
+  const shown = place.tab === "sections" ? place.section : null;
+  useEffect(() => {
+    if (!shown) return;
+    const since = Date.now();
+    const leave = () => {
+      if (Date.now() - since >= READ_AFTER_MS) marker.current(shown);
+    };
+    // Closing or reloading the window runs no cleanup, so the page's own
+    // leaving marks the section too.
+    window.addEventListener("pagehide", leave);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      leave();
+    };
+  }, [shown]);
   // A code link on the page (a hunk chip, a file in "Where this fits", a
   // diff's file name) opens the file in Files changed rather than the viewer's
   // Files pane.

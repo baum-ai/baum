@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
 import { cn } from "@baum/viewer/components/classnames";
-import { FilesIcon, SectionIcon, SummaryIcon } from "@baum/viewer/components/icons";
+import { CheckIcon, FilesIcon, SectionIcon, SummaryIcon } from "@baum/viewer/components/icons";
 import type {
   ReviewPlaceContext,
   ReviewPlaces,
@@ -8,8 +8,13 @@ import type {
   ReviewRailRow,
 } from "@baum/viewer/components/review-viewer";
 import { SideNavButton, SideNavNest } from "@baum/viewer/components/side-nav";
-import type { ReviewDocument } from "@baum/viewer/review-document";
+import {
+  RISK_SCORE_MEANING,
+  type ReviewDocument,
+  type RiskScoreLevel,
+} from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
+import { useReadMarks } from "./read-marks";
 import {
   CODE_PLACE,
   CONTEXT_ID,
@@ -121,6 +126,7 @@ function railRows(context: ReviewPlaceContext): ReviewRailRow[] {
  *  changed. The viewer follows with Decisions, Sessions and Commits. */
 function ViewRail({ context }: { context: ReviewPlaceContext }) {
   const document = context.document;
+  const { read } = useReadMarks(document);
   if (!document) return <EmptyRail context={context} />;
   const review = reviewOf(document);
   // A session, a commit or the decisions are none of the page's places.
@@ -152,7 +158,7 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
             onSelect={go({ tab: "sections", section: first })}
           />
           <SideNavNest id="review-sections">
-            {list.map((section) => (
+            {list.map((section, at) => (
               <div
                 key={section.id}
                 title={
@@ -160,12 +166,37 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
                 }
                 className={cn(section.obsolete && "opacity-60 grayscale")}
               >
+                {/* The routine sections follow the ones that want a look,
+                    under their own quiet label. */}
+                {section.routine && !list[at - 1]?.routine ? (
+                  <p
+                    data-rail-group=""
+                    className="px-2 pt-2 pb-0.5 text-xs font-medium tracking-[0.08em] text-tertiary uppercase"
+                  >
+                    Routine
+                  </p>
+                ) : null}
                 <SideNavButton
                   label={section.title}
                   wrap
                   depth={1}
                   active={place?.tab === "sections" && place.section === section.id}
                   controls="review-section"
+                  aside={
+                    section.level || read.has(section.id) ? (
+                      <SectionMark level={section.level} read={read.has(section.id)} />
+                    ) : undefined
+                  }
+                  description={
+                    [
+                      section.level
+                        ? `Level ${section.level} of 5: ${RISK_SCORE_MEANING[section.level]}`
+                        : "",
+                      read.has(section.id) ? "Read" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(". ") || undefined
+                  }
                   onSelect={go({ tab: "sections", section: section.id })}
                 />
               </div>
@@ -183,6 +214,41 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
         onSelect={go({ tab: "code", file: null })}
       />
     </>
+  );
+}
+
+/** A section's marks at the end of its rail row: a tick once the reader has
+ *  been through it, and how closely to read it as five steps, the filled
+ *  ones in the level's colour (4 and 5 stand out; the rest stay quiet). */
+function SectionMark({ level, read }: { level?: RiskScoreLevel; read: boolean }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      {read ? (
+        <span data-rail-read="" className="flex text-tertiary">
+          <CheckIcon size={12} />
+        </span>
+      ) : null}
+      {level ? (
+        <span
+          data-rail-level={level}
+          className={cn(
+            "flex gap-0.5",
+            level === 5
+              ? "text-status-critical"
+              : level === 4
+                ? "text-status-caution"
+                : "text-secondary",
+          )}
+        >
+          {[1, 2, 3, 4, 5].map((step) => (
+            <span
+              key={step}
+              className={cn("h-2.5 w-1 rounded-[1px] bg-current", step > level && "opacity-20")}
+            />
+          ))}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
