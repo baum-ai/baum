@@ -3036,7 +3036,8 @@ lists, in order:
   order). A review whose sections are all routine has no label.
 - A row gains a tick once the reader has been through its section: they
   stayed on it for a moment (`READ_AFTER_MS`, so stepping past with the keys
-  does not count) and then left it. The ticks are kept on this computer
+  does not count) and then left it, for another place or by closing or
+  reloading the window. The ticks are kept on this computer
   (`localStorage`, `baum.review.read`, in `review-view/read-marks.ts`) for
   each review version, the 200 touched last; a new version starts unread, and
   an earlier version shown from history marks nothing. There is no way to

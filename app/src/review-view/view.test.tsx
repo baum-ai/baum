@@ -209,6 +209,25 @@ describe("the review page's rail", () => {
     }
   });
 
+  it("ticks the section the reader is on when the window closes or reloads", async () => {
+    const now = vi.spyOn(Date, "now");
+    try {
+      now.mockReturnValue(1_000_000);
+      const container = await page("pane=section&section=sec_pairing");
+      // Too soon to count.
+      await act(async () => void window.dispatchEvent(new Event("pagehide")));
+      expect(localStorage.getItem(READ_MARKS_KEY)).toBeNull();
+      now.mockReturnValue(1_000_000 + READ_AFTER_MS);
+      await act(async () => void window.dispatchEvent(new Event("pagehide")));
+      expect(parseReadMarks(localStorage.getItem(READ_MARKS_KEY))).toEqual({
+        [readMarksKey(review1303())]: ["sec_pairing"],
+      });
+      expect(railRow(container, "Pairing").querySelector("[data-rail-read]")).not.toBeNull();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("counts the changed files on its row, with no disclosure on it", async () => {
     const container = await page();
     const row = railRow(container, "Files changed");

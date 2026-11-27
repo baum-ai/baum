@@ -52,8 +52,15 @@ export function ViewPane({
   useEffect(() => {
     if (!shown) return;
     const since = Date.now();
-    return () => {
+    const leave = () => {
       if (Date.now() - since >= READ_AFTER_MS) marker.current(shown);
+    };
+    // Closing or reloading the window runs no cleanup, so the page's own
+    // leaving marks the section too.
+    window.addEventListener("pagehide", leave);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      leave();
     };
   }, [shown]);
   // A code link on the page (a hunk chip, a file in "Where this fits", a
