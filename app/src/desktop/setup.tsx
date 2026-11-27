@@ -1,5 +1,12 @@
 import { BrandMark } from "@baum/viewer/components/brand-logo";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEventHandler,
+  type ReactNode,
+} from "react";
 import { invoke } from "./native";
 import {
   describeAgent,
@@ -78,6 +85,9 @@ export function Setup() {
   const [github, setGitHub] = useState(false);
   const working = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
+  const formScroll = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLPreElement>(null);
+  const footerAction = useRef<{ focusedButton: HTMLButtonElement | null } | null>(null);
   const busy = pending !== null;
   const display = (value: string) => displayPath(value, view?.home);
   const refresh = useCallback(async () => {
@@ -145,8 +155,21 @@ export function Setup() {
     });
   }, [view]);
   useEffect(() => {
-    if (view) title.current?.focus();
+    if (!view) return;
+    if (formScroll.current) formScroll.current.scrollTop = 0;
+    title.current?.focus();
   }, [step, Boolean(view)]);
+
+  useEffect(() => {
+    if (pending !== null || !footerAction.current) return;
+    const { focusedButton } = footerAction.current;
+    footerAction.current = null;
+    if (!error) return;
+    log.current?.scrollIntoView({ block: "nearest" });
+    // The button is disabled while it runs. Give its focus back if it had it
+    // and the person hasn't moved to another control.
+    if (document.activeElement === document.body) focusedButton?.focus({ preventScroll: true });
+  }, [pending, error]);
 
   useEffect(() => {
     if (step !== last) return;
@@ -166,9 +189,12 @@ export function Setup() {
     return () => window.removeEventListener("focus", focus);
   }, [step, refresh]);
 
-  async function run(id: string, action: () => Promise<void>) {
+  async function run(id: string, action: () => Promise<void>, footerButton?: HTMLButtonElement) {
     if (working.current) return;
     working.current = true;
+    footerAction.current = footerButton
+      ? { focusedButton: document.activeElement === footerButton ? footerButton : null }
+      : null;
     setPending(id);
     setError("");
     try {
@@ -188,7 +214,7 @@ export function Setup() {
   function button(
     id: string,
     children: ReactNode,
-    onClick: () => void,
+    onClick: MouseEventHandler<HTMLButtonElement>,
     className?: string,
     label?: string,
     blocked = false,
@@ -286,228 +312,241 @@ export function Setup() {
         </ol>
       </aside>
       <section className="setup-content">
-        <div className="setup-banner" aria-hidden="true">
-          <img src={onboardingLeaves} alt="" />
-        </div>
-        <header>
-          <p id="step-label" className="eyebrow">
-            STEP {step + 1} OF {steps.length}
-          </p>
-          <h1 id="title" ref={title} tabIndex={-1}>
-            {steps[step]![0]}
-          </h1>
-          <p id="intro">{steps[step]![1]}</p>
-        </header>
-        {!view && !error && (
-          <LoadingStatus id="checking" block>
-            Checking this computer…
-          </LoadingStatus>
-        )}
-        {view && command && (
-          <div id="panels">
-            {step === 0 && (
-              <>
-                <GitHubStep onConnected={setGitHub} />
-                {/* Repositories come from the GitHub account, so they wait for it. */}
-                {github && (
-                  <>
-                    <h2 className="setup-section">Repositories</h2>
-                    <p className="setup-section-note">
-                      Pick the repositories that baum should monitor.
-                    </p>
-                    <div id="repo-panel" className="setup-card">
-                      <RepositoryPicker
-                        call={setupRepositoryCall}
-                        home={view.home ?? undefined}
-                        onPicked={setPickedCount}
-                      />
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-            {step === reviewStep && reviews && (
-              <>
-                <ReviewSettingsForm
-                  settings={reviews}
-                  disabled={busy}
-                  onChange={setReviews}
-                  available={available}
-                  signedOut={signedOutHarnesses(view.hooks.agents)}
-                  detectionError={view.hooks.error}
-                  terminal={terminal}
-                />
-                {available.length > 0 && (
-                  <p id="review-customise" className="repo-note">
-                    You can customise the agent and model per task in Settings, and automatic
-                    reviews per repository.
-                  </p>
-                )}
-              </>
-            )}
-            {step === reviewStep && !reviews && !error && (
-              <LoadingStatus id="checking" block>
-                Reading your review settings…
-              </LoadingStatus>
-            )}
-            {step === 2 && (
-              <ul className="setup-card agent-list">
-                <li className="agent-row">
-                  <span className="row-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24">
-                      <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
-                      <path d="M7 10l3 2.5L7 15M12.5 15H17" />
-                    </svg>
-                  </span>
-                  <div className="agent-info">
-                    <h2>baum CLI</h2>
-                    <p id="command-state" className={command.ok ? "ok" : undefined}>
-                      {withCode(display(command.state), [command.path && display(command.path)])}
-                    </p>
-                    {!command.ok && (
-                      <p className="agent-hint">Agent hooks report to baum through this command.</p>
-                    )}
-                    {command.note && (
-                      <p id="command-note" className="callout">
-                        {display(command.note)}
-                      </p>
-                    )}
-                  </div>
-                  <div className="actions">
-                    {view.command.record &&
-                      !view.first_run &&
-                      button(
-                        "command-remove",
-                        "Remove",
-                        () => void run("command-remove", () => change("uninstall_command")),
-                        "quiet compact",
-                        "Remove the baum CLI",
-                      )}
-                    {command.action &&
-                      button(
-                        "command-install",
-                        command.action,
-                        () =>
-                          void run("command-install", () =>
-                            change(
-                              "install_command",
-                              command.replace ? { replace: command.replace } : {},
-                            ),
-                          ),
-                        "secondary compact",
-                        command.replace ? undefined : `${command.action} the baum CLI`,
-                      )}
-                  </div>
-                </li>
-                {agents.map((definition) => {
-                  const agent = view.hooks.agents.find((a) => a.agent === definition.id);
-                  const connected = agent ? agentConnected(agent) : false;
-                  const state = agent
-                    ? describeAgent(agent)
-                    : `${definition.name} status unavailable. Check again to retry.`;
-                  const verb = agent?.installed ? "Enable" : "Connect";
-                  return (
-                    <li className="agent-row" key={definition.id}>
-                      <BrandMark brand={definition.brand} size={44} className="agent-logo" />
-                      <div className="agent-info">
-                        <h2>
-                          {definition.name}
-                          {agent?.installed && agent.version && (
-                            <span className="agent-version">Plugin {agent.version}</span>
-                          )}
-                        </h2>
-                        <p
-                          id={`${definition.id}-state`}
-                          className={
-                            connected
-                              ? "ok"
-                              : agent && (agentNeedsAction(agent) || agentUnsupported(agent))
-                                ? "attention"
-                                : undefined
-                          }
-                        >
-                          {display(state || definition.about)}
-                        </p>
-                        {agent?.installed && (
-                          <p id={`${definition.id}-hint`} className="agent-hint">
-                            {withCode(agentHookNote(agent), ["/hooks"])}
-                          </p>
-                        )}
-                      </div>
-                      <div className="actions">
-                        {agent?.installed &&
-                          !view.first_run &&
-                          button(
-                            `${definition.id}-remove`,
-                            "Remove",
-                            () =>
-                              void run(`${definition.id}-remove`, () =>
-                                change("uninstall_hooks", { agent: definition.id }),
-                              ),
-                            "quiet compact",
-                            `Remove ${definition.name} hooks`,
-                          )}
-                        {agent?.detected &&
-                          !agent.error &&
-                          !agentUnsupported(agent) &&
-                          (!agent.installed || !agent.enabled) &&
-                          button(
-                            `${definition.id}-install`,
-                            verb,
-                            () =>
-                              void run(`${definition.id}-install`, () =>
-                                change("install_hooks", { agent: definition.id }),
-                              ),
-                            "secondary compact",
-                            `${verb} ${definition.name}`,
-                          )}
-                        {agent &&
-                          agentUpdatable(agent) &&
-                          button(
-                            `${definition.id}-update`,
-                            "Update",
-                            () =>
-                              void run(`${definition.id}-update`, () =>
-                                change("update_hooks", { agent: definition.id }),
-                              ),
-                            "secondary compact",
-                            `Update ${definition.name} hooks`,
-                          )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {step === 2 && terminal && <TerminalSetup {...terminal} />}
-            {step === 2 && view.hooks.error && (
-              <p id="hooks-error" role="status">
-                {display(view.hooks.error)}
-              </p>
-            )}
+        <div className="setup-scroll" ref={formScroll}>
+          <div className="setup-banner" aria-hidden="true">
+            <img src={onboardingLeaves} alt="" />
           </div>
-        )}
-        {error && (
-          <pre id="log" className="failed" role="alert">
-            {display(error)}
-          </pre>
-        )}
+          <header>
+            <p id="step-label" className="eyebrow">
+              STEP {step + 1} OF {steps.length}
+            </p>
+            <h1 id="title" ref={title} tabIndex={-1}>
+              {steps[step]![0]}
+            </h1>
+            <p id="intro">{steps[step]![1]}</p>
+          </header>
+          {!view && !error && (
+            <LoadingStatus id="checking" block>
+              Checking this computer…
+            </LoadingStatus>
+          )}
+          {view && command && (
+            <div id="panels">
+              {step === 0 && (
+                <>
+                  <GitHubStep onConnected={setGitHub} />
+                  {/* Repositories come from the GitHub account, so they wait for it. */}
+                  {github && (
+                    <>
+                      <h2 className="setup-section">Repositories</h2>
+                      <p className="setup-section-note">
+                        Pick the repositories that baum should monitor.
+                      </p>
+                      <div id="repo-panel" className="setup-card">
+                        <RepositoryPicker
+                          call={setupRepositoryCall}
+                          home={view.home ?? undefined}
+                          onPicked={setPickedCount}
+                        />
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+              {step === reviewStep && reviews && (
+                <>
+                  <ReviewSettingsForm
+                    settings={reviews}
+                    disabled={busy}
+                    onChange={setReviews}
+                    available={available}
+                    signedOut={signedOutHarnesses(view.hooks.agents)}
+                    detectionError={view.hooks.error}
+                    terminal={terminal}
+                  />
+                  {available.length > 0 && (
+                    <p id="review-customise" className="repo-note">
+                      You can customise the agent and model per task in Settings, and automatic
+                      reviews per repository.
+                    </p>
+                  )}
+                </>
+              )}
+              {step === reviewStep && !reviews && !error && (
+                <LoadingStatus id="checking" block>
+                  Reading your review settings…
+                </LoadingStatus>
+              )}
+              {step === 2 && (
+                <ul className="setup-card agent-list">
+                  <li className="agent-row">
+                    <span className="row-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24">
+                        <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+                        <path d="M7 10l3 2.5L7 15M12.5 15H17" />
+                      </svg>
+                    </span>
+                    <div className="agent-info">
+                      <h2>baum CLI</h2>
+                      <p id="command-state" className={command.ok ? "ok" : undefined}>
+                        {withCode(display(command.state), [command.path && display(command.path)])}
+                      </p>
+                      {!command.ok && (
+                        <p className="agent-hint">
+                          Agent hooks report to baum through this command.
+                        </p>
+                      )}
+                      {command.note && (
+                        <p id="command-note" className="callout">
+                          {display(command.note)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="actions">
+                      {view.command.record &&
+                        !view.first_run &&
+                        button(
+                          "command-remove",
+                          "Remove",
+                          () => void run("command-remove", () => change("uninstall_command")),
+                          "quiet compact",
+                          "Remove the baum CLI",
+                        )}
+                      {command.action &&
+                        button(
+                          "command-install",
+                          command.action,
+                          () =>
+                            void run("command-install", () =>
+                              change(
+                                "install_command",
+                                command.replace ? { replace: command.replace } : {},
+                              ),
+                            ),
+                          "secondary compact",
+                          command.replace ? undefined : `${command.action} the baum CLI`,
+                        )}
+                    </div>
+                  </li>
+                  {agents.map((definition) => {
+                    const agent = view.hooks.agents.find((a) => a.agent === definition.id);
+                    const connected = agent ? agentConnected(agent) : false;
+                    const state = agent
+                      ? describeAgent(agent)
+                      : `${definition.name} status unavailable. Check again to retry.`;
+                    const verb = agent?.installed ? "Enable" : "Connect";
+                    return (
+                      <li className="agent-row" key={definition.id}>
+                        <BrandMark brand={definition.brand} size={44} className="agent-logo" />
+                        <div className="agent-info">
+                          <h2>
+                            {definition.name}
+                            {agent?.installed && agent.version && (
+                              <span className="agent-version">Plugin {agent.version}</span>
+                            )}
+                          </h2>
+                          <p
+                            id={`${definition.id}-state`}
+                            className={
+                              connected
+                                ? "ok"
+                                : agent && (agentNeedsAction(agent) || agentUnsupported(agent))
+                                  ? "attention"
+                                  : undefined
+                            }
+                          >
+                            {display(state || definition.about)}
+                          </p>
+                          {agent?.installed && (
+                            <p id={`${definition.id}-hint`} className="agent-hint">
+                              {withCode(agentHookNote(agent), ["/hooks"])}
+                            </p>
+                          )}
+                        </div>
+                        <div className="actions">
+                          {agent?.installed &&
+                            !view.first_run &&
+                            button(
+                              `${definition.id}-remove`,
+                              "Remove",
+                              () =>
+                                void run(`${definition.id}-remove`, () =>
+                                  change("uninstall_hooks", { agent: definition.id }),
+                                ),
+                              "quiet compact",
+                              `Remove ${definition.name} hooks`,
+                            )}
+                          {agent?.detected &&
+                            !agent.error &&
+                            !agentUnsupported(agent) &&
+                            (!agent.installed || !agent.enabled) &&
+                            button(
+                              `${definition.id}-install`,
+                              verb,
+                              () =>
+                                void run(`${definition.id}-install`, () =>
+                                  change("install_hooks", { agent: definition.id }),
+                                ),
+                              "secondary compact",
+                              `${verb} ${definition.name}`,
+                            )}
+                          {agent &&
+                            agentUpdatable(agent) &&
+                            button(
+                              `${definition.id}-update`,
+                              "Update",
+                              () =>
+                                void run(`${definition.id}-update`, () =>
+                                  change("update_hooks", { agent: definition.id }),
+                                ),
+                              "secondary compact",
+                              `Update ${definition.name} hooks`,
+                            )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {step === 2 && terminal && <TerminalSetup {...terminal} />}
+              {step === 2 && view.hooks.error && (
+                <p id="hooks-error" role="status">
+                  {display(view.hooks.error)}
+                </p>
+              )}
+            </div>
+          )}
+          {error && (
+            <pre id="log" className="failed" role="alert" ref={log}>
+              {display(error)}
+            </pre>
+          )}
+        </div>
         <footer className="setup-footer">
           <div className="actions">
-            {!done && button("refresh", "Check again", () => void run("refresh", refresh), "quiet")}
-            {step > 0 && button("back", "← Back", () => navigate(step - 1), "quiet")}
-            {button(
-              "continue",
-              step === last ? "Open baum →" : "Continue →",
-              () => {
-                if (!view) return;
-                if (step < last) navigate(step + 1);
-                else void run("continue", finish);
-              },
-              "",
-              undefined,
-              (step >= reviewStep && (!agentReady || modelMissing)) || (step === 0 && !githubReady),
-            )}
+            {!done &&
+              button(
+                "refresh",
+                "Check this computer again",
+                (event) => void run("refresh", refresh, event.currentTarget),
+                "secondary",
+              )}
+            <div className="setup-navigation">
+              {step > 0 && button("back", "← Back", () => navigate(step - 1), "secondary")}
+              {button(
+                "continue",
+                step === last ? "Open baum →" : "Continue →",
+                (event) => {
+                  if (!view) return;
+                  if (step < last) navigate(step + 1);
+                  else void run("continue", finish, event.currentTarget);
+                },
+                "",
+                undefined,
+                (step >= reviewStep && (!agentReady || modelMissing)) ||
+                  (step === 0 && !githubReady),
+              )}
+            </div>
           </div>
           {step > 0 && !done && (step !== reviewStep || agentReady) && (
             <p id="skip-note">You can finish setup later in Settings.</p>

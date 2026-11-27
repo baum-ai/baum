@@ -196,6 +196,11 @@ func initialize(db *sql.DB, readOnly bool, dir string) (err error) {
 		return errors.New("not a baum application database")
 	}
 	if readOnly {
+		// A writer creates the file before it writes the schema, so a
+		// reader can find it empty: that database does not exist yet.
+		if version == 0 && id == 0 {
+			return fmt.Errorf("application database not initialized yet: %w", fs.ErrNotExist)
+		}
 		if version != Version || id != applicationID {
 			return errors.New("unsupported application database baseline")
 		}

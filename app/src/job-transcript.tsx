@@ -11,6 +11,7 @@ import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
   changedNothing,
+  keptReview,
   jobName,
   isActiveJob,
   jobReasonText,
@@ -24,6 +25,8 @@ import { phaseText, ThreadOutcomes } from "./fix";
 import { jobOrigin, jobTarget, jobType, useJobTimes } from "./job-info";
 import { UsageBar } from "./usage";
 import { LoadingStatus } from "./nine-dots";
+import { Empty } from "@baum/viewer/components/states";
+import { SMALL } from "./action-classes";
 import { ReadFailed } from "./page-state";
 import { PageBar, pageScroll } from "./shell";
 import { useFollowScroll } from "./session-transcript";
@@ -306,17 +309,19 @@ function JobHeader({ job }: { job: Job }) {
     <section aria-label="Job" className="local-panel local-job-head">
       {active ? (
         <p role="status" className="local-job-phase">
-          <LiveDot /> {name}: {phaseText(job)}
+          <LiveDot className="text-status-positive" /> {name}: {phaseText(job)}
         </p>
       ) : (
         <p role="status" className="local-job-phase">
-          {changedNothing(job) ? null : job.state === "completed" ? (
+          {changedNothing(job) || keptReview(job) ? null : job.state === "completed" ? (
             <CircleCheckIcon size={16} className="local-job-pushed" />
           ) : job.state === "failed" ? (
             <CircleCrossIcon size={16} className="local-tool-failed" />
           ) : null}
           {changedNothing(job) ? (
             `${name} changed nothing, so nothing was pushed`
+          ) : keptReview(job) ? (
+            "Review still applies"
           ) : job.state === "completed" && job.commit ? (
             <>
               {name}: pushed{" "}
@@ -587,10 +592,17 @@ export function JobPage({
         ) : loading ? (
           <LoadingStatus block>Loading job…</LoadingStatus>
         ) : (
-          <section className="local-panel local-transcript-missing">
-            <h2>Job not found</h2>
-            <p>It may be older than the jobs this computer keeps.</p>
-          </section>
+          <Empty
+            variant="page"
+            title="Job not found"
+            action={
+              <Link href={appURL("?page=jobs")} className={SMALL}>
+                Go to Jobs
+              </Link>
+            }
+          >
+            It may be older than the jobs this computer keeps.
+          </Empty>
         )}
       </div>
     </>

@@ -33,8 +33,14 @@ export type Inbox = {
   repositories: string[];
   /** A filter query on top of the rest (see `pr-filter.ts`); "" for none. */
   query: string;
+  /** The order of the inbox's queue within its sections (see `pr-sort.ts`),
+   *  as `opened,-risk`; "" for none. */
+  sort?: string;
   no_bots: boolean;
   badge: boolean;
+  /** Whether baum reviews what it holds on its own, while automatic reviews
+   *  follow the inboxes (`pull_requests: "inboxes"`). Missing reads as on. */
+  auto_review: boolean;
 };
 export type InboxList = { revision: number; inboxes: Inbox[] };
 
@@ -60,8 +66,10 @@ function parseInbox(raw: unknown): Inbox | null {
     risk: value.risk === "3" || value.risk === "4" ? value.risk : "any",
     repositories: strings(value.repositories),
     query: typeof value.query === "string" ? value.query : "",
+    ...(isString(value.sort) && value.sort ? { sort: value.sort } : {}),
     no_bots: value.no_bots === true,
     badge: value.badge !== false,
+    auto_review: value.auto_review !== false,
   });
 }
 
@@ -430,6 +438,7 @@ export function templateInbox(template: Template, inboxes: Inbox[], id = newInbo
     repositories: [],
     query,
     no_bots: false,
+    auto_review: true,
   };
 }
 

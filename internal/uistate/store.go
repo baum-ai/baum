@@ -19,8 +19,6 @@ import (
 	"github.com/baum-ai/baum/internal/inboxes"
 )
 
-const KeepWalkthroughs = 40
-
 // KeepReviews is how many pull requests' pending reviews are retained.
 const KeepReviews = 200
 
@@ -41,7 +39,6 @@ var dayKey = regexp.MustCompile(`^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$`)
 var filterPage = regexp.MustCompile(`^(inbox|pulls|(inbox|tab):[0-9a-f]{32})$`)
 var tabID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var tabView = regexp.MustCompile(`^(open|history)$`)
-var reviewKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*@v[1-9][0-9]*$`)
 var pullKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*$`)
 var commentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 var headSHA = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
@@ -66,10 +63,8 @@ type Store struct {
 
 func valid(kind, key string) bool {
 	switch kind {
-	case "inbox", "tour", "filters":
+	case "inbox", "tour", "filters", "activity":
 		return key == ""
-	case "walkthrough":
-		return len(key) <= 300 && reviewKey.MatchString(key)
 	case "review":
 		return len(key) <= 300 && pullKey.MatchString(key)
 	}
@@ -80,8 +75,6 @@ func valid(kind, key string) bool {
 // for a kind that is one record.
 func keep(kind string) int {
 	switch kind {
-	case "walkthrough":
-		return KeepWalkthroughs
 	case "review":
 		return KeepReviews
 	}
@@ -271,25 +264,6 @@ func validate(kind string, raw []byte) error {
 				return ErrInvalid
 			}
 		}
-	case "walkthrough":
-		var value struct {
-			Seen  *[]string           `json:"seen"`
-			Notes *map[string]*string `json:"notes"`
-			Note  *string             `json:"note"`
-		}
-		if json.Unmarshal(raw, &value) != nil || value.Seen == nil || value.Notes == nil || value.Note == nil || len(*value.Seen) > 2000 || len(*value.Notes) > 2000 || len(*value.Note) > 64<<10 {
-			return ErrInvalid
-		}
-		for _, id := range *value.Seen {
-			if id == "" || len(id) > 256 {
-				return ErrInvalid
-			}
-		}
-		for id, note := range *value.Notes {
-			if id == "" || len(id) > 256 || note == nil || len(*note) > 64<<10 {
-				return ErrInvalid
-			}
-		}
 	case "review":
 		var value struct {
 			Comments *[]*reviewComment `json:"comments"`
@@ -335,15 +309,22 @@ func validate(kind string, raw []byte) error {
 	case "filters":
 		var value struct {
 			Pages *map[string]*string `json:"pages"`
+			Sorts map[string]*string  `json:"sorts"`
 			Tabs  []struct {
 				ID    string `json:"id"`
 				Name  string `json:"name"`
 				View  string `json:"view"`
 				Query string `json:"query"`
+				Sort  string `json:"sort"`
 			} `json:"tabs"`
 		}
-		if json.Unmarshal(raw, &value) != nil || value.Pages == nil || len(*value.Pages) > 64 || len(value.Tabs) > MaxTabs {
+		if json.Unmarshal(raw, &value) != nil || value.Pages == nil || len(*value.Pages) > 64 || len(value.Sorts) > 64 || len(value.Tabs) > MaxTabs {
 			return ErrInvalid
+		}
+		for page, sort := range value.Sorts {
+			if !filterPage.MatchString(page) || sort == nil || !inboxes.ValidSort(*sort) {
+				return ErrInvalid
+			}
 		}
 		for page, query := range *value.Pages {
 			if !filterPage.MatchString(page) || query == nil || !inboxes.ValidQuery(*query) {
@@ -353,10 +334,47 @@ func validate(kind string, raw []byte) error {
 		ids := map[string]bool{}
 		for _, tab := range value.Tabs {
 			name := strings.TrimSpace(tab.Name)
-			if !tabID.MatchString(tab.ID) || ids[tab.ID] || name == "" || name != tab.Name || utf8.RuneCountInString(name) > 40 || !tabView.MatchString(tab.View) || !inboxes.ValidQuery(tab.Query) {
+			if !tabID.MatchString(tab.ID) || ids[tab.ID] || name == "" || name != tab.Name || utf8.RuneCountInString(name) > 40 || !tabView.MatchString(tab.View) || !inboxes.ValidQuery(tab.Query) || !inboxes.ValidSort(tab.Sort) {
 				return ErrInvalid
 			}
 			ids[tab.ID] = true
+		}
+	case "activity":
+		var value struct {
+			PRs *map[string]*struct {
+				At   *int64 `json:"at"`
+				Last *struct {
+					Head       *string            `json:"head"`
+					Versions   *int               `json:"versions"`
+					Unresolved *int               `json:"unresolved"`
+					Review     *string            `json:"review"`
+					Updated    *string            `json:"updated"`
+					Answers    map[string]*string `json:"answers"`
+				} `json:"last"`
+				Unread map[string]*int `json:"unread"`
+			} `json:"prs"`
+		}
+		if json.Unmarshal(raw, &value) != nil || value.PRs == nil || len(*value.PRs) > 2000 {
+			return ErrInvalid
+		}
+		for key, pr := range *value.PRs {
+			if len(key) > 300 || pr == nil || pr.At == nil || *pr.At < 0 || pr.Last == nil || len(pr.Unread) > 16 {
+				return ErrInvalid
+			}
+			last := pr.Last
+			if last.Head == nil || len(*last.Head) > 128 || last.Versions == nil || *last.Versions < 0 || last.Unresolved == nil || *last.Unresolved < 0 || last.Review == nil || len(*last.Review) > 64 || last.Updated == nil || len(*last.Updated) > 64 || len(last.Answers) > 100 {
+				return ErrInvalid
+			}
+			for id, at := range last.Answers {
+				if len(id) > 128 || at == nil || len(*at) > 64 {
+					return ErrInvalid
+				}
+			}
+			for kind, n := range pr.Unread {
+				if len(kind) > 32 || n == nil || *n < 0 {
+					return ErrInvalid
+				}
+			}
 		}
 	case "tour":
 		var value struct {
@@ -416,12 +434,12 @@ func checkReviewComment(c reviewComment) error {
 	}
 	switch *target.Kind {
 	case "general":
-	case "section", "risk", "file":
+	case "section", "risk", "file", "tile":
 		if *target.ID == "" {
-			return refuse("a section, risk or file target names its id")
+			return refuse("a section, risk, file or tile target names its id")
 		}
 	default:
-		return refuse("a comment's target is general, section, risk or file")
+		return refuse("a comment's target is general, section, risk, file or tile")
 	}
 	if place := c.Place; place != nil {
 		if place.Path == nil || *place.Path == "" || len(*place.Path) > 4096 || place.Line == nil || *place.Line < 1 || place.Side == nil || (*place.Side != "RIGHT" && *place.Side != "LEFT") || (place.StartLine != nil && (*place.StartLine < 1 || *place.StartLine >= *place.Line)) {

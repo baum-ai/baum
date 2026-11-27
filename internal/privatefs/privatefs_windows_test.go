@@ -1,6 +1,7 @@
 package privatefs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,6 +40,24 @@ func TestPrivateDACL(t *testing.T) {
 				t.Fatalf("privateDACL(%s) = %v, want %v", descriptor, got, tc.want)
 			}
 		})
+	}
+}
+
+// A file CreateFile made is private at once, in a directory whose ACL is not.
+func TestCreateFileIsPrivateFromTheStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lock")
+	if err := CreateFile(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !PrivateFile(path, info) {
+		t.Fatal("the created file is not private")
+	}
+	if err := CreateFile(path); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("creating it again: %v", err)
 	}
 }
 

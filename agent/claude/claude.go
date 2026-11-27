@@ -79,32 +79,93 @@ func (*Backend) Name() string { return agent.BackendClaude }
 // under the run directory between its calls, so it runs them one at a time.
 func (c *Backend) ConcurrentCalls() bool { return c.Profile == User }
 
+// KeepsSessions reports whether a review or task call may keep or resume a
+// session (agent.SessionKeeper): only the User profile's may.
+func (c *Backend) KeepsSessions() bool { return c.Profile == User }
+
+// runKind is what a run is for, which decides what its result must hold.
+type runKind int
+
+const (
+	// runReview submits a structured document.
+	runReview runKind = iota
+	// runFix edits a checkout and ends with a summary.
+	runFix
+	// runConverse is a turn of a person's own session (Converse).
+	runConverse
+)
+
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
-	return c.run(ctx, request, c.args(request), nil, false)
+	return c.run(ctx, request, c.args(request), nil, runReview)
 }
 
 // Fix runs Claude Code with write access to the request's directory, for a
 // fix a person asked for (agent.Fixer). It runs in restricted mode with the
-// file tools only (Read, Glob, Grep, Edit and Write), confined to the
-// directory: it cannot run a command, so it cannot run tests, git or anything
-// else, and the caller commits what it changed. Its final message is the
-// result's Document. Only the User profile fixes.
+// file tools and Bash, whose commands run in Claude Code's sandbox
+// (bubblewrap on Linux, Seatbelt on macOS; see fixArgs): they may write only
+// to the directory, the scratch directory and the agent's git directory,
+// cannot read credential files, and reach the network only when
+// request.Network is set. When the sandbox cannot start, Claude Code refuses
+// to (failIfUnavailable), and the fix runs again with the file tools alone,
+// as it did before the sandbox, logging why. The caller commits what it
+// changed. Its final message is the result's Document. Only the User profile
+// fixes.
 func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
 	if c.Profile != User {
 		return agent.Result{}, errors.New("claude: only the User profile runs fixes")
 	}
-	return c.run(ctx, request, c.fixArgs(request), nil, true)
+	result, err := c.run(ctx, request, c.fixArgs(request, true), nil, runFix)
+	var unavailable *sandboxUnavailableError
+	if !errors.As(err, &unavailable) {
+		return result, err
+	}
+	// Claude Code refused to start before any model call: the fix runs as it
+	// did before the sandbox, with the file tools alone.
+	if request.Logger != nil {
+		request.Logger.Warn("claude code's sandbox cannot start, so the fix agent runs with file tools only and no shell", "reason", unavailable.detail)
+	}
+	return c.run(ctx, request, c.fixArgs(request, false), nil, runFix)
 }
 
-func (c *Backend) run(ctx context.Context, request agent.Request, args, env []string, fix bool) (result agent.Result, err error) {
+// sandboxUnavailableError is Claude Code refusing to start a fix because its
+// sandbox cannot start (no bubblewrap or socat, an unsupported platform).
+type sandboxUnavailableError struct{ detail string }
+
+func (e *sandboxUnavailableError) Error() string {
+	return "claude code's sandbox is unavailable: " + e.detail
+}
+
+// Converse runs one turn of the person's own Claude Code session
+// (agent.Converser): Claude Code loads their settings, hooks, CLAUDE.md files
+// and MCP servers, and request.MCP joins those. access is the permission mode
+// (converseArgs). The session is kept, and request.ResumeSession continues
+// it. Only the User profile converses.
+func (c *Backend) Converse(ctx context.Context, request agent.Request, access agent.Access) (agent.Result, error) {
+	if c.Profile != User {
+		return agent.Result{}, errors.New("claude: only the User profile runs a person's own session")
+	}
+	if err := access.Validate(); err != nil {
+		return agent.Result{}, fmt.Errorf("claude: %w", err)
+	}
+	request.PersistSession = true
+	request.MaxCalls, request.MaxTokens = 0, 0
+	return c.run(ctx, request, c.converseArgs(request, access), nil, runConverse)
+}
+
+func (c *Backend) run(ctx context.Context, request agent.Request, args, env []string, kind runKind) (result agent.Result, err error) {
 	if c.Profile != User && c.Profile != Isolated {
 		return result, fmt.Errorf("claude: unknown profile %d", int(c.Profile))
 	}
 	if err := request.ValidateSession(); err != nil {
 		return result, fmt.Errorf("claude: %w", err)
 	}
-	if request.WantsSession() && (c.Profile != User || fix) {
-		return result, errors.New("claude: only a User profile review or task can keep, resume or fork a session")
+	if request.KeepsSession() && c.Profile != User {
+		return result, errors.New("claude: only the User profile can keep or resume a session")
+	}
+	// A fix may keep its session, so baum's commit of its work links to it,
+	// but never resumes one: fixArgs has no --resume.
+	if request.ResumeSession != "" && kind == runFix {
+		return result, errors.New("claude: a fix cannot resume a session")
 	}
 	if request.MCP != nil {
 		if c.Profile != User {
@@ -162,7 +223,16 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = request.Directory
 	// A later entry of the same variable wins (exec.Cmd.Env).
-	cmd.Env = append(c.environment(request.Directory, endpoint), env...)
+	if kind == runConverse {
+		cmd.Env = append(c.converseEnvironment(), env...)
+	} else {
+		cmd.Env = append(c.environment(request.Directory, endpoint), env...)
+	}
+	if kind == runFix {
+		// The fix agent's commands run with this environment too: no token,
+		// and caches in the scratch directory.
+		cmd.Env = agent.FixEnvironment(cmd.Env, request.Scratch)
+	}
 	// The MCP token goes last and replaces any entry of the name, so the
 	// user's agent_env cannot override or remove it.
 	cmd.Env = agent.WithMCPToken(cmd.Env, request.MCP)
@@ -373,6 +443,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			Tools         []string `json:"tools"`
 			IsError       bool     `json:"is_error"`
 			Errors        []string `json:"errors"`
+			// StartupFailureReason says why Claude Code refused to start;
+			// "sandbox_required_unavailable" is a fix's sandbox that cannot
+			// start (failIfUnavailable).
+			StartupFailureReason string `json:"startup_failure_reason"`
 			// NumTurns is how many turns a result's run took.
 			NumTurns int `json:"num_turns"`
 			// APIErrorStatus is the HTTP status of the provider response
@@ -381,27 +455,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			// APIError is the class of an assistant message Claude Code
 			// wrote for a request it could not send or the provider failed,
 			// such as authentication_failed when it is not signed in.
-			APIError string `json:"error"`
-			Message  struct {
-				ID, Model string
-				Content   []struct {
-					Type, ID, Name string
-					Text, Thinking string
-					ToolUseID      string `json:"tool_use_id"`
-					IsError        bool   `json:"is_error"`
-					Content        json.RawMessage
-					Input          struct {
-						FilePath      string `json:"file_path"`
-						Path          string
-						Pattern       string
-						Command       string
-						Offset, Limit int
-					}
-				}
-				StopReason string `json:"stop_reason"`
-				Usage      usage
-			} `json:"message"`
-			Event struct {
+			APIError string        `json:"error"`
+			Message  streamMessage `json:"message"`
+			Event    struct {
 				Type    string
 				Message struct {
 					ID, Model string
@@ -409,6 +465,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				}
 				Delta struct {
 					StopReason string `json:"stop_reason"`
+					// Type and Text are a content_block_delta's: a
+					// text_delta carries a piece of the answer.
+					Type, Text string
 				}
 				Usage usage
 			} `json:"event"`
@@ -418,12 +477,24 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			Result string `json:"result"`
 		}
 		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			// A system notice may hold fields of other shapes than the other
+			// events' (a permission_denied notice's message is text); none
+			// carries anything a run reads.
+			var head struct{ Type string }
+			if json.Unmarshal(scanner.Bytes(), &head) == nil && head.Type == "system" {
+				err = nil
+				request.Activity.Progress()
+				continue
+			}
 			break
 		}
 		request.Activity.Progress()
 		// The init event's session_id wins; any other event's (the result's)
 		// fills in only while none is known.
 		if event.SessionID != "" && (event.Type == "system" && event.Subtype == "init" || result.SessionID == "") {
+			if event.SessionID != result.SessionID && request.SessionStarted != nil {
+				request.SessionStarted(event.SessionID)
+			}
 			result.SessionID = event.SessionID
 		}
 
@@ -449,6 +520,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 					if event.Event.Delta.StopReason != "" {
 						calls[streaming].final = true
 					}
+				}
+			case "content_block_delta":
+				if event.Event.Delta.Type == "text_delta" && event.Event.Delta.Text != "" && request.TextDelta != nil {
+					request.TextDelta(event.Event.Delta.Text)
 				}
 			case "message_stop":
 				// A call may send several message_delta events, each
@@ -524,10 +599,15 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 				break
 			}
+			if event.StartupFailureReason == "sandbox_required_unavailable" {
+				record(agent.Event{Kind: "error", Status: "sandbox_unavailable"})
+				err = &sandboxUnavailableError{detail: firstLine(strings.Join(event.Errors, " "))}
+				break
+			}
 			if event.IsError || event.Subtype != "success" {
-				// A resume or fork of a session Claude Code cannot find ends
-				// at once with a failed result naming it; on a fork the
-				// result carries a fresh session id that holds nothing.
+				// A resume of a session Claude Code cannot find ends at once
+				// with a failed result naming it, which may carry a fresh
+				// session id that holds nothing.
 				if line, missing := agent.MissingSession(strings.Join(event.Errors, "\n")); missing && request.ResumeSession != "" && event.NumTurns == 0 {
 					record(agent.Event{Kind: "error", Status: "session_not_found"})
 					result.SessionID = ""
@@ -554,9 +634,13 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				err = agent.ProviderFailure("claude code", status, refused)
 				break
 			}
-			result.Document = bytes.TrimSpace(event.Document)
-			if fix {
+			switch kind {
+			case runReview:
+				result.Document = bytes.TrimSpace(event.Document)
+			case runFix:
 				result.Document = []byte(boundedSummary(event.Result))
+			case runConverse:
+				result.Document = []byte(boundedFinal(event.Result))
 			}
 			if len(result.Document) > 8<<20 {
 				err = errors.New("agent document exceeds output size limit")
@@ -616,10 +700,13 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		}
 		return result, fmt.Errorf("claude code failed: %w (%s)", waitErr, stderr.String())
 	}
-	if fix && !completed {
+	if kind == runFix && !completed {
 		return result, errors.New("claude code did not finish the fix")
 	}
-	if !fix && (!completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null"))) {
+	if kind == runConverse && !completed {
+		return result, errors.New("claude code ended without finishing its answer")
+	}
+	if kind == runReview && (!completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null"))) {
 		return result, errors.New("claude code returned no structured document")
 	}
 	return result, nil
@@ -630,6 +717,16 @@ func boundedSummary(text string) string {
 	text = strings.TrimSpace(text)
 	if len(text) > agent.MaxFixSummaryBytes {
 		text = strings.ToValidUTF8(text[:agent.MaxFixSummaryBytes], "") + "…"
+	}
+	return text
+}
+
+// boundedFinal trims a conversation turn's final message to
+// agent.MaxConverseBytes.
+func boundedFinal(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) > agent.MaxConverseBytes {
+		text = strings.ToValidUTF8(text[:agent.MaxConverseBytes], "") + "…"
 	}
 	return text
 }
@@ -685,4 +782,38 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		_, _ = b.Buffer.Write(p[:min(len(p), 65536-b.Len())])
 	}
 	return n, nil
+}
+
+// streamMessage is a stream event's message: an assistant or user message
+// with its content and usage. Some events (a system notice, such as the
+// sandbox's) carry a plain string there instead, which reads as an empty
+// message rather than ending the run.
+type streamMessage struct {
+	ID, Model string
+	Content   []struct {
+		Type, ID, Name string
+		Text, Thinking string
+		ToolUseID      string `json:"tool_use_id"`
+		IsError        bool   `json:"is_error"`
+		Content        json.RawMessage
+		Input          struct {
+			FilePath      string `json:"file_path"`
+			Path          string
+			Pattern       string
+			Command       string
+			Offset, Limit int
+		}
+	}
+	StopReason string `json:"stop_reason"`
+	Usage      claudeUsage
+}
+
+func (m *streamMessage) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		*m = streamMessage{}
+		return nil
+	}
+	type plain streamMessage
+	return json.Unmarshal(data, (*plain)(m))
 }

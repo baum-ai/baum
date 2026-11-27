@@ -3,12 +3,13 @@ package agentcontext
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // tools/list tells a client which tools only read, so it can approve them
-// without asking.
+// without asking, and which change state.
 func TestToolsListAnnotatesEveryTool(t *testing.T) {
 	s := newServer(t)
 	if err := s.RegisterTool(Tool{Name: "propose_thing", Description: "d", Proposes: true,
@@ -32,7 +33,11 @@ func TestToolsListAnnotatesEveryTool(t *testing.T) {
 			t.Errorf("%s: annotations %v", tool.Name, a)
 			continue
 		}
-		if strings.HasPrefix(tool.Name, "propose_") {
+		// A proposing tool records a proposal; add_tile, and a tool that
+		// makes a tile, changes the person's own page at once. Neither only
+		// reads, and neither destroys anything.
+		edits := slices.Contains(addPageTools, tool.Name) || slices.Contains(tileMakingTools, tool.Name)
+		if strings.HasPrefix(tool.Name, "propose_") || edits && tool.Name != "tile_type" && tool.Name != "tile_guide" {
 			if a["readOnlyHint"] != false || a["destructiveHint"] != false {
 				t.Errorf("%s: annotations %v", tool.Name, a)
 			}

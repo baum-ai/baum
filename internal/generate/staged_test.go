@@ -50,10 +50,13 @@ func TestStagedRunPublishesWithDrafts(t *testing.T) {
 	o := stagedOptions(t, f)
 	var mu sync.Mutex
 	var drafts [][]byte
-	o.OnDraft = func(document []byte) {
+	o.OnDraft = func(d generate.Draft) {
 		mu.Lock()
 		defer mu.Unlock()
-		drafts = append(drafts, document)
+		if d.Composition != nil {
+			t.Error("a draft without tiles carries a composition")
+		}
+		drafts = append(drafts, d.Document)
 	}
 	result, err := generate.Run(context.Background(), o)
 	if err != nil {
@@ -137,36 +140,6 @@ func TestStagedRunPublishesWithGaps(t *testing.T) {
 		}
 		f.requireClean(t)
 	})
-}
-
-// A staged run that keeps its session records the details stage's, which a
-// chat forks, and deletes the others; without details it keeps the
-// outline's.
-func TestStagedRunKeepsTheDetailsSession(t *testing.T) {
-	write := claudeHome(t)
-	f := newFixture(t)
-	o, _ := keptOptions(t, f)
-	o.Staged, o.Budgets.MaxCalls = true, 16
-	files := map[string]string{}
-	var mu sync.Mutex
-	f.backend.RunFunc = generatetest.StagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
-		document, err := generatetest.Document(request.Directory, generatetest.TwoSections)
-		id := generatetest.StageSessionID(request)
-		mu.Lock()
-		files[stage] = write(request.Directory, id)
-		mu.Unlock()
-		return agent.Result{Document: generatetest.ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100, SessionID: id}, err, true
-	})
-	result, err := generate.Run(context.Background(), o)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, f.progress.String())
-	}
-	if result.Metadata.Session == nil || result.Metadata.Session.ID != generatetest.SessionID {
-		t.Fatalf("session %+v", result.Metadata.Session)
-	}
-	if !exists(files[agent.StageDetails]) || exists(files[agent.StageOutline]) || exists(files[agent.StageContext]) {
-		t.Errorf("sessions left: details %v, outline %v, context %v", exists(files[agent.StageDetails]), exists(files[agent.StageOutline]), exists(files[agent.StageContext]))
-	}
 }
 
 // A saved version with a failed section is completed: only the details of
@@ -255,10 +228,10 @@ func TestStagedDraftsAreMasked(t *testing.T) {
 		o := stagedOptions(t, f)
 		var mu sync.Mutex
 		var drafts [][]byte
-		o.OnDraft = func(document []byte) {
+		o.OnDraft = func(d generate.Draft) {
 			mu.Lock()
 			defer mu.Unlock()
-			drafts = append(drafts, document)
+			drafts = append(drafts, d.Document)
 		}
 		_, err := generate.Run(context.Background(), o)
 		return drafts, err

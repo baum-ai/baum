@@ -1,0 +1,103 @@
+{
+  "title": "Test health",
+  "data": {
+    "runs": 12,
+    "jobs": 2,
+    "since": "Tuesday",
+    "note": "Two tests started failing after `widget_tags` was added; **one** has flaked since before this pull request.",
+    "tests": [
+      {
+        "name": "TestStoreOpenMigratesLabels",
+        "status": "failing",
+        "failures": 12,
+        "why": "Expects `labels` to survive `Open`, which now drops the column.",
+        "cites": [
+          {
+            "type": "check",
+            "id": "ci",
+            "test": "unit"
+          },
+          {
+            "type": "hunk",
+            "id": "h_1111aaaa2222",
+            "lines": [48, 52]
+          }
+        ]
+      },
+      {
+        "name": "TestWidgetListPaginates",
+        "status": "flaky",
+        "failures": 3,
+        "why": "Times out on a slow runner when the page size is 100; unrelated to this change.",
+        "cites": [
+          {
+            "type": "evidence",
+            "id": "ev_paging"
+          }
+        ]
+      },
+      {
+        "name": "TestTagsRoundTrip",
+        "status": "fixed",
+        "failures": 1,
+        "why": "Failed once before the second commit sorted tags.",
+        "cites": [
+          {
+            "type": "commit",
+            "sha": "a1b2c3d4e5f60718"
+          }
+        ]
+      }
+    ],
+    "by_job": [
+      {
+        "name": "unit",
+        "runs": 6,
+        "failed": 6,
+        "last": "failed"
+      },
+      {
+        "name": "integration",
+        "runs": 6,
+        "failed": 2,
+        "last": "passed"
+      }
+    ]
+  },
+  "refs": {
+    "[\"check\",\"ci\",\"unit\"]": {
+      "status": "ok",
+      "label": "ci / unit",
+      "navigable": true,
+      "name": "unit",
+      "conclusion": "failure",
+      "required": true
+    },
+    "[\"hunk\",\"h_1111aaaa2222\",[48,52]]": {
+      "status": "ok",
+      "label": "store.go:48–52",
+      "navigable": true,
+      "path": "internal/widgets/store.go",
+      "change": "modified",
+      "role": "code",
+      "range": [36, 60],
+      "additions": 2,
+      "deletions": 1
+    },
+    "[\"evidence\",\"ev_paging\"]": {
+      "status": "ok",
+      "label": "Paging test times out on slow runners",
+      "navigable": true,
+      "evidence_kind": "check",
+      "evidence_status": "observed",
+      "claim": "Three of twelve runs hit the 30 s limit."
+    },
+    "[\"commit\",\"a1b2c3d4e5f60718\"]": {
+      "status": "ok",
+      "label": "a1b2c3d",
+      "navigable": true,
+      "sha": "a1b2c3d4e5f60718",
+      "subject": "Sort tags before saving them"
+    }
+  }
+}

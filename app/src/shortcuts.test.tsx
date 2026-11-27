@@ -8,6 +8,7 @@ import {
   INBOX_SHORTCUTS,
   isGitHubKey,
   KeyBar,
+  shortcutMatches,
   listKeys,
   MAC,
   moveFocus,
@@ -184,10 +185,12 @@ it("opens the focused pull request on GitHub with the command key, Shift and G",
   await press("j");
   await press("G", github);
   expect(opened).toHaveLength(1);
-  // Not g or Shift+G alone, nor under a dialog.
-  await press("j");
+  // Not g or Shift+G alone, which go to the first and last row, nor under a
+  // dialog.
   await press("g", { code: "KeyG" });
+  expect(focusedTitle()).toBe("Change 2");
   await press("G", { shiftKey: true, code: "KeyG" });
+  expect(focusedTitle()).not.toBe("Change 2");
   const dialog = document.createElement("dialog");
   dialog.open = true;
   document.body.append(dialog);
@@ -201,7 +204,7 @@ it("opens the focused pull request on GitHub with the command key, Shift and G",
   input.remove();
   expect(opened).toEqual([
     "https://github.com/acme/demo/pull/2",
-    "https://github.com/acme/demo/pull/1",
+    "https://github.com/acme/demo/pull/3",
   ]);
   vi.restoreAllMocks();
 });
@@ -422,6 +425,37 @@ it("makes the row Tab lands on the focused one, but not a row the pointer focuse
   expect(focusedTitle()).not.toBe(first);
 });
 
+it("moves Tab past controls that are laid out but hidden", async () => {
+  await act(async () =>
+    root.render(
+      <>
+        <TabStops />
+        <button type="button" id="before">
+          Before
+        </button>
+        <div style={{ visibility: "hidden" }}>
+          <button type="button" id="hidden">
+            Hidden
+          </button>
+        </div>
+        <button type="button" id="after">
+          After
+        </button>
+      </>,
+    ),
+  );
+  const before = document.getElementById("before")!;
+  const after = document.getElementById("after")!;
+  // jsdom lays nothing out, so give every element a box.
+  const rects = vi
+    .spyOn(HTMLElement.prototype, "getClientRects")
+    .mockReturnValue([{}] as unknown as DOMRectList);
+  before.focus();
+  await press("Tab", {}, before);
+  rects.mockRestore();
+  expect(document.activeElement).toBe(after);
+});
+
 it("takes Escape from a button Tab reached back to the focused row, keeping it", async () => {
   await renderWithTabStops();
   await press("j");
@@ -503,17 +537,18 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Inbox",
     "Pull requests",
     "A pull request or group",
-    "Walkthrough",
     "Sessions",
     "Jobs",
     "Repositories",
     "Timeline",
     "Settings",
+    "Session panel",
     "A session or job transcript",
   ]);
   // jsdom is not a Mac: Ctrl, and Alt with the arrows for back and forward.
   expect(listed("Anywhere")).toEqual([
     "Ctrl+K",
+    "Ctrl+`",
     "Ctrl+.",
     "Ctrl+R",
     "Ctrl+N",
@@ -537,6 +572,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "↓",
     "k",
     "↑",
+    "g",
+    "Home",
+    "G",
+    "End",
     "Enter",
     "Space",
     "m",
@@ -548,6 +587,9 @@ it("lists exactly the keys that work in the sheet", async () => {
     "u",
     "Ctrl+Shift+G",
     "/",
+    "S",
+    "1–8",
+    "Backspace",
     "Shift+J",
     "Shift+K",
     "Ctrl+↓",
@@ -558,6 +600,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "↓",
     "k",
     "↑",
+    "g",
+    "Home",
+    "G",
+    "End",
     "Enter",
     "o",
     "x",
@@ -568,6 +614,9 @@ it("lists exactly the keys that work in the sheet", async () => {
     "r",
     "Ctrl+Shift+G",
     "/",
+    "S",
+    "1–8",
+    "Backspace",
     "Esc",
     "h",
     "←",
@@ -587,6 +636,8 @@ it("lists exactly the keys that work in the sheet", async () => {
     "←",
     "Space",
     "Enter",
+    "Esc",
+    "u",
     "m",
     "f",
     "t",
@@ -594,14 +645,15 @@ it("lists exactly the keys that work in the sheet", async () => {
     "c",
     "v",
     "a",
+    "[",
     "]",
     "h",
     "l",
+    "Ctrl+]",
     "u",
     "Esc",
   ]);
-  expect(listed("Walkthrough")).toEqual(["j", "↓", "k", "↑", "→", "←", "o", "c", "v", "a"]);
-  const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
+  const list = ["j", "↓", "k", "↑", "g", "Home", "G", "End", "Enter", "o", "Esc"];
   expect(listed("Sessions")).toEqual([...list, "p", "r", "f", "Space", "1–9"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
   expect(listed("Repositories")).toEqual([...list, "a", "/"]);
@@ -621,6 +673,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "ArrowDown",
     "k",
     "ArrowUp",
+    "g",
+    "Home",
+    "G",
+    "End",
     "Enter",
     "o",
     "x",
@@ -632,6 +688,67 @@ it("lists exactly the keys that work in the sheet", async () => {
   ]);
 });
 
+it("finds keys in the sheet by what they do or by the key", async () => {
+  expect(shortcutMatches({ keys: ["m"], label: "Merge, where offered" }, "MERGE")).toBe(true);
+  expect(shortcutMatches({ keys: ["m"], label: "Merge, where offered" }, "merge fix")).toBe(false);
+  expect(shortcutMatches({ keys: ["ArrowDown"], label: "Next row" }, "↓")).toBe(true);
+  expect(shortcutMatches({ keys: ["Escape"], label: "Clear the row focus" }, "esc")).toBe(true);
+  await act(async () => root.render(<ShortcutsSheet close={() => {}} />));
+  const sheet = node.querySelector("dialog")!;
+  // It opens on the list, for reading; a typed key moves to the search field.
+  expect(document.activeElement?.id).toBe("shortcuts-list");
+  const input = sheet.querySelector("input")!;
+  const list = document.activeElement as HTMLElement;
+  const keydown = (key: string) => {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    act(() => {
+      document.activeElement!.dispatchEvent(event);
+    });
+    return event;
+  };
+  // `?` (which closes the sheet) and Space (which scrolls it) stay on the list.
+  keydown("?");
+  keydown(" ");
+  expect(document.activeElement).toBe(list);
+  // `/` only moves to the field.
+  expect(keydown("/").defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  list.focus();
+  // Another character goes to the field, not to the page's keys behind it.
+  const seen = vi.fn();
+  window.addEventListener("keydown", seen);
+  keydown("u");
+  expect(seen).not.toHaveBeenCalled();
+  // A key with a modifier still reaches the app's keys.
+  act(() => {
+    list.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+  });
+  window.removeEventListener("keydown", seen);
+  expect(seen).toHaveBeenCalledTimes(1);
+  expect(document.activeElement).toBe(input);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "merge");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(Array.from(sheet.querySelectorAll("h3")).map((h) => h.textContent)).toEqual([
+    "Inbox",
+    "Pull requests",
+    "A pull request or group",
+  ]);
+  expect(
+    Array.from(sheet.querySelectorAll("dd")).every((dd) => /merge/i.test(dd.textContent!)),
+  ).toBe(true);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "zzz");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(sheet.textContent).toContain("Nothing matches “zzz”.");
+  // ↓ from the field returns to the list.
+  input.focus();
+  expect(keydown("ArrowDown").defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(list);
+});
+
 it("lists the keys of where the sheet was opened first", async () => {
   await act(async () => root.render(<ShortcutsSheet current="pulls" close={() => {}} />));
   expect(Array.from(node.querySelectorAll("dialog h3")).map((h) => h.textContent)).toEqual([
@@ -639,12 +756,12 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Anywhere",
     "Inbox",
     "A pull request or group",
-    "Walkthrough",
     "Sessions",
     "Jobs",
     "Repositories",
     "Timeline",
     "Settings",
+    "Session panel",
     "A session or job transcript",
   ]);
 });
@@ -770,6 +887,16 @@ it("moves through a list's rows and opens the focused one", async () => {
   expect(focusedRow()).toBe("c");
   await press("k", {}, document.activeElement!);
   expect(focusedRow()).toBe("b");
+  await press("g", {}, document.activeElement!);
+  expect(focusedRow()).toBe("a");
+  await press("G", { shiftKey: true }, document.activeElement!);
+  expect(focusedRow()).toBe("c");
+  await press("Home", {}, document.activeElement!);
+  expect(focusedRow()).toBe("a");
+  await press("End", {}, document.activeElement!);
+  expect(focusedRow()).toBe("c");
+  await press("k", {}, document.activeElement!);
+  expect(focusedRow()).toBe("b");
   await press("o", {}, document.activeElement!);
   expect(opened).toHaveBeenCalledWith("b");
   // A row that leaves the list takes the focus with it.
@@ -810,6 +937,9 @@ it("moves within a list", () => {
   expect(moveFocus(["a", "b"], "gone", 1)).toBe("a");
   expect(moveFocus(["a", "b"], "b", 1)).toBe("b");
   expect(moveFocus(["a", "b"], "b", -1)).toBe("a");
+  expect(moveFocus(["a", "b", "c"], "b", "first")).toBe("a");
+  expect(moveFocus(["a", "b", "c"], null, "last")).toBe("c");
+  expect(moveFocus([], null, "last")).toBeNull();
 });
 
 it("reads the refresh key with the platform's command key, leaving Shift to the browser", () => {
@@ -951,10 +1081,10 @@ it("keeps a refresh under way when the page draws its button again", async () =>
         </RefreshPage>,
       ),
     );
-  await draw("walkthrough");
+  await draw("first");
   pressRefreshKey();
   await act(async () => {});
-  await draw("full review");
+  await draw("second");
   const button = node.querySelector<HTMLButtonElement>("button")!;
   expect(button.getAttribute("aria-busy")).toBe("true");
   await act(async () => settle());
@@ -1079,6 +1209,7 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "s snooze",
     "e archive",
     "u undo",
+    "S sort",
   ]);
   expect(await bar("settings")).not.toContain(`${command}. actions`);
   // It shows only while Alt is held, and is for the eye alone.

@@ -63,18 +63,21 @@ func TestPullRequestExtraToolsReturnWhatTheRoutesReturn(t *testing.T) {
 				t.Fatalf("commit of the facts: %s", text)
 			}
 			sameJSON(t, "facts commit", json.RawMessage(text), f.route(t, "/api/facts/commit?clone="+f.clone.ID+"&pr=7&head="+pullHead+"&oid="+linked))
-			// The review's file: the fixture's saved document has a context the
-			// file route cannot parse, so it cites no file and the route answers
-			// not found, which the tool reports (a cited file is read in
-			// agentcontext's tests, against a fake route).
-			if code := f.rawRoute("/api/file?clone=" + f.clone.ID + "&pr=8&path=main.go"); code != 404 {
+			// A file the review does not cite: the route answers not found,
+			// which the tool reports (a cited file is read in agentcontext's
+			// tests, against a fake route).
+			if code := f.rawRoute("/api/file?clone=" + f.clone.ID + "&pr=8&path=uncited.go"); code != 404 {
 				t.Fatalf("the route's own answer for an uncited file: %d", code)
 			}
-			if text, failed := f.callTool(t, token, "file", map[string]any{"pr": 8, "path": "main.go"}); !failed || !strings.Contains(text, "cites") {
-				t.Errorf("file: %v %s", failed, text)
+			// A file the review does not cite is read from the clone at the
+			// pull request's head, which the fixture's clone lacks: the clone
+			// says so, as it does for any file at a commit it does not hold.
+			for _, path := range []string{"uncited.go", "never-cited.go"} {
+				if text, failed := f.callTool(t, token, "file", map[string]any{"pr": 8, "path": path}); failed || !strings.Contains(text, `"code":"commits_missing"`) {
+					t.Errorf("file %s: %v %s", path, failed, text)
+				}
 			}
 			for tool, args := range map[string]map[string]any{
-				"file":         {"pr": 8, "path": "never-cited.go"},
 				"commit_patch": {"pr": 8, "oid": linked, "path": "main.go"},
 				"commit":       {"pr": 8, "oid": strings.Repeat("a", 40)},
 			} {
@@ -82,7 +85,7 @@ func TestPullRequestExtraToolsReturnWhatTheRoutesReturn(t *testing.T) {
 					t.Errorf("%s %v: %s", tool, args, text)
 				}
 			}
-			if text, failed := f.callTool(t, token, "file", map[string]any{"path": "main.go"}); !failed || !strings.Contains(text, "no saved review") {
+			if text, failed := f.callTool(t, token, "file", map[string]any{"path": "main.go"}); failed || !strings.Contains(text, `"rev":"`+pullHead+`"`) {
 				t.Errorf("a file of a pull request without a review: %v %s", failed, text)
 			}
 			for tool, route := range map[string]string{
@@ -128,7 +131,6 @@ func TestPullRequestExtraToolsReturnWhatTheRoutesReturn(t *testing.T) {
 		"update_branch_options":  with(nil),
 		"rerun_options":          with(nil),
 		"pending_review":         with(nil),
-		"walkthrough_position":   with(map[string]any{"version": 1}),
 	} {
 		if text, failed := f.callTool(t, action, tool, args); !failed || !strings.Contains(text, "own pull request's repository") {
 			t.Errorf("%s of another repository: %v %s", tool, failed, text)

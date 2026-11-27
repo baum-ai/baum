@@ -41,14 +41,14 @@ func continuing(saved store.Version, assembled assemble.Result) (agent.StagedRun
 }
 
 // drafts starts the goroutine that turns a staged run's drafts into what
-// OnDraft receives, through prepare (masking and completion; nil skips the
+// OnDraft receives, through prepare (masking and completion; false skips the
 // draft), and returns the run's Progress and the function that waits for the
 // last draft. A draft that lands while the previous one is being prepared
 // replaces any still waiting, so the stages never wait on it. Once run, the
 // run's context, is done, or a secret was masked in a closed value (which
 // rejects the run), no draft is delivered.
-func drafts(run context.Context, deliver func([]byte), prepare func([]byte) []byte) (func(agent.StagedProgress), func()) {
-	waiting := make(chan []byte, 1)
+func drafts(run context.Context, deliver func(Draft), prepare func(agent.StagedProgress) (Draft, bool)) (func(agent.StagedProgress), func()) {
+	waiting := make(chan agent.StagedProgress, 1)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -56,9 +56,7 @@ func drafts(run context.Context, deliver func([]byte), prepare func([]byte) []by
 			if run.Err() != nil {
 				continue
 			}
-			if prepared := prepare(draft); prepared != nil && run.Err() == nil {
-				deliver(prepared)
-			}
+			show(run, draft, prepare, deliver)
 		}
 	}()
 	var rejected bool
@@ -69,7 +67,7 @@ func drafts(run context.Context, deliver func([]byte), prepare func([]byte) []by
 		}
 		for {
 			select {
-			case waiting <- p.Document:
+			case waiting <- p:
 				return
 			default:
 				select {
@@ -82,6 +80,15 @@ func drafts(run context.Context, deliver func([]byte), prepare func([]byte) []by
 	return progress, func() {
 		close(waiting)
 		<-done
+	}
+}
+
+// show prepares and delivers one draft. A draft is only shown: a panic
+// preparing or delivering it skips it rather than end the process.
+func show(run context.Context, draft agent.StagedProgress, prepare func(agent.StagedProgress) (Draft, bool), deliver func(Draft)) {
+	defer func() { _ = recover() }()
+	if prepared, ok := prepare(draft); ok && run.Err() == nil {
+		deliver(prepared)
 	}
 }
 

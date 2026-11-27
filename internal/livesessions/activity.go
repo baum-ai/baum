@@ -42,6 +42,9 @@ type Activity struct {
 	// inFlight is whether a tool call has no result yet: a subagent or a
 	// long command reports nothing until it ends.
 	inFlight bool
+	// interruptedAt is when the user last interrupted a turn, zero when
+	// the transcript notes no interruption.
+	interruptedAt time.Time
 }
 
 // Step is one tool call: the tool as the transcript names it, normalised for
@@ -73,6 +76,8 @@ type activityScan struct {
 	open map[string]struct{}
 	// prompt is the latest message the user typed.
 	prompt string
+	// interrupted is when the user last interrupted a turn.
+	interrupted time.Time
 }
 
 // maxOpen bounds the tool calls remembered as running: more than a turn's
@@ -158,7 +163,8 @@ func (a *activityScan) addFile(path string) {
 // nothing was found.
 func (t *Transcripts) activity(a *activityScan, cwd string) *Activity {
 	out := &Activity{FilesTouched: len(a.files), LastMessage: t.Tracker.block(a.message, maxLastMessage),
-		LastPrompt: t.Tracker.oneLine(a.prompt, maxLastPrompt), inFlight: len(a.open) > 0}
+		LastPrompt: t.Tracker.oneLine(a.prompt, maxLastPrompt), inFlight: len(a.open) > 0,
+		interruptedAt: a.interrupted}
 	for _, s := range a.steps {
 		target := s.target
 		if s.path {
@@ -170,7 +176,7 @@ func (t *Transcripts) activity(a *activityScan, cwd string) *Activity {
 		}
 		out.Steps = append(out.Steps, step)
 	}
-	if len(out.Steps) == 0 && out.FilesTouched == 0 && out.LastMessage == "" && out.LastPrompt == "" && !out.inFlight {
+	if len(out.Steps) == 0 && out.FilesTouched == 0 && out.LastMessage == "" && out.LastPrompt == "" && !out.inFlight && out.interruptedAt.IsZero() {
 		return nil
 	}
 	return out
@@ -190,6 +196,24 @@ func settle(s Session, a *Activity) Session {
 	}
 	s.WaitingReason, s.WaitingSince = WaitQuiet, s.LastActivityAt
 	return s
+}
+
+// interruptedWait is when the user turned down, outside baum, the
+// permission or answer s waits for, or false. Claude Code notes the
+// interruption in the transcript but sends no hook event, so without this a
+// question denied in the terminal or the Claude app looks unanswered until
+// the session's next event.
+func interruptedWait(s Session, a *Activity) (time.Time, bool) {
+	if a == nil || a.interruptedAt.IsZero() || s.State == StateEnded {
+		return time.Time{}, false
+	}
+	if s.WaitingReason != WaitPermission && s.WaitingReason != WaitInput {
+		return time.Time{}, false
+	}
+	if a.interruptedAt.Before(s.WaitingSince) {
+		return time.Time{}, false
+	}
+	return a.interruptedAt, true
 }
 
 // relativeTo is path relative to dir when it lies inside it, else as given.

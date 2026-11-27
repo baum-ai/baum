@@ -41,7 +41,11 @@ export function Table<T>({
   empty,
   caption,
   rowClassName,
+  framed = true,
 }: {
+  /** False draws the table without its own border and card: inside
+   *  something that already sets it apart, such as a review section's body. */
+  framed?: boolean;
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
@@ -73,7 +77,12 @@ export function Table<T>({
     // containing block: outside this scroll container, so it escapes the clip
     // and widens the whole document instead. On a phone that is a page which
     // scrolls sideways for a header nobody can see.
-    <div className="relative overflow-x-auto rounded-lg border border-default bg-surface-card">
+    <div
+      className={cn(
+        "relative overflow-x-auto",
+        framed && "rounded-lg border border-default bg-surface-card",
+      )}
+    >
       <table
         className={cn("w-full border-collapse text-base", fixed && "table-fixed")}
         style={{ minWidth }}
@@ -90,6 +99,7 @@ export function Table<T>({
                 aria-sort={column.sort?.direction ?? undefined}
                 className={cn(
                   spacing.head,
+                  !framed && "first:pl-0",
                   "font-medium",
                   column.align === "right" && "text-right",
                   column.className,
@@ -118,6 +128,7 @@ export function Table<T>({
                   key={column.key}
                   className={cn(
                     spacing.cell,
+                    !framed && "first:pl-0",
                     "align-top",
                     column.align === "right" && "text-right tabular-nums",
                     column.className,

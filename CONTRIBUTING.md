@@ -25,9 +25,9 @@ UI or running the tests that read the built apps, which skip without it; a
 binary built without it says so in place of each app. Because release commits
 sit beside `main` rather than on it, `go install …@main` (or any untagged
 commit) gets such a binary, and its pseudo-version derives from an older tag
-than the latest release; install a tagged version (`@latest`). The precompiled tile
-validators are committed, and `just viewer-fresh` fails when they differ from a
-fresh build, as CI does. `just --list` shows the other recipes, including
+than the latest release; install a tagged version (`@latest`). On a release commit,
+`just viewer-fresh` fails when the built apps differ from a fresh build, as CI
+does. `just --list` shows the other recipes, including
 `release-snapshot` (a local goreleaser build for every target).
 
 `CGO_ENABLED=0` must keep working; release binaries are built that way for

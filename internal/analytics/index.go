@@ -33,7 +33,7 @@ const (
 	// sessions while the daemon runs; a session ending also starts a look.
 	RefreshInterval = 5 * time.Minute
 	// indexVersion changes whenever Entry's meaning does, which rebuilds it.
-	indexVersion = 3
+	indexVersion = 4
 	// saveEvery is how many sessions are read between saves of a first
 	// build, so a restart resumes rather than starts over. A save writes only
 	// the rows of the sessions read since the last one.

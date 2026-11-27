@@ -10,4 +10,65 @@ build:
 e2e:
     {{ heavy }} pnpm build
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
-    {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:development && pnpm test:desktop'
+    {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:custom-tiles && pnpm test:development && pnpm test:desktop'
+
+# Screenshot one page of the app against the browser fixture, light and dark,
+# without writing a spec (e2e/shot.spec.ts): build, rebuild the fixture
+# (it embeds the build), then take the pictures. route is the app route after
+# the launch URL, such as "?page=settings&section=reviews"; selector, when
+# given, narrows the picture to that element. Pictures land in
+# oss/app/screenshots/<name>-light.png and -dark.png, which test runs leave
+# alone and git ignores.
+shot route selector="" name="shot":
+    {{ heavy }} pnpm build
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/app -e SHOT_ROUTE={{ quote(route) }} -e SHOT_SELECTOR={{ quote(selector) }} -e SHOT_NAME={{ quote(name) }} -e SHOT_WAIT -e SHOT_WIDTH -e SHOT_HEIGHT ui-test pnpm exec playwright test e2e/shot.spec.ts
+
+# Pictures of the custom tile kit's demo tiles (e2e/tile-kit) in sandboxed
+# frames under the frame route's headers, glance and detail, light and dark,
+# written to test-results/tile-kit. The Go kit composes the frames first.
+tile-kit-screens:
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --rm --no-deps -e BAUM_KIT_COMPOSE_SRC=/oss/app/e2e/tile-kit -e BAUM_KIT_COMPOSE_OUT=/oss/app/test-results/tile-kit/frames oss-test go test ./tiles/kit -run '^TestComposeFiles$' -count=1 -v
+    {{ heavy }} sh -ec 'TILE_KIT_SCREENSHOTS=1 pnpm exec playwright test -c playwright.tile-kit.config.ts'
+
+# Check tile type directories (the library's layout: type.json, fill.md,
+# schema.json, tile.html, samples/) as the built-in library's are checked,
+# then draw every sample and the schema's edge samples in sandboxed frames:
+# glances at each declared size and on a phone, details in the pane and on a
+# phone, light and dark. dirs are relative to oss/, comma separated; the
+# default is the library. Pictures, a glance contact sheet per type and
+# report.json land in test-results/tile-types. TILE_TYPE_SAMPLES (comma
+# separated sample names) narrows the pictures. See tiles/kit/GUIDE.md.
+tile-type-screens dirs="tiles/library/schema_change,tiles/library/api_change":
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --rm --no-deps -e BAUM_TILE_DIRS="{{ dirs }}" -e BAUM_TILE_OUT=/oss/app/test-results/tile-types oss-test sh -ec 'rm -rf app/test-results/tile-types && go test ./tiles/library -run "^TestRenderDirs$" -count=1 -v'
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/app -e TILE_TYPE_SAMPLES ui-test sh -ec 'TILE_TYPE_SCREENSHOTS=1 pnpm exec playwright test -c playwright.tile-types.config.ts'
+
+# Serves http://127.0.0.1:${DIAGRAM_GALLERY_PORT:-5181}; Ctrl+C stops it. It
+# reads replay runs, gallery-data/*.json and, given stores (a directory such
+# as a folder of clones), the desktop app's review stores under it
+# (<clone>/.git/baum/reviews/versions.sqlite), all read-only.
+# Native diagram gallery (flow, columns, sequence, table) with hot reload.
+[no-cd]
+[positional-arguments]
+diagram-gallery stores="":
+    #!/usr/bin/env sh
+    set -eu
+    stores="${1:-}"
+    port="${DIAGRAM_GALLERY_PORT:-5181}"
+    runs="${BAUM_REPLAY_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/baum/replay-runs}"
+    set -- -e "DIAGRAM_GALLERY_PORT=$port" -e DIAGRAM_GALLERY_HOST=0.0.0.0 -e "DIAGRAM_GALLERY_POLLING=${DIAGRAM_GALLERY_POLLING:-0}"
+    # Created as the user, so runs made while the gallery is open appear in it.
+    mkdir -p "$runs"
+    runs="$(cd "$runs" && pwd)"
+    set -- "$@" -v "$runs:/data/replay-runs:ro" -e DIAGRAM_GALLERY_RUNS=/data/replay-runs
+    if [ -n "$stores" ]; then
+        if [ ! -d "$stores" ]; then
+            echo "diagram-gallery: $stores is not a directory" >&2
+            exit 1
+        fi
+        stores="$(cd "$stores" && pwd)"
+        set -- "$@" -v "$stores:/data/stores:ro" -e DIAGRAM_GALLERY_STORES=/data/stores
+    fi
+    echo "diagram gallery: http://127.0.0.1:$port"
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/app \
+        -p "127.0.0.1:$port:$port" "$@" ui-test pnpm gallery

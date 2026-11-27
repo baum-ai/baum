@@ -8,6 +8,10 @@
 // table current in the writer's own transaction; see Snapshot. Others renew
 // each version's document revision with every write; see Revision.
 //
+// A version may carry a composition, how its tiles are laid out, in a nullable
+// column beside its document (see composition.go); a store without the column
+// reads as having none.
+//
 // A stored document holds no hunk evidence: Put removes every indexed hunk's
 // patch text and GitHub fragment (review.StripHunkEvidence), which the clone
 // and the hunk's path and range give back when the document is read.
@@ -35,6 +39,7 @@ import (
 	"github.com/baum-ai/baum/internal/sqlitepool"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/tiles"
 )
 
 var ErrNotFound = errors.New("no stored review version; generate a review in the baum desktop app first")
@@ -86,14 +91,17 @@ type Metadata struct {
 	Calls           int           `json:"calls"`
 	Tokens          int           `json:"tokens"`
 	RecordedCostUSD *float64      `json:"recorded_cost_usd"`
-	// Session is the local agent session that produced the version, kept with
-	// its run directory so a chat can continue from it. Absent for hosted and
-	// other runs, and in versions stored before it existed.
+	// Session is the local agent session that produced the version, which
+	// earlier versions of baum kept with its run directory so a question could
+	// continue from it. Only those versions wrote it; it stays so their
+	// metadata still decodes and is stored again unchanged. Nothing reads it
+	// to resume a session, and the daemon expires the kept directories.
 	Session *ReviewSession `json:"session,omitempty"`
 }
 
-// ReviewSession names a kept Claude Code session or Codex thread: resuming it
-// has to run in Directory, the cwd the session was recorded under.
+// ReviewSession names a Claude Code session or Codex thread an earlier
+// version kept (Metadata.Session), in Directory, the cwd it was recorded
+// under.
 type ReviewSession struct {
 	Backend   string `json:"backend"`
 	ID        string `json:"id"`
@@ -104,6 +112,17 @@ type Version struct {
 	Attachments []Attachment    `json:"-"`
 	Metadata    Metadata        `json:"metadata"`
 	Document    json.RawMessage `json:"document"`
+	// Composition is the version's stored baum.composition/1 (see
+	// composition.go), as written, or empty when it has none: the column is
+	// NULL or the store lacks it. Put stores only a normalised one; a reader
+	// parses it with tiles.ParseComposition and ignores one it cannot use.
+	// RefreshCurrent and CompleteCurrent leave it as it is.
+	Composition json.RawMessage `json:"-"`
+	// CompositionGenerator is, on a version put, where the composition came
+	// from (validated by tiles.Composition.SetGenerator). It is the caller's
+	// to give and is never read from the composition's body. Not set on read:
+	// it is in the stored composition.
+	CompositionGenerator *tiles.Generator `json:"-"`
 	// Revision names Document's stored bytes (see Store.Revision), read with
 	// them: a nonzero revision equal to one read before means the same bytes.
 	// 0 when the store cannot vouch for one, and on versions not yet stored.
@@ -200,7 +219,7 @@ func openRoot(root string, write bool) (*Store, error) {
 		return nil, err
 	}
 	defer release()
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, composition TEXT, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
 	if err == nil {
 		err = setupSummaries(context.Background(), db)
 	}
@@ -208,7 +227,14 @@ func openRoot(root string, write bool) (*Store, error) {
 		err = setupRevisions(context.Background(), db)
 	}
 	if err == nil {
+		// Best effort, as the attachment move below is: a store that cannot
+		// be altered now reads and writes without compositions, and the next
+		// writable open adds the column.
+		_ = setupComposition(context.Background(), db)
 		_, err = db.Exec(chatSchema)
+	}
+	if err == nil {
+		_, err = db.Exec(keptSchema)
 	}
 	if err == nil {
 		// A move that cannot finish now (a full disk, a writer holding the lock
@@ -360,16 +386,20 @@ func (s *Store) load(ctx context.Context, k Key, n int) (Version, error) {
 		return Version{}, err
 	}
 	column, join := revisionSelect(current)
-	query := `SELECT v.metadata,v.document,` + column + ` FROM versions v` + join + ` WHERE v.repository=? AND v.pr=?`
+	hasComp, err := hasComposition(ctx, tx)
+	if err != nil {
+		return Version{}, err
+	}
+	query := `SELECT v.metadata,v.document,` + compositionSelect(hasComp) + `,` + column + ` FROM versions v` + join + ` WHERE v.repository=? AND v.pr=?`
 	args := []any{k.repository(), k.Number}
 	if n > 0 {
 		query += ` AND v.version=?`
 		args = append(args, n)
 	}
 	query += ` ORDER BY v.version DESC LIMIT 1`
-	var m, doc []byte
+	var m, doc, composition []byte
 	var revision int64
-	err = tx.QueryRowContext(ctx, query, args...).Scan(&m, &doc, &revision)
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&m, &doc, &composition, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Version{}, ErrNotFound
 	}
@@ -377,6 +407,9 @@ func (s *Store) load(ctx context.Context, k Key, n int) (Version, error) {
 		return Version{}, err
 	}
 	v := Version{Document: doc, Revision: revision}
+	if len(composition) > 0 {
+		v.Composition = composition
+	}
 	err = json.Unmarshal(m, &v.Metadata)
 	return v, err
 }
@@ -486,6 +519,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if err != nil {
 		return err
 	}
+	composition := storableComposition(document, v.Composition, v.CompositionGenerator)
 	metadata, err := json.Marshal(v.Metadata)
 	if err != nil {
 		return err
@@ -495,6 +529,33 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 		return err
 	}
 	defer release()
+	// Asked before the transaction, whose first statement must be the write.
+	hasComp, err := hasComposition(ctx, db)
+	if err != nil {
+		return err
+	}
+	if !hasComp && composition != nil {
+		// A store opened before the column was added, or whose migration was
+		// refused then: try again, so a generated layout is not lost to a
+		// migration that can happen now.
+		_ = setupComposition(ctx, db)
+		if hasComp, err = hasComposition(ctx, db); err != nil {
+			return err
+		}
+	}
+	colSQL, values := ``, ``
+	args := []any{k.repository(), k.Number, v.Metadata.Version, metadata, document}
+	if hasComp {
+		colSQL, values = `,`+compositionColumn, `,?`
+		var stored any
+		if composition != nil {
+			stored = string(composition)
+		}
+		args = append(args, stored)
+	} else if composition != nil {
+		workstats.Inc("store.compositions_dropped")
+	}
+	args = append(args, k.repository(), k.Number, expected)
 	// The first statement acquires SQLite's writer lock and checks history in
 	// that same statement; there is no deferred read-to-write upgrade race.
 	tx, err := db.BeginTx(ctx, nil)
@@ -502,7 +563,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`, k.repository(), k.Number, v.Metadata.Version, metadata, document, k.repository(), k.Number, expected)
+	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document`+colSQL+`) SELECT ?,?,?,?,?`+values+` WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`, args...)
 	if err != nil {
 		return err
 	}
@@ -513,7 +574,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if n != 1 {
 		return ErrConflict
 	}
-	if err := saveAttachments(ctx, tx, k, v); err != nil {
+	if err := saveAttachments(ctx, tx, s.root, k, v); err != nil {
 		return err
 	}
 	return tx.Commit()

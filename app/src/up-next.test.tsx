@@ -210,6 +210,7 @@ it("orders what waits on the person and sets apart what waits on others", () => 
     "baum's review is ready, risk 4 of 5. 1 agent session is still working on its branch, so reviewing now catches problems before more commits pile up.",
   );
   expect(review!.working).toEqual([working]);
+  expect(review!.waitingSessions).toEqual([]);
   expect(review!.minutes).toBe(12);
   // Its group already says a merge is ready.
   expect(merge!.why).toBe("");
@@ -319,6 +320,21 @@ afterEach(async () => {
 });
 // The agent sessions the daemon says are running.
 let liveList: LiveSession[] = [];
+it("pages a saved inbox at 30 items and selects a row on the next page", async () => {
+  entries = Array.from({ length: 31 }, (_, i) => requested(i + 1));
+  await act(async () => root.render(<App />));
+  const rows = () => node.querySelectorAll(".upnext-list-body [data-row]");
+  const pager = () => node.querySelector('[aria-label="Inbox pagination"]')!;
+  expect(rows()).toHaveLength(30);
+  expect(pager().textContent).toContain("1–30 of 31");
+  await act(async () => pager().querySelectorAll("button")[1]!.click());
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]!.getAttribute("data-focused")).toBe("true");
+  expect(pager().textContent).toContain("31–31 of 31");
+  await act(async () => pager().querySelector("button")!.click());
+  expect(rows()).toHaveLength(30);
+});
+
 const render = async () => {
   await act(async () => root.unmount());
   root = createRoot(node);
@@ -361,10 +377,11 @@ it("distinguishes a GitHub blocker from a required review without requiring appr
   )!;
   expect(github.textContent).toContain("Merge blocked by GitHub");
   expect(github.textContent).toContain("GitHub has not supplied the reason.");
-  expect(
-    panel().querySelector('.upnext-actions a[href="https://github.com/acme/demo/pull/1130"]')
-      ?.textContent,
-  ).toBe("Open on GitHub");
+  // GitHub can still merge it, so Merge stays the person's call; the panel has
+  // no Open on GitHub button.
+  const actions = Array.from(panel().querySelectorAll(".upnext-actions a, .upnext-actions button"));
+  expect(actions.some((action) => action.textContent === "Open on GitHub")).toBe(false);
+  expect(actions.some((action) => action.textContent?.startsWith("Merge"))).toBe(true);
 });
 
 it.each<Overrides>([
@@ -383,6 +400,66 @@ it.each<Overrides>([
   expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
 });
 
+it("puts the review's dot under each row's title, a group's too", async () => {
+  entries = [
+    requested(1, { status: "current", version_count: 1 }),
+    requested(2, { status: "outdated", version_count: 1 }),
+    requested(3),
+    requested(4),
+    requested(5),
+    // Current, but over a list too old to trust: the panel says it covers an
+    // earlier commit, and so does the dot.
+    requested(6, { status: "current", version_count: 1, stale: true }),
+    requested(7, { status: "failed", version_count: 1, failure_reason: "interrupted" }),
+  ];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).endsWith("api/jobs")
+      ? // The group's review is running.
+        Response.json({
+          jobs: [{ id: "gj", repository: "acme/demo", pr: 0, group: "g1", state: "running" }],
+        })
+      : String(args[0]).endsWith("api/groups")
+        ? Response.json({
+            groups: [
+              {
+                id: "g1",
+                repository: "acme/demo",
+                name: "Auth rework",
+                members: [4, 5],
+                created_at: "",
+                updated_at: "",
+                version_count: 1,
+                latest: null,
+                risk_score: null,
+                reviewed: [],
+                outdated: true,
+              },
+            ],
+          })
+        : original(...args),
+  );
+  await render();
+  const dot = (title: string) => row(title).querySelector(".review-dot")!;
+  // The row is one button: its name reads the title first, then the dot.
+  const label = (title: string) => row(title).querySelector(":scope > .sr-only")?.textContent;
+  expect(label("Change 1")).toBe(", Review ready");
+  expect(label("Change 2")).toBe(", Review outdated");
+  expect(label("Change 3")).toBeUndefined();
+  // Without a review there is no dot, and no empty slot either.
+  expect(row("Change 3").querySelector(".review-dot")).toBeNull();
+  expect(label("Change 6")).toBe(", Review outdated");
+  expect(label("Change 7")).toBe(", Review failed");
+  expect(dot("Change 7").querySelector("[popover]")?.textContent).toBe(
+    "Review failed. The review could not be generated. Reason: interrupted.",
+  );
+  expect(label("Auth rework")).toBe(", Generating review");
+  expect(dot("Change 1").querySelector(".sr-only")).toBeNull();
+  // The dot leads the line under the title.
+  expect(dot("Change 1").parentElement?.className).toBe("upnext-row-line");
+  expect(dot("Auth rework").parentElement?.className).toBe("upnext-row-line");
+});
+
 const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
 // A heading's name and count, as "Ready to merge · 2".
@@ -399,7 +476,7 @@ const row = (title: string) =>
     r.textContent?.includes(title),
   )!;
 const snoozeFor = (label: string) =>
-  Array.from(node.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((item) =>
+  Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((item) =>
     item.textContent?.includes(label),
   )!;
 const press = (key: string) =>
@@ -491,7 +568,7 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
-// A right click on a row opens its menu, without picking the row.
+// A right click on a row picks it and opens its menu.
 const rightClick = (title: string) =>
   act(async () => {
     row(title).dispatchEvent(
@@ -516,9 +593,9 @@ it("offers a pull request's actions on a right click on its row", async () => {
     "Actions for acme/demo #3",
   );
   expect(choices()).toEqual(expect.arrayContaining(["Open", "Merge…", "Snooze…"]));
-  expect(choices()).not.toContain("Update the branch…");
-  // The panel stays on what it showed.
-  expect(shown()).toBe("Change 1");
+  expect(choices()).not.toContain("Update branch…");
+  // The panel follows the row, so the menu and the detail agree.
+  expect(shown()).toBe("Change 3");
   await choose("Merge…");
   expect(node.querySelector("dialog")).not.toBeNull();
 });
@@ -569,6 +646,41 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   await act(async () => choices[0]!.click());
   expect(list()).toContain("Change 3");
   expect(shown()).toBe("Change 3");
+});
+
+it.each(["archive", "snooze"])(
+  "restores the page and selection on undo after %s",
+  async (action) => {
+    entries = Array.from({ length: 31 }, (_, i) => requested(i + 1));
+    await render();
+    const pager = () => node.querySelector('[aria-label="Inbox pagination"]');
+    await act(async () => pager()!.querySelectorAll("button")[1]!.click());
+    const restored = shown();
+    if (action === "archive") {
+      await press("e");
+    } else {
+      await press("s");
+      await press("1");
+    }
+    expect(pager()).toBeNull();
+    expect(shown()).not.toBe(restored);
+    await press("u");
+    expect(pager()!.textContent).toContain("31–31 of 31");
+    expect(shown()).toBe(restored);
+  },
+);
+
+it("keeps the inbox summary on pages with only waiting pull requests", async () => {
+  entries = [
+    ...Array.from({ length: 30 }, (_, i) => requested(i + 1)),
+    mine(31, { checks: "running" }),
+  ];
+  await render();
+  await act(async () =>
+    node.querySelectorAll<HTMLButtonElement>('[aria-label="Inbox pagination"] button')[1]!.click(),
+  );
+  expect(list()).toEqual(["Change 31"]);
+  expect(node.querySelector(".upnext-list-summary")!.textContent).toContain("30 things for you");
 });
 
 it("archives with e, undoes with u, and never shows it again, not even as done", async () => {
@@ -647,7 +759,7 @@ it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
   await render();
   button("Snooze").focus();
   await act(async () => button("Snooze").click());
-  const choices = [...node.querySelectorAll<HTMLElement>('.upnext-menu [role="menuitem"]')];
+  const choices = [...document.querySelectorAll<HTMLElement>('.upnext-menu [role="menuitem"]')];
   expect(document.activeElement).toBe(choices[0]);
   for (const [key, ctrlKey, index] of [
     ["ArrowDown", false, 1],
@@ -671,7 +783,7 @@ it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
   });
-  expect(node.querySelector(".upnext-menu")).toBeNull();
+  expect(document.querySelector(".upnext-menu")).toBeNull();
   expect(document.activeElement).toBe(button("Snooze"));
 });
 
@@ -753,6 +865,8 @@ it("says in the card why the daemon did not start the review, and on the PR page
   };
   vi.stubGlobal("ResizeObserver", observer);
   vi.stubGlobal("IntersectionObserver", observer);
+  // ...and brings a new place's pane into view, which jsdom cannot.
+  Element.prototype.scrollIntoView ??= () => {};
   entries = [requested(7)];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
@@ -774,6 +888,7 @@ it("says in the card why the daemon did not start the review, and on the PR page
   await settle();
   expect(node.querySelector("article.upnext-panel")).toBeNull();
   expect(node.textContent).toContain("the queue is full");
+  expect(node.textContent).not.toContain("could not be rendered");
 });
 
 it("lists what baum will do instead of the card when it needs a clone", async () => {
@@ -1495,7 +1610,9 @@ it("places a stack by its first shown open member and opens to its members", asy
   await press("j");
   await press("j");
   expect(shown()).toBe("Payments stack");
-  expect(panel().textContent).toContain("There is no group review yet");
+  // A stack's panel is its overview: no combined review to ask for.
+  expect(panel().textContent).not.toContain("group review");
+  expect(panel().textContent).toContain("Open the stack");
   expect(
     Array.from(panel().querySelectorAll('[aria-label="Pull requests"] li')).map(
       (li) => li.textContent,
@@ -1625,6 +1742,60 @@ it.each(["1 hour", "Until it changes"])(
   },
 );
 
+it("snoozes a whole stack from its panel or its row's menu, with one Undo", async () => {
+  entries = [requested(1), mine(2, { checks: "failing" }), ready(3)];
+  const original = globalThis.fetch;
+  vi.stubGlobal("fetch", (...args: Parameters<typeof fetch>) =>
+    String(args[0]).endsWith("api/groups")
+      ? Response.json({
+          groups: [
+            {
+              id: "g1",
+              repository: "acme/demo",
+              name: "Payments stack",
+              members: [2, 3],
+              stack: true,
+              created_at: "",
+              updated_at: "",
+              version_count: 0,
+              latest: null,
+              risk_score: null,
+              reviewed: [],
+              outdated: false,
+            },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  expect(list()).toEqual(["Change 1", "Payments stack"]);
+  await act(async () => row("Payments stack").click());
+  expect(shown()).toBe("Payments stack");
+  await act(async () => button("Snooze").click());
+  await act(async () => snoozeFor("Tomorrow morning").click());
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(
+    /^Snoozed Payments stack \(2 pull requests\) until tomorrow /,
+  );
+  expect(list()).toEqual(["Change 1"]);
+  expect(groups()).toContain("Snoozed · 2");
+  // One Undo brings back every member, on the stack.
+  await press("u");
+  expect(list()).toEqual(["Change 1", "Payments stack"]);
+  expect(shown()).toBe("Payments stack");
+  // From its row's menu, Snooze… picks the stack and opens the same choices.
+  await act(async () => row("Change 1").click());
+  await rightClick("Payments stack");
+  expect(choices()).toContain("Snooze…");
+  await choose("Snooze…");
+  expect(shown()).toBe("Payments stack");
+  await act(async () => snoozeFor("Until it changes").click());
+  expect(list()).toEqual(["Change 1"]);
+  // A reload keeps both snoozed.
+  await render();
+  expect(list()).toEqual(["Change 1"]);
+  expect(groups()).toContain("Snoozed · 2");
+});
+
 it("links the agent sessions working on the pull request to their cards on Sessions, opened", async () => {
   liveList = [
     {
@@ -1651,6 +1822,35 @@ it("links the agent sessions working on the pull request to their cards on Sessi
   expect(new URLSearchParams(location.search).get("session")).toBeNull();
   expect(node.querySelector('[data-row-id="claude-code:s1"]')).not.toBeNull();
   expect(node.querySelector(".local-feed-peek-row")).not.toBeNull();
+});
+
+it("links the agent sessions waiting for the person on the pull request apart from working ones, not a panel's", async () => {
+  const session = (session_id: string, state: "running" | "idle") => ({
+    agent: "claude-code",
+    session_id,
+    state,
+    started_at: "",
+    last_activity_at: "",
+    last_event: state === "running" ? ("tool" as const) : ("stop" as const),
+    repository: "acme/demo",
+    pr: 1,
+  });
+  liveList = [
+    session("s1", "running"),
+    session("s2", "idle"),
+    session("s3", "idle"),
+    // A session panel's finished turn waits on the panel, not on the person.
+    { ...session("s4", "idle"), origin: "panel" as const, conversation: "c4" },
+  ];
+  await render();
+  expect(shown()).toBe("Change 1");
+  const lines = [...panel().querySelectorAll(".upnext-agents")].map((p) => p.textContent);
+  expect(lines).toEqual([
+    "1 agent session working on its branch right now",
+    "2 agent sessions waiting for you on its branch: Claude Code · Claude Code",
+  ]);
+  const links = panel().querySelectorAll<HTMLAnchorElement>(".upnext-agents a");
+  expect(links[2]!.getAttribute("href")).toBe("/s/test-ns/?page=sessions&peek=claude-code%3As3");
 });
 
 // --- Everyone else's pull requests -------------------------------------------

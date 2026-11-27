@@ -80,7 +80,7 @@ var allowedTools = map[string]bool{
 // output schema appended, since the CLI cannot enforce one.
 func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
 	result.Model, result.ModelSource = c.Model, modelSource(c.Model)
-	if request.WantsSession() {
+	if request.KeepsSession() {
 		return result, errors.New("cursor-agent: session options are not supported")
 	}
 	if request.MaxCalls < 0 {

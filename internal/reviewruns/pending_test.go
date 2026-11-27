@@ -4,8 +4,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/baum-ai/baum/internal/store"
 )
 
 func newRun(t *testing.T) (string, string) {
@@ -62,24 +60,6 @@ func TestAPendingRecordFallsBackToAScan(t *testing.T) {
 	}
 	if exists(orphan) {
 		t.Error("a session of a call that never reported its id stayed")
-	}
-}
-
-func TestPruneListsASharedDirectoryOnce(t *testing.T) {
-	h := fakeHomes(t)
-	root, run := newRun(t)
-	recorded := h.codexSessionOn(t, run, "h1", time.Now())
-	stranger := h.codexSessionOn(t, run, "h2", time.Now())
-	if err := Record(root, run, true, "h1"); err != nil {
-		t.Fatal(err)
-	}
-	versions := []store.Metadata{session("/x"), session("/y"), session(run), session(run)}
-	if err := PruneVersions(root, versions); err != nil {
-		t.Fatal(err)
-	}
-	// A second removal would find no record and scan.
-	if exists(recorded) || !exists(stranger) {
-		t.Errorf("recorded stayed %v, unrecorded stayed %v", exists(recorded), exists(stranger))
 	}
 }
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { type CommitListState, type CommitLoaders, CommitList } from "./commit-list";
+import { CommitList, type CommitListState, type CommitLoaders } from "./commit-list";
 import { commitLabel, sessionLabel } from "./list-labels";
 import type { ReviewListSlot } from "./review-viewer";
 import {
@@ -23,6 +23,8 @@ export function sessionsSlot(
     renderSession?: (session: SessionView, focusTurn?: number) => ReactNode;
     hosted?: HostSessionView[];
     empty?: ReactNode;
+    /** Opens a session on the host's own page instead of in the pane. */
+    open?: ReviewListSlot["open"];
   } = {},
 ): ReviewListSlot {
   const hosted = options.hosted ?? [];
@@ -46,6 +48,7 @@ export function sessionsSlot(
           }
         : { status: state.status },
     indicator: groupIndicator,
+    open: options.open,
     renderPane: (selected, actions, focusTurn) => (
       <SessionList
         state={state}

@@ -74,7 +74,6 @@ export type Anchor =
   | { type: "attachment"; url?: string; id?: string };
 
 export type Risk = {
-  tiles?: unknown[];
   id: string;
   tier: RiskTier;
   category: string;
@@ -256,7 +255,6 @@ export type RiskScore = {
 export type SectionDetailsState = "pending" | "failed";
 
 export type Section = {
-  tiles?: unknown[];
   id: string;
   title: string;
   kind: "logical" | "mechanical";
@@ -733,6 +731,16 @@ export function evidenceTone(status: EvidenceStatus): Tone {
       return "neutral";
   }
 }
+
+/** The word for each conclusion, matching the summary line's passed/running/failed. */
+export const CHECK_CONCLUSION_WORDS: Record<string, string> = {
+  success: "Passed",
+  failure: "Failed",
+  cancelled: "Cancelled",
+  pending: "Running",
+  skipped: "Skipped",
+  neutral: "Neutral",
+};
 
 /** How a check's conclusion reads where it is listed or named in prose. */
 export const CHECK_CONCLUSION_TONES: Record<string, Tone> = {

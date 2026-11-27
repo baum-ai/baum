@@ -46,12 +46,12 @@ test *args:
 lint:
     golangci-lint run ./...
 
-# Build the viewer bundle, the local app and the precompiled tile validators
+# Build the viewer bundle and the local app
 viewer-build:
     sh scripts/viewer-build.sh
 
-# Build, then fail when the committed validators (and, on a release commit,
-# the built apps) differ from the fresh build
+# Build, then fail when a release commit's built apps differ from the fresh
+# build
 viewer-fresh:
     sh scripts/viewer-fresh.sh
 
@@ -70,9 +70,9 @@ clean-install:
     bash scripts/clean-install.sh
 
 # Regenerate third_party/go.txt (the Go modules' licences) and assemble
-# THIRD_PARTY_NOTICES.txt from it and the npm and Rust parts. The npm and Rust
-# parts need their own containers: from the monorepo root run
-# "just third-party-notices" instead.
+# THIRD_PARTY_NOTICES.txt from it and the npm and Electron parts, which need
+# their own containers: from the monorepo root run "just third-party-notices"
+# instead.
 notices-go:
     sh scripts/third-party-notices.sh go
     sh scripts/third-party-notices.sh assemble

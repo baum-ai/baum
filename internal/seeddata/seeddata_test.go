@@ -1,0 +1,273 @@
+package seeddata
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/inboxes"
+	"github.com/baum-ai/baum/internal/prfilter"
+	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewindex"
+)
+
+// small is a dataset small enough to write twice in a test.
+func small(seed int64, home string) Options {
+	return Options{Seed: seed, Home: home, Repositories: 4, PullRequests: 6, LargeDiffLines: 600, Inboxes: 12,
+		ClaudeSessions: 2, CodexSessions: 1, LongTranscriptTurns: 40, DraftComments: 2}
+}
+
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+}
+
+// generate writes o into a fresh home at the same path every time, so the
+// paths written into the data match.
+func generate(t *testing.T, o Options) Result {
+	t.Helper()
+	if err := os.RemoveAll(o.Home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(o.Home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Generate(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestSameSeedSameData(t *testing.T) {
+	requireGit(t)
+	home := filepath.Join(t.TempDir(), "home")
+	first := generate(t, small(7, home))
+	transcripts := readTranscripts(t, home)
+	second := generate(t, small(7, home))
+	if first.Digest != second.Digest || !slices.Equal(first.Manifest, second.Manifest) {
+		for i := range min(len(first.Manifest), len(second.Manifest)) {
+			if first.Manifest[i] != second.Manifest[i] {
+				t.Fatalf("manifests differ at %d:\n%s\n%s", i, first.Manifest[i], second.Manifest[i])
+			}
+		}
+		t.Fatalf("digests differ: %s %s", first.Digest, second.Digest)
+	}
+	again := readTranscripts(t, home)
+	if len(again) != len(transcripts) || len(again) != 3 {
+		t.Fatalf("transcripts: %d then %d, want 3", len(transcripts), len(again))
+	}
+	for path, text := range transcripts {
+		if again[path] != text {
+			t.Fatalf("%s differs between runs", path)
+		}
+	}
+	other := generate(t, small(8, home))
+	if other.Digest == first.Digest {
+		t.Fatal("seeds 7 and 8 gave the same data")
+	}
+}
+
+func readTranscripts(t *testing.T, home string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, dir := range []string{".claude/projects", ".codex/sessions"} {
+		_ = filepath.Walk(filepath.Join(home, dir), func(path string, info os.FileInfo, err error) error {
+			if err == nil && strings.HasSuffix(path, ".jsonl") {
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out[path] = string(raw)
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+// TestTheDaemonReadsIt reads the dataset back the way the daemon does:
+// the registry's repositories, discovery's cache under the configured
+// credential, the review index joining them with the saved reviews, and
+// the inboxes.
+func TestTheDaemonReadsIt(t *testing.T) {
+	requireGit(t)
+	home := filepath.Join(t.TempDir(), "home")
+	result := generate(t, small(3, home))
+	if result.Counts.LargeDiffLines != 600 {
+		t.Errorf("large diff %d lines, want 600", result.Counts.LargeDiffLines)
+	}
+	if result.Counts.ReviewVersions == 0 || result.Counts.Sessions != 3 || result.Counts.LongestTranscript != 40 {
+		t.Errorf("counts %+v", result.Counts)
+	}
+	ctx := context.Background()
+	state := filepath.Join(home, ".local", "state", "baum")
+	registry, err := repos.Open(filepath.Join(state, "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	picked, err := registry.Repositories(ctx)
+	if err != nil || len(picked) != 4 {
+		t.Fatalf("picked %d repositories: %v", len(picked), err)
+	}
+	prefs, err := registry.Preferences(ctx)
+	if err != nil || prefs.Automatic {
+		t.Fatalf("automatic reviews must be off: %+v %v", prefs, err)
+	}
+	// The credential the daemon resolves from the dataset's config.toml
+	// reads the partition the dataset wrote.
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "GITHUB_TOKEN", "GH_TOKEN", "GH_HOST"} {
+		t.Setenv(name, "")
+	}
+	cfg, err := config.Load(config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token, source := cfg.ExplicitGitHubTokenSource("github.com"); token != Token || source != config.SourceConfigFile {
+		t.Fatalf("config.toml's credential is %q from %q", token, source)
+	}
+	disc := discovery.New(github.NewFromConfig(cfg, github.Options{}), state)
+	index, err := (&reviewindex.Service{Registry: registry, Discovery: disc}).Build(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, reviewed := 0, 0
+	for _, e := range index.Entries {
+		if !e.Historical {
+			listed++
+		}
+		if e.VersionCount > 0 {
+			reviewed++
+		}
+	}
+	if listed != result.Counts.PullRequests || reviewed != result.Counts.ReviewedPullRequests || len(index.Problems) > 0 {
+		t.Fatalf("the index lists %d pull requests, %d reviewed, problems %v; want %d and %d", listed, reviewed, index.Problems,
+			result.Counts.PullRequests, result.Counts.ReviewedPullRequests)
+	}
+	// Another credential reads none of it.
+	other := discovery.New(github.New(func(context.Context, string) (string, error) { return "another", nil }, github.Options{}), state)
+	if _, err := other.Cached(ctx, github.Repository{Host: "github.com", Owner: picked[0].Repository[:strings.Index(picked[0].Repository, "/")],
+		Name: picked[0].Repository[strings.Index(picked[0].Repository, "/")+1:]}); err == nil {
+		t.Fatal("another credential read the seeded cache")
+	}
+	saved, err := inboxes.Open(filepath.Join(state, "app.sqlite")).Read()
+	if err != nil || len(saved.Inboxes) != 12 {
+		t.Fatalf("%d inboxes: %v", len(saved.Inboxes), err)
+	}
+	for _, inbox := range saved.Inboxes {
+		if problem := prfilter.Problem(inbox.Query); problem != "" {
+			t.Errorf("inbox %s: %q does not read: %s", inbox.Name, inbox.Query, problem)
+		}
+	}
+	if _, err := Generate(ctx, small(3, home)); err == nil {
+		t.Fatal("Generate wrote over existing data")
+	}
+}
+
+// TestDefaultsMeetTheCriteria writes the full default dataset, which the
+// profiling recipe uses, and checks it has what profiling needs: hundreds
+// of pull requests across many repositories, a 5,000-line diff, many
+// inboxes and long transcripts of both agents.
+func TestDefaultsMeetTheCriteria(t *testing.T) {
+	if testing.Short() || os.Getenv("BAUM_SKIP_FULL_SEED_TEST") == "true" {
+		t.Skip("writes the full dataset")
+	}
+	// Writing it spawns thousands of git processes, which takes over 8
+	// minutes on the Windows runner and over 10 on the macOS one with the
+	// race detector, against 4 on Linux. The counts it checks are the same
+	// on every OS, and the small datasets above cover the same code there.
+	if runtime.GOOS != "linux" {
+		t.Skip("the full dataset is checked on Linux")
+	}
+	requireGit(t)
+	o := Defaults()
+	o.Home = filepath.Join(t.TempDir(), "home")
+	started := time.Now()
+	result := generate(t, o)
+	t.Logf("defaults: %+v in %s", result.Counts, time.Since(started))
+	c := result.Counts
+	if c.Repositories < 50 || c.PullRequests < 1200 || c.ReviewVersions < 1000 || c.LargeDiffLines != 5000 || c.Inboxes != 20 ||
+		c.LongestTranscript != 3000 || c.Sessions < 10 {
+		t.Fatalf("counts %+v", c)
+	}
+}
+
+// A generation that fails removes what it wrote, so the home is not left
+// with part of the dataset and no marker; what was there before stays.
+func TestAFailedGenerationLeavesNoBaumData(t *testing.T) {
+	requireGit(t)
+	home := filepath.Join(t.TempDir(), "home")
+	keep := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Codex's folder is a file: the rollouts, written last, fail.
+	if err := os.WriteFile(filepath.Join(home, ".codex"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(context.Background(), small(5, home)); err == nil {
+		t.Fatal("generation into a home whose .codex is a file succeeded")
+	}
+	for _, part := range []string{".local/state/baum", ".config/baum", ".config/com.usebaum.desktop", "src", MarkerFile} {
+		if _, err := os.Stat(filepath.Join(home, part)); !os.IsNotExist(err) {
+			t.Errorf("%s is left after a failed generation: %v", part, err)
+		}
+	}
+	if left := readTranscripts(t, home); len(left) != 0 {
+		t.Errorf("transcripts left: %v", left)
+	}
+	for _, path := range []string{keep, filepath.Join(home, ".codex")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s, there before, was removed: %v", path, err)
+		}
+	}
+	// Generating again works.
+	if err := os.Remove(filepath.Join(home, ".codex")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(context.Background(), small(5, home)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnOccupiedClonePathIsLeftAlone(t *testing.T) {
+	requireGit(t)
+	home := filepath.Join(t.TempDir(), "home")
+	o := small(5, home)
+	first := plan(o.withDefaults())[0]
+	work := filepath.Join(home, "src", first.owner, first.name, "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(work), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(work, []byte("uncommitted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(context.Background(), o); err == nil {
+		t.Fatal("generation over an existing clone succeeded")
+	}
+	if got, err := os.ReadFile(work); err != nil || string(got) != "uncommitted" {
+		t.Fatalf("the existing clone was changed: %q, %v", got, err)
+	}
+	for _, part := range []string{".local/state/baum", ".config/baum", MarkerFile} {
+		if _, err := os.Stat(filepath.Join(home, part)); !os.IsNotExist(err) {
+			t.Errorf("%s is left after a failed generation: %v", part, err)
+		}
+	}
+}

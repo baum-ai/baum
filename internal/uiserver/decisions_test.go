@@ -68,7 +68,7 @@ func TestLinkedSessionsFollowTheSavedReview(t *testing.T) {
 			{ID: "s3", Vendor: "someone_else"},
 		}}, nil
 	}
-	linked := LocalAPI{Registry: registry}.linkedSessions(cache)
+	linked := LocalAPI{Registry: registry}.linkedSessions(cache, viewserver.MaxDocumentBytes)
 	sessions, generated, err := linked(ctx, "Owner/Repo", 7)
 	if err != nil || !generated.Equal(time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)) || len(sessions) != 3 ||
 		sessions[0].ID != "s1" || sessions[0].Title != "Port the parser" || sessions[1].Vendor != "codex" {
@@ -194,7 +194,7 @@ func TestLinkedSessionsOfAnOversizedReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	document := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"generated_at":"2026-10-20T09:00:00Z"},"pad":"` + strings.Repeat("x", viewserver.MaxDocumentBytes) + `"}`)
+	document := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"generated_at":"2026-10-20T09:00:00Z"}}`)
 	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document}); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestLinkedSessionsOfAnOversizedReview(t *testing.T) {
 		t.Error("an oversized review was linked")
 		return locallink.Result{}, nil
 	}
-	sessions, generated, err := LocalAPI{Registry: registry}.linkedSessions(cache)(ctx, "owner/repo", 7)
+	sessions, generated, err := LocalAPI{Registry: registry}.linkedSessions(cache, len(document)-1)(ctx, "owner/repo", 7)
 	if err != nil || sessions != nil || !generated.Equal(time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)) {
 		t.Fatalf("%+v %v %v", sessions, generated, err)
 	}
@@ -239,7 +239,7 @@ func TestLinkedSessionsWhenTheViewerStops(t *testing.T) {
 		}
 		cache.close()
 	}()
-	sessions, generated, err := LocalAPI{Registry: registry}.linkedSessions(cache)(ctx, "owner/repo", 7)
+	sessions, generated, err := LocalAPI{Registry: registry}.linkedSessions(cache, viewserver.MaxDocumentBytes)(ctx, "owner/repo", 7)
 	if err != nil || sessions != nil || !generated.Equal(time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)) {
 		t.Fatalf("%+v %v %v", sessions, generated, err)
 	}

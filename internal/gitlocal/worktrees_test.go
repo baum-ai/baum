@@ -3,8 +3,11 @@ package gitlocal
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -28,11 +31,13 @@ func TestWorktreesFromEveryCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	head := git(t, main, "rev-parse", "HEAD")
+	branch := git(t, main, "symbolic-ref", "--short", "HEAD")
 	want := []Worktree{
-		{Path: main, Main: true},
-		{Path: nested},
-		{Path: sibling},
-		{Path: gone, Prunable: true},
+		{Path: main, Main: true, Branch: branch, Head: head},
+		{Path: nested, Branch: "nested", Head: head},
+		{Path: sibling, Branch: "sibling", Head: head},
+		{Path: gone, Prunable: true, Branch: "gone", Head: head},
 	}
 	for _, from := range []string{main, nested, sibling, filepath.Join(main, ".agents")} {
 		got, err := Worktrees(context.Background(), from)
@@ -43,6 +48,43 @@ func TestWorktreesFromEveryCheckout(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Errorf("from %s:\n got %+v\nwant %+v", from, got, want)
 		}
+	}
+}
+
+// A git older than 2.36 refuses -z; the worktrees are then read from the
+// newline-separated list.
+func TestWorktreesWithoutNULOption(t *testing.T) {
+	requireGit(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("the git stand-in is a shell script")
+	}
+	main := initRepo(t)
+	if resolved, err := filepath.EvalSymlinks(main); err == nil {
+		main = resolved
+	}
+	write(t, main, "a.txt", "a\n", 0o644)
+	commit(t, main, "start")
+	linked := filepath.Join(filepath.Dir(main), filepath.Base(main)+"-linked")
+	git(t, main, "worktree", "add", "-q", "-b", "linked", linked)
+	head := git(t, main, "rev-parse", "HEAD")
+	branch := git(t, main, "symbolic-ref", "--short", "HEAD")
+
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	// The stand-in answers -z as git 2.34 does and runs git otherwise.
+	write(t, bin, "git", "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = -z ]; then echo \"error: unknown switch \\`z'\" >&2; exit 129; fi\ndone\nexec '"+real+"' \"$@\"\n", 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := Worktrees(context.Background(), main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Worktree{{Path: main, Main: true, Branch: branch, Head: head}, {Path: linked, Branch: "linked", Head: head}}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %+v\nwant %+v", got, want)
 	}
 }
 
@@ -74,16 +116,19 @@ func TestParseWorktrees(t *testing.T) {
 		"worktree /srv/wt\x00HEAD 1111111111111111111111111111111111111111\x00branch refs/heads/a\x00\x00" +
 		"worktree /srv/gone\x00HEAD 2222222222222222222222222222222222222222\x00detached\x00prunable gitdir file points to non-existent location\x00\x00" +
 		"worktree /srv/locked\x00locked\x00\x00"
-	got := parseWorktrees([]byte(out))
 	want := []Worktree{
-		{Path: filepath.FromSlash("/srv/wt")},
-		{Path: filepath.FromSlash("/srv/gone"), Prunable: true},
+		{Path: filepath.FromSlash("/srv/wt"), Branch: "a", Head: "1111111111111111111111111111111111111111"},
+		{Path: filepath.FromSlash("/srv/gone"), Prunable: true, Head: "2222222222222222222222222222222222222222"},
 		{Path: filepath.FromSlash("/srv/locked")},
 	}
-	if !slices.Equal(got, want) {
+	if got := parseWorktrees([]byte(out), "\x00"); !slices.Equal(got, want) {
 		t.Errorf("got %+v\nwant %+v", got, want)
 	}
-	if got := parseWorktrees(nil); len(got) != 0 {
+	// Without -z (git before 2.36) attributes end at a newline.
+	if got := parseWorktrees([]byte(strings.ReplaceAll(out, "\x00", "\n")), "\n"); !slices.Equal(got, want) {
+		t.Errorf("newline-separated: got %+v\nwant %+v", got, want)
+	}
+	if got := parseWorktrees(nil, "\x00"); len(got) != 0 {
 		t.Errorf("empty output = %+v", got)
 	}
 }

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { CodeDiff, type CodeDiffFile } from "./components/review-tiles/code-diff";
+import { CodeDiff, type CodeDiffFile } from "./components/code-diff";
 import {
   cachedHighlightedHunks,
   clearTokenCache,

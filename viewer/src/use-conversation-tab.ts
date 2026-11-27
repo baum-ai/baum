@@ -2,6 +2,7 @@ import { useCallback } from "react";
 
 import { useStoredSetting } from "./use-stored-setting";
 
+/** The side pane's tabs. */
 export const CONVERSATION_TABS = ["chat", "details", "activity", "comments"] as const;
 export type ConversationTab = (typeof CONVERSATION_TABS)[number];
 

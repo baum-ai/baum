@@ -4,12 +4,6 @@ import { useUrlState, ViewerLink } from "../navigation";
 import { withSelection } from "../review-selection";
 
 import {
-  type EntityContentGroup,
-  entityGroupStroke,
-  entityGroupWash,
-  groupApiContent,
-} from "../review-entity-groups";
-import {
   type Anchor,
   type Block,
   type Evidence,
@@ -50,7 +44,6 @@ import {
   TierBadge,
 } from "./review-parts";
 import { ReviewImages } from "./review-images";
-import { ReviewTiles } from "./review-tiles/lazy-review-tiles";
 import { type Column, Table } from "./table";
 import { Badge, Button, CardHeader, Spinner } from "./ui";
 
@@ -62,7 +55,6 @@ export function ReviewSection({
   loadVersion,
   activeVersions,
   idPrefix = "",
-  showTiles = false,
   labels,
   onRetryDetails,
 }: {
@@ -73,8 +65,6 @@ export function ReviewSection({
   /** The review versions in which this section had hunks, once read. */
   activeVersions?: readonly number[];
   idPrefix?: string;
-  /** Tiles are held back from reviews until they are ready to show. */
-  showTiles?: boolean;
   /** The host's labels for the section, at the end of its badges. */
   labels?: ReactNode;
   /** Asks the host to write again the details of a section whose details
@@ -92,11 +82,6 @@ export function ReviewSection({
     (reviewer) => reviewer.login && reviewer.source !== "none",
   );
   const itemId = (ref: string) => `${idPrefix}${section.id}-${ref}`;
-  // Tiles zoom into what the change does, so they belong beside the behaviour
-  // steps. A section that states no behaviour has no such place, and dropping
-  // its tiles would lose them, so there they stay where they used to sit.
-  const behaviorStatesStep = section.blocks.some((block) => block.kind === "behavior");
-  const tiles = showTiles ? <SectionTiles document={document} section={section} /> : null;
 
   const attention = section.attention && {
     ...section.attention,
@@ -149,7 +134,6 @@ export function ReviewSection({
               ))}
           </div>
           <Markdown className="text-primary">{risk.text}</Markdown>
-          {showTiles && <ReviewTiles document={document} tiles={risk.tiles} />}
           <HunkEvidence
             document={document}
             anchors={risk.anchors}
@@ -242,8 +226,6 @@ export function ReviewSection({
           />
         )}
 
-        {!behaviorStatesStep && tiles}
-
         {section.blocks.map((block, position) => (
           <BlockView
             key={`${block.kind}-${position}`}
@@ -252,7 +234,6 @@ export function ReviewSection({
             block={block}
             onSelectSection={onSelectSection}
             idPrefix={idPrefix}
-            tiles={block.kind === "behavior" ? tiles : null}
           />
         ))}
 
@@ -416,23 +397,6 @@ function RetryDetails({ onRetry }: { onRetry: () => void | Promise<unknown> }) {
   );
 }
 
-/** A section's tiles, with the contract tiles framed under the endpoints they
- *  describe where the section names any. */
-function SectionTiles({ document, section }: { document: ReviewDocument; section: Section }) {
-  const apiGroups = groupApiContent(section, section.tiles);
-  if (!apiGroups) return <ReviewTiles document={document} tiles={section.tiles} />;
-  return (
-    <>
-      {apiGroups.groups.map((group) => (
-        <EntityGroupFrame key={group.id} group={group}>
-          <ReviewTiles document={document} tiles={group.tiles} />
-        </EntityGroupFrame>
-      ))}
-      <ReviewTiles document={document} tiles={apiGroups.remainderTiles} />
-    </>
-  );
-}
-
 /** The summary and intent lines read as prose: their diff hunks are left to the
  *  code evidence below, where the change is shown rather than pointed at. */
 function withoutHunks(anchors: Anchor[] | undefined): Anchor[] | undefined {
@@ -440,7 +404,10 @@ function withoutHunks(anchors: Anchor[] | undefined): Anchor[] | undefined {
 }
 
 function scrollToItem(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+  document
+    .getElementById(id)
+    ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
 }
 
 type AttentionRef = {
@@ -665,53 +632,18 @@ export function EvidenceBadge({
   );
 }
 
-/** A coloured panel around one changed endpoint and the contract tile that
- *  describes it, so a reader sees which surface the contract belongs to before
- *  reading the fields. The endpoint's name rides in the heading: two changed
- *  endpoints would otherwise give a section two panels both called "API". */
-function EntityGroupFrame({ group, children }: { group: EntityContentGroup; children: ReactNode }) {
-  const name = `${group.label} · ${group.entity.name}`;
-  return (
-    <section
-      aria-label={name}
-      data-entity-group={group.kind}
-      className="min-w-0 space-y-4 rounded-lg border p-5 shadow-card"
-      style={{
-        background: entityGroupWash(group.color),
-        borderColor: entityGroupStroke(group.color),
-        boxShadow: `inset 4px 0 0 ${group.color}, var(--shadow-card)`,
-      }}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          className="h-2.5 w-2.5 flex-none rounded-full"
-          style={{ background: group.color }}
-          aria-hidden
-        />
-        <h3 className="min-w-0 text-base font-medium tracking-[-0.01em] text-primary">
-          {group.label}
-          <span className="ml-2 font-mono text-xs text-tertiary">{group.entity.name}</span>
-        </h3>
-      </div>
-      {children}
-    </section>
-  );
-}
-
 function BlockView({
   document,
   section,
   block,
   onSelectSection,
   idPrefix,
-  tiles = null,
 }: {
   document: ReviewDocument;
   section: Section;
   block: Block;
   onSelectSection: (id: string) => void;
   idPrefix: string;
-  tiles?: ReactNode;
 }) {
   const itemId = (ref: string) => `${idPrefix}${section.id}-${ref}`;
   const hunkChips = (hunks: string[]) => (
@@ -773,7 +705,6 @@ function BlockView({
               </Item>
             ))}
           </ol>
-          {tiles && <div className="mt-7 space-y-7">{tiles}</div>}
         </Part>
       );
     }

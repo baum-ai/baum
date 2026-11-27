@@ -1,9 +1,13 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { cn } from "@baum/viewer/components/classnames";
+import { DialogActions, DialogHeader, DialogTitle } from "@baum/viewer/components/dialog-shell";
+import { dialogClassName } from "@baum/viewer/components/primitive-classes";
 import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import { request, type Diagnostics, type IssueParts } from "./api";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 import { COMMAND } from "./shortcuts";
+import { openExternal } from "./outside-links";
 
 /** Where a problem is reported: the public repository's bug report form,
  *  whose field ids are those of `.github/ISSUE_TEMPLATE/bug_report.yml`. */
@@ -72,6 +76,8 @@ export function ReportProblemDialog({
   close: () => void;
 }) {
   const dialog = useModal();
+  const descriptionField = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => descriptionField.current?.focus({ preventScroll: true }), []);
   const id = useId();
   const [description, setDescription] = useState("");
   const [attachment, setAttachment] = useState<Attachment>("versions");
@@ -96,56 +102,62 @@ export function ReportProblemDialog({
   const ready = description.trim() !== "" && !waiting && link !== null;
   const open = () => {
     if (!ready || !link) return;
-    // The desktop app hands a new window to the browser.
-    window.open(link.url, "_blank", "noopener,noreferrer");
+    openExternal(link.url);
     close();
   };
   return (
     <dialog
       ref={dialog}
-      className="report-problem"
+      className={cn(
+        dialogClassName(),
+        "report-problem inset-0 max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden open:grid",
+      )}
       onCancel={(event) => {
         event.preventDefault();
         close();
       }}
       aria-labelledby={`${id}-title`}
     >
-      <h2 id={`${id}-title`} className="text-lg font-semibold">
-        Report a problem
-      </h2>
-      <label className="report-problem-field">
-        What happened?
-        <textarea
-          autoFocus
-          value={description}
-          placeholder="What you did, what you expected, and what happened instead."
-          onChange={(event) => setDescription(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              open();
-            }
-          }}
-          className="report-problem-text"
-        />
-      </label>
-      <div className="report-problem-field">
-        {/* The control is named the same; this is its visible label. */}
-        <span aria-hidden="true">Attach diagnostics</span>
-        <SegmentedControl
-          label="Attach diagnostics"
-          value={attachment}
-          items={ATTACHMENTS}
-          onChange={setAttachment}
-          className="self-start"
-        />
-        <AttachmentPreview attachment={attachment} link={link} waiting={waiting} error={error} />
+      <DialogHeader className="mb-2">
+        <DialogTitle id={`${id}-title`}>Report a problem</DialogTitle>
+      </DialogHeader>
+      <div className="-mx-1 space-y-4 overflow-y-auto px-1 py-1">
+        <label className="report-problem-field">
+          What happened?
+          <textarea
+            ref={descriptionField}
+            value={description}
+            placeholder="What you did, what you expected, and what happened instead."
+            onChange={(event) => setDescription(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                open();
+              }
+            }}
+            className="report-problem-text"
+          />
+        </label>
+        <div className="report-problem-field">
+          {/* The control is named the same; this is its visible label. */}
+          <span aria-hidden="true">Attach diagnostics</span>
+          <SegmentedControl
+            label="Attach diagnostics"
+            value={attachment}
+            items={ATTACHMENTS}
+            onChange={setAttachment}
+            className="self-start"
+          />
+          <AttachmentPreview attachment={attachment} link={link} waiting={waiting} error={error} />
+        </div>
+        {link === null ? (
+          <Alert>Too long for a link to GitHub. Shorten what you wrote.</Alert>
+        ) : null}
+        <p className="text-xs text-secondary">
+          This will open an issue in {ISSUE_REPOSITORY} on GitHub
+        </p>
       </div>
-      {link === null ? <Alert>Too long for a link to GitHub. Shorten what you wrote.</Alert> : null}
-      <p className="mt-4 text-xs text-secondary">
-        This will open an issue in {ISSUE_REPOSITORY} on GitHub
-      </p>
-      <div className="mt-3 flex justify-end gap-2">
+      <DialogActions ruled className="mt-2">
         <Button variant="ghost" size="compact" onClick={close}>
           Cancel
           <kbd aria-hidden="true" className="key-hint">
@@ -158,7 +170,7 @@ export function ReportProblemDialog({
             {COMMAND}↵
           </kbd>
         </Button>
-      </div>
+      </DialogActions>
     </dialog>
   );
 }

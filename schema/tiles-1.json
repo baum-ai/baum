@@ -1,0 +1,428 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static.usebaum.com/schemas/tiles/1.json",
+  "title": "baum tile review document",
+  "description": "One review of a pull request as tiles: the substrate a review is scored and refreshed on (the same shapes as baum.review/1), and the tiles that present it. A reference to #/$defs/<name> that this file does not define names a definition of review-1.json, or one of the parts of review-1.json the schema package copies into $defs under a fixed name (reviewHeader, reviewSummary, reviewRisk, reviewRiskRules and the others it lists).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "origin", "review", "facts", "stats", "index", "agent_reviews", "unassigned_hunks", "changes", "risks", "evidence", "tiles"],
+  "properties": {
+    "schema": { "const": "baum.tiles/1" },
+    "origin": { "$ref": "#/$defs/origin" },
+    "review": { "$ref": "#/$defs/reviewHeader" },
+    "facts": { "$ref": "#/$defs/facts" },
+    "stack": { "$ref": "#/$defs/reviewStack" },
+    "stats": { "$ref": "#/$defs/reviewStats" },
+    "index": { "$ref": "#/$defs/reviewIndex" },
+    "agent_reviews": { "$ref": "#/$defs/reviewAgentReviews" },
+    "unassigned_hunks": { "type": "array", "items": { "$ref": "#/$defs/hunkId" } },
+    "recommendation": {
+      "description": "The review's recommendation, exactly as baum.review/1 carries it: absent on reviews written before it existed, null when the review gives none.",
+      "$ref": "#/$defs/reviewSummary/properties/recommendation"
+    },
+    "risk_score": {
+      "description": "Host-derived, exactly as baum.review/1 carries it.",
+      "$ref": "#/$defs/reviewSummary/properties/risk_score"
+    },
+    "changes": {
+      "description": "The review's outline: one change per baum.review/1 section, in its order.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/change" }
+    },
+    "risks": {
+      "description": "Every risk of every change, active and mitigated, in document order.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/risk" }
+    },
+    "evidence": {
+      "description": "Every evidence item of every change, in document order.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "tiles": { "type": "array", "items": { "$ref": "#/$defs/documentTile" } }
+  },
+  "$defs": {
+    "origin": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Converted from a stored baum.review/1 document; schema_revision is the revision that document was validated against.",
+          "properties": {
+            "kind": { "const": "converted" },
+            "from": { "const": "baum.review/1" },
+            "schema_revision": { "type": "string" },
+            "converter": { "const": 1 }
+          },
+          "additionalProperties": false,
+          "required": ["kind", "from", "schema_revision", "converter"]
+        },
+        {
+          "type": "object",
+          "properties": { "kind": { "const": "generated" } },
+          "additionalProperties": false,
+          "required": ["kind"]
+        }
+      ]
+    },
+    "facts": {
+      "type": "object",
+      "description": "Host facts about the pull request. review_exchange was a plain string before it was an object, and older stored reviews keep that shape.",
+      "properties": {
+        "title": { "$ref": "#/$defs/reviewSummary/properties/title" },
+        "author": { "$ref": "#/$defs/reviewSummary/properties/author" },
+        "authorship": { "$ref": "#/$defs/reviewSummary/properties/authorship" },
+        "review_exchange": {
+          "anyOf": [{ "$ref": "#/$defs/reviewSummary/properties/review_exchange" }, { "type": "string" }]
+        },
+        "review_minutes": { "$ref": "#/$defs/reviewSummary/properties/review_minutes" }
+      },
+      "additionalProperties": false,
+      "required": ["title", "author", "authorship"]
+    },
+    "change": {
+      "type": "object",
+      "description": "A section's outline. Its id is the ID of the change's tile.",
+      "properties": {
+        "id": { "$ref": "#/$defs/sectionId" },
+        "title": { "$ref": "#/$defs/section/properties/title" },
+        "kind": { "$ref": "#/$defs/section/properties/kind" },
+        "hunks": { "$ref": "#/$defs/section/properties/hunks" },
+        "assessment": { "$ref": "#/$defs/section/properties/assessment" },
+        "pull_requests": { "$ref": "#/$defs/section/properties/pull_requests" },
+        "details": { "$ref": "#/$defs/section/properties/details" },
+        "derived": { "$ref": "#/$defs/section/properties/derived" }
+      },
+      "additionalProperties": false,
+      "required": ["id", "title", "kind", "hunks", "derived"]
+    },
+    "renameOrigin": {
+      "type": "object",
+      "description": "Present on an item whose ID was not unique across the document and was renamed: the change it belongs to and its ID there.",
+      "properties": {
+        "change": { "$ref": "#/$defs/sectionId" },
+        "id": { "type": "string", "pattern": "^(rsk|ev|dec)_[a-z0-9_]+$", "maxLength": 128 }
+      },
+      "additionalProperties": false,
+      "required": ["change", "id"]
+    },
+    "blockOrigin": {
+      "type": "object",
+      "description": "Where a block, or an item of a block, moved into an aggregate tile or promoted to a tile of its own came from: the change, the block's 0-based position among the change's blocks and, for an item, its position in the block. id is the item's ID in the change when it was renamed.",
+      "properties": {
+        "change": { "$ref": "#/$defs/sectionId" },
+        "block": { "type": "integer", "minimum": 0 },
+        "item": { "type": "integer", "minimum": 0 },
+        "id": { "type": "string", "pattern": "^dec_[a-z0-9_]+$", "maxLength": 128 }
+      },
+      "additionalProperties": false,
+      "required": ["change", "block"]
+    },
+    "risk": {
+      "type": "object",
+      "description": "A baum.review/1 risk with the change it belongs to.",
+      "properties": {
+        "id": { "$ref": "#/$defs/reviewRisk/properties/id" },
+        "tier": { "$ref": "#/$defs/reviewRisk/properties/tier" },
+        "category": { "$ref": "#/$defs/reviewRisk/properties/category" },
+        "source": { "$ref": "#/$defs/reviewRisk/properties/source" },
+        "text": { "$ref": "#/$defs/reviewRisk/properties/text" },
+        "anchors": { "$ref": "#/$defs/reviewRisk/properties/anchors" },
+        "finding": { "$ref": "#/$defs/reviewRisk/properties/finding" },
+        "state": { "$ref": "#/$defs/reviewRisk/properties/state" },
+        "introduced_version": { "$ref": "#/$defs/reviewRisk/properties/introduced_version" },
+        "mitigated_version": { "$ref": "#/$defs/reviewRisk/properties/mitigated_version" },
+        "change": { "$ref": "#/$defs/sectionId" },
+        "origin": { "$ref": "#/$defs/renameOrigin" }
+      },
+      "additionalProperties": false,
+      "required": ["id", "tier", "category", "source", "text", "anchors", "state", "introduced_version", "mitigated_version", "change"],
+      "allOf": [{ "$ref": "#/$defs/reviewRiskRules" }]
+    },
+    "evidence": {
+      "type": "object",
+      "description": "A baum.review/1 evidence item with the change it belongs to.",
+      "properties": {
+        "id": { "$ref": "#/$defs/reviewEvidence/properties/id" },
+        "kind": { "$ref": "#/$defs/reviewEvidence/properties/kind" },
+        "claim": { "$ref": "#/$defs/reviewEvidence/properties/claim" },
+        "status": { "$ref": "#/$defs/reviewEvidence/properties/status" },
+        "granularity": { "$ref": "#/$defs/reviewEvidence/properties/granularity" },
+        "source": { "$ref": "#/$defs/reviewEvidence/properties/source" },
+        "anchors": { "$ref": "#/$defs/reviewEvidence/properties/anchors" },
+        "detail": { "$ref": "#/$defs/reviewEvidence/properties/detail" },
+        "expects": { "$ref": "#/$defs/reviewEvidence/properties/expects" },
+        "change": { "$ref": "#/$defs/sectionId" },
+        "origin": { "$ref": "#/$defs/renameOrigin" }
+      },
+      "additionalProperties": false,
+      "required": ["id", "kind", "claim", "status", "source", "anchors", "change"],
+      "allOf": [{ "$ref": "#/$defs/reviewEvidenceRules" }]
+    },
+    "tileId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,127}$" },
+    "documentTile": {
+      "type": "object",
+      "description": "A tile presents part of the substrate. Its data has the shape $defs/tileData_<type> gives; a validator checks that per tile, so a tile that fails is marked unavailable without rejecting the document.",
+      "properties": {
+        "id": { "$ref": "#/$defs/tileId" },
+        "type": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "headline": { "type": "string", "maxLength": 300, "pattern": "^[^\\n\\r]*$" },
+        "data": { "type": "object" },
+        "covers": { "type": "array", "items": { "$ref": "#/$defs/hunkId" } },
+        "state": { "enum": ["ready", "pending", "failed", "unavailable"] },
+        "problems": { "type": "array", "items": { "type": "string" } },
+        "definition": {
+          "description": "A custom tile's definition, of the shape $defs/tileTypeDefinition gives; a validator checks that per tile.",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "required": ["id", "type", "title", "data", "state"],
+      "if": { "properties": { "type": { "const": "custom" } }, "required": ["type"] },
+      "then": { "required": ["definition"] },
+      "else": { "not": { "required": ["definition"] } }
+    },
+    "tileTypeDefinition": {
+      "type": "object",
+      "description": "The definition a custom tile was made with, embedded in the tile so a stored review renders without a library lookup. A validator checks it per tile, and a definition that fails marks its tile unavailable. name must not be custom or a built-in type's. data_schema is in the restricted dialect the tiles package checks (CheckDataSchema), at most 32 KiB encoded. kit is the major version of the tile kit the component was written for. sizes are the widths the glance was made for, in order of preference. digest is written by the host: sha256 over the RFC 8785 canonical JSON of the definition without its digest.",
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "use_when": { "type": "string", "maxLength": 200, "pattern": "^[^\\n\\r]*$" },
+        "fill": { "type": "string", "maxLength": 8000 },
+        "data_schema": { "type": "object" },
+        "kit": { "type": "integer", "minimum": 1 },
+        "sizes": {
+          "type": "array",
+          "items": { "enum": ["full", "half", "third"] },
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "format": { "const": "html" },
+            "html": { "type": "string", "maxLength": 262144 }
+          },
+          "additionalProperties": false,
+          "required": ["format", "html"]
+        },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false,
+      "required": ["name", "title", "use_when", "fill", "data_schema", "kit", "sizes", "source", "digest"]
+    },
+    "citation": {
+      "description": "A reference from a custom tile's data to the review: a baum.review/1 anchor, or a risk, evidence item, change or tile of this document. A data schema declares a citation with {\"$ref\": \"#/$defs/citation\"}. Any object of a tile's data that has this shape is a citation, and the hunk, check, review thread, session, risk, evidence item, change or tile it names must be in the document.",
+      "oneOf": [{ "$ref": "#/$defs/anchor" }, { "$ref": "#/$defs/itemRef" }]
+    },
+    "itemRef": {
+      "description": "A reference to an item of this document by its ID. The risk and evidence ID patterns are the review schema's.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": { "type": { "const": "risk" }, "id": { "type": "string", "pattern": "^rsk_[a-z0-9_]+$", "maxLength": 128 } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        },
+        {
+          "type": "object",
+          "properties": { "type": { "const": "evidence" }, "id": { "type": "string", "pattern": "^ev_[a-z0-9_]+$", "maxLength": 128 } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        },
+        {
+          "type": "object",
+          "properties": { "type": { "const": "change" }, "id": { "$ref": "#/$defs/sectionId" } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        },
+        {
+          "type": "object",
+          "properties": { "type": { "const": "tile" }, "id": { "$ref": "#/$defs/tileId" } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        }
+      ]
+    },
+    "markdown": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Text in the Markdown subset the tile kit renders."
+    },
+    "tileData_overview": {
+      "type": "object",
+      "properties": {
+        "text": { "$ref": "#/$defs/reviewSummary/properties/text" },
+        "change_kind": { "$ref": "#/$defs/reviewSummary/properties/change_kind" },
+        "release_note": { "$ref": "#/$defs/reviewSummary/properties/release_note" },
+        "breaking_change": { "$ref": "#/$defs/reviewSummary/properties/breaking_change" },
+        "attention": { "$ref": "#/$defs/reviewSummary/properties/attention" }
+      },
+      "additionalProperties": false,
+      "required": ["text", "change_kind", "release_note", "breaking_change", "attention"]
+    },
+    "tileData_change": {
+      "type": "object",
+      "description": "A change's details. summary is absent or null on a change whose details are pending or failed. blocks keep their order, without the intent, decisions, images and media blocks of a current change, which the aggregate tiles hold.",
+      "properties": {
+        "change": { "$ref": "#/$defs/sectionId" },
+        "summary": { "$ref": "#/$defs/section/properties/summary" },
+        "attention": { "$ref": "#/$defs/section/properties/attention" },
+        "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" } }
+      },
+      "additionalProperties": false,
+      "required": ["change", "attention", "blocks"]
+    },
+    "tileData_risks": {
+      "type": "object",
+      "description": "The active risks of current changes, most severe first.",
+      "properties": {
+        "ranked": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/reviewRisk/properties/id" } }
+      },
+      "additionalProperties": false,
+      "required": ["ranked"]
+    },
+    "tileData_evidence": {
+      "type": "object",
+      "description": "Shows all of the document's evidence.",
+      "additionalProperties": false
+    },
+    "tileData_intent": {
+      "type": "object",
+      "properties": {
+        "implements": { "$ref": "#/$defs/reviewSummary/properties/implements" },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "change": { "$ref": "#/$defs/sectionId" },
+              "text": { "$ref": "#/$defs/reviewIntentBlock/properties/text" },
+              "anchors": { "$ref": "#/$defs/reviewIntentBlock/properties/anchors" },
+              "origin": { "$ref": "#/$defs/blockOrigin" }
+            },
+            "additionalProperties": false,
+            "required": ["text", "anchors"]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": ["implements", "lines"]
+    },
+    "tileData_decisions": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "A baum.review/1 decision item with the change and block it came from.",
+            "properties": {
+              "id": { "$ref": "#/$defs/reviewDecision/properties/id" },
+              "by": { "$ref": "#/$defs/reviewDecision/properties/by" },
+              "text": { "$ref": "#/$defs/reviewDecision/properties/text" },
+              "rejected": { "$ref": "#/$defs/reviewDecision/properties/rejected" },
+              "decision_id": { "$ref": "#/$defs/reviewDecision/properties/decision_id" },
+              "approved_by_human": { "$ref": "#/$defs/reviewDecision/properties/approved_by_human" },
+              "anchors": { "$ref": "#/$defs/reviewDecision/properties/anchors" },
+              "rationale": { "$ref": "#/$defs/reviewDecision/properties/rationale" },
+              "trigger": { "$ref": "#/$defs/reviewDecision/properties/trigger" },
+              "evidence": { "$ref": "#/$defs/reviewDecision/properties/evidence" },
+              "title": { "$ref": "#/$defs/reviewDecision/properties/title" },
+              "change": { "$ref": "#/$defs/sectionId" },
+              "origin": { "$ref": "#/$defs/blockOrigin" }
+            },
+            "additionalProperties": false,
+            "required": ["id", "by", "text", "anchors"],
+            "allOf": [{ "$ref": "#/$defs/reviewDecisionRules" }]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": ["items"]
+    },
+    "tileData_context": { "$ref": "#/$defs/reviewSummary/properties/context" },
+    "tileData_media": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "change": { "$ref": "#/$defs/sectionId" },
+              "block": { "anyOf": [{ "$ref": "#/$defs/reviewImagesBlock" }, { "$ref": "#/$defs/reviewMediaBlock" }] },
+              "origin": { "$ref": "#/$defs/blockOrigin" }
+            },
+            "additionalProperties": false,
+            "required": ["block"]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": ["items"]
+    },
+    "tileData_everything_else": {
+      "type": "object",
+      "description": "The current mechanical change, if any, with its details, and the hunks no change holds.",
+      "properties": {
+        "change": { "anyOf": [{ "$ref": "#/$defs/sectionId" }, { "type": "null" }] },
+        "unassigned": { "type": "array", "items": { "$ref": "#/$defs/hunkId" } },
+        "summary": { "$ref": "#/$defs/section/properties/summary" },
+        "attention": { "$ref": "#/$defs/section/properties/attention" },
+        "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" } }
+      },
+      "additionalProperties": false,
+      "required": ["change", "unassigned"],
+      "if": { "properties": { "change": { "type": "string" } } },
+      "then": { "required": ["attention", "blocks"] },
+      "else": { "not": { "anyOf": [{ "required": ["summary"] }, { "required": ["attention"] }, { "required": ["blocks"] }] } }
+    },
+    "tileData_prose": {
+      "type": "object",
+      "properties": {
+        "text": { "$ref": "#/$defs/reviewIntentBlock/properties/text" },
+        "anchors": { "$ref": "#/$defs/reviewIntentBlock/properties/anchors" }
+      },
+      "additionalProperties": false,
+      "required": ["text", "anchors"]
+    },
+    "tileData_table": {
+      "type": "object",
+      "description": "A table. origin is set on a table block of a change promoted to a tile of its own: the block moved here, and origin says where it goes back.",
+      "properties": {
+        "columns": { "$ref": "#/$defs/reviewTableBlock/properties/columns" },
+        "rows": { "$ref": "#/$defs/reviewTableBlock/properties/rows" },
+        "source": { "$ref": "#/$defs/reviewTableBlock/properties/source" },
+        "origin": { "$ref": "#/$defs/blockOrigin" }
+      },
+      "additionalProperties": false,
+      "required": ["columns", "rows", "source"]
+    },
+    "tileData_diagram": {
+      "type": "object",
+      "properties": {
+        "format": { "$ref": "#/$defs/reviewDiagramBlock/properties/format" },
+        "content": { "$ref": "#/$defs/reviewDiagramBlock/properties/content" },
+        "source": { "$ref": "#/$defs/reviewDiagramBlock/properties/source" }
+      },
+      "additionalProperties": false,
+      "required": ["format", "content", "source"]
+    },
+    "tileData_code": {
+      "type": "object",
+      "description": "A code excerpt. origin is set on a code block of a change promoted to a tile of its own: the block moved here, and origin says where it goes back.",
+      "properties": {
+        "language": { "$ref": "#/$defs/reviewCodeBlock/properties/language" },
+        "content": { "$ref": "#/$defs/reviewCodeBlock/properties/content" },
+        "caption": { "$ref": "#/$defs/reviewCodeBlock/properties/caption" },
+        "source": { "$ref": "#/$defs/reviewCodeBlock/properties/source" },
+        "origin": { "$ref": "#/$defs/blockOrigin" }
+      },
+      "additionalProperties": false,
+      "required": ["language", "content", "source"]
+    }
+  }
+}

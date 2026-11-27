@@ -201,6 +201,8 @@ type pullSource struct {
 }
 
 type sourceHunk struct {
+	ID        string `json:"id"`
+	NewRange  []int  `json:"new_range"`
 	Path      string `json:"path"`
 	OldPath   string `json:"old_path,omitempty"`
 	Change    string `json:"change"`

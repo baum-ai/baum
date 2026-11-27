@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request, type GitHubConnection } from "./api";
 import { useVisibleInterval } from "./visible-interval";
+import { openExternal } from "./outside-links";
 
 export const messages: Record<string, string> = {
   credential_store_unavailable: "Unlock your operating system credential store, then try again.",
@@ -44,12 +45,17 @@ export const daemonGitHubAuth: GitHubAuthCall = (action, options) =>
       )
     : request<GitHubConnection>("api/github-auth");
 
+/** How desktop setup opens GitHub's device page: `delay` milliseconds after
+ *  the sign-in starts, so the code and the copy result stay visible, through
+ *  the app (`open`), because a page can no longer open a window by then. */
+export type DelayedBrowser = { delay: number; open: () => void };
+
 /** The daemon performs OAuth polling even while no page shows it. This hook
  * only observes its safe status, never GitHub's token endpoint. */
 export function useGitHubConnection(
   call: GitHubAuthCall,
   onChanged?: () => void,
-  browserDelay = 0,
+  delayedBrowser?: DelayedBrowser,
 ) {
   const [connection, setConnection] = useState<GitHubConnection>();
   const [error, setError] = useState("");
@@ -124,12 +130,10 @@ export function useGitHubConnection(
     if (!browserAttempt || connection?.pending?.id !== browserAttempt) return;
     const timer = setTimeout(() => {
       setBrowserAttempt(undefined);
-      // The desktop shell intercepts this navigation and opens the browser.
-      // Unlike window.open, it does not require an active click.
-      location.assign(DEVICE_URL);
-    }, browserDelay);
+      delayedBrowser?.open();
+    }, delayedBrowser?.delay);
     return () => clearTimeout(timer);
-  }, [browserAttempt, connection?.pending?.id, browserDelay]);
+  }, [browserAttempt, connection?.pending?.id, delayedBrowser]);
   const action = async (name: GitHubAuthAction, options?: SignInOptions) => {
     mutating.current = true;
     actionSequence.current++;
@@ -161,10 +165,10 @@ export function useGitHubConnection(
   // Desktop setup delays opening GitHub so the code and copy result stay visible;
   // browser pages open inside the click to avoid popup blocking.
   const signIn = (options?: SignInOptions) => {
-    if (!browserDelay) open(DEVICE_URL, "_blank", "noreferrer");
+    if (!delayedBrowser) openExternal(DEVICE_URL);
     const started = action("start", options);
     const mine = actionSequence.current;
-    if (browserDelay)
+    if (delayedBrowser)
       void started.then((body) => {
         if (alive.current && mine === actionSequence.current && body?.pending)
           setBrowserAttempt(body.pending.id);
@@ -175,7 +179,7 @@ export function useGitHubConnection(
     };
     try {
       if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
-        if (browserDelay) copyFailed();
+        if (delayedBrowser) copyFailed();
         return;
       }
       const code = started.then((body) => {

@@ -1,0 +1,83 @@
+{
+  "name": "one-route",
+  "data": {
+    "endpoints": [
+      {
+        "surface": "http",
+        "method": "GET",
+        "name": "/api/widgets/{id}/history",
+        "change": "added",
+        "auth": "session cookie",
+        "request": [
+          {
+            "field": "id",
+            "change": "added",
+            "before": null,
+            "after": "path, int64",
+            "required": true
+          },
+          {
+            "field": "limit",
+            "change": "added",
+            "before": null,
+            "after": "query, 1–100, default 20",
+            "required": false
+          }
+        ],
+        "response": [
+          {
+            "field": "changes",
+            "change": "added",
+            "before": null,
+            "after": "array of {at, by, field, before, after}",
+            "required": true
+          }
+        ],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_17ad1bfb5c74",
+            "lines": [
+              53,
+              53
+            ]
+          }
+        ]
+      }
+    ],
+    "consumers": [],
+    "docs": {
+      "updated": false,
+      "cites": []
+    }
+  },
+  "hunks": {
+    "h_17ad1bfb5c74": {
+      "path": "internal/server/routes.go",
+      "change": "modified",
+      "range": [
+        52,
+        53
+      ],
+      "additions": 1,
+      "deletions": 0,
+      "header": "@@ -52,1 +52,2 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 52,
+          "new": 52,
+          "text": "\tmux.HandleFunc(\"GET /api/widgets/{id}\", s.widget)"
+        },
+        {
+          "kind": "add",
+          "new": 53,
+          "text": "\tmux.HandleFunc(\"GET /api/widgets/{id}/history\", s.widgetHistory)"
+        }
+      ]
+    }
+  }
+}

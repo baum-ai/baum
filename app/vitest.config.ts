@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     maxWorkers: 2,
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "gallery/**/*.test.{ts,tsx}"],
     setupFiles: ["./vitest.setup.ts"],
   },
 });

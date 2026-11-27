@@ -183,20 +183,75 @@ function HighlightedTextarea({
   );
 }
 
-function Diff({ before, after }: { before: string; after: string }) {
+/** The lines to show with `context` unchanged lines around each change: a
+ *  longer run of unchanged lines is one fold, its count of lines. */
+export function foldDiff(
+  lines: DiffLine[],
+  context: number,
+): ({ line: DiffLine } | { folded: number })[] {
+  const near = lines.map(() => false);
+  lines.forEach((line, index) => {
+    if (line.kind === "same") return;
+    for (
+      let i = Math.max(0, index - context);
+      i <= Math.min(lines.length - 1, index + context);
+      i++
+    )
+      near[i] = true;
+  });
+  const out: ({ line: DiffLine } | { folded: number })[] = [];
+  lines.forEach((line, index) => {
+    if (near[index]) out.push({ line });
+    else {
+      const last = out.at(-1);
+      if (last && "folded" in last) last.folded++;
+      else out.push({ folded: 1 });
+    }
+  });
+  return out;
+}
+
+/** A line diff of two texts. With `context`, unchanged lines further than
+ *  that from a change are folded, each run behind a button that shows the
+ *  whole text: a long prompt's one-line change stays in view. */
+export function Diff({
+  before,
+  after,
+  context,
+}: {
+  before: string;
+  after: string;
+  context?: number;
+}) {
   const lines = useMemo(() => lineDiff(before, after), [before, after]);
+  const [whole, setWhole] = useState(false);
   if (!lines) return <p className="settings-footnote">The texts are too large to compare.</p>;
   if (lines.every((line) => line.kind === "same"))
     return <p className="settings-footnote">No changes.</p>;
+  const folding = context !== undefined && !whole;
+  const shown = folding ? foldDiff(lines, context) : lines.map((line) => ({ line }));
   return (
-    <pre className="prompt-view prompt-diff" role="region" aria-label="Changes">
-      {lines.map((line, index) => (
-        <span key={index} data-kind={line.kind}>
-          {line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  "}
-          {line.text}
-          {"\n"}
-        </span>
-      ))}
+    <pre
+      className={`prompt-view prompt-diff${folding ? " folded" : ""}`}
+      role="region"
+      aria-label="Changes"
+    >
+      {shown.map((part, index) =>
+        "folded" in part ? (
+          <span key={index} data-kind="fold">
+            <button type="button" className="prompt-diff-fold" onClick={() => setWhole(true)}>
+              {part.folded === 1 ? "1 unchanged line" : `${part.folded} unchanged lines`}
+            </button>
+            {"\n"}
+          </span>
+        ) : (
+          <span key={index} data-kind={part.line.kind}>
+            {part.line.kind === "add" ? "+ " : part.line.kind === "del" ? "- " : "  "}
+            {part.line.text}
+            {"\n"}
+          </span>
+        ),
+      )}
     </pre>
   );
 }
@@ -335,6 +390,9 @@ export function PromptEditor({
           {entry.default_text}
         </pre>
       ) : null}
+      {empty ? (
+        <p className="settings-footnote">An empty prompt cannot be saved. Reset it instead.</p>
+      ) : null}
       <div id={rulesId} className="prompt-rules-block">
         {entry.safety_rules.length > 0 ? (
           <>
@@ -354,7 +412,7 @@ export function PromptEditor({
           </>
         ) : null}
         {missing.length > 0 ? (
-          <p role="status" className="settings-caution">
+          <p role="status" className="settings-caution text-xs">
             This prompt no longer contains: {missing.map((m) => m.label).join(", ")}.
           </p>
         ) : null}
@@ -364,9 +422,6 @@ export function PromptEditor({
         </p>
       </div>
       {error ? <Alert>{error}</Alert> : null}
-      {empty ? (
-        <p className="settings-footnote">An empty prompt cannot be saved. Reset it instead.</p>
-      ) : null}
       <div className="prompt-actions">
         <Button
           size="compact"

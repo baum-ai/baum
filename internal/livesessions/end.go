@@ -96,6 +96,9 @@ func (t *Transcripts) end(ctx context.Context, agent, id string) error {
 	if found == nil {
 		return ErrNotTracked
 	}
+	if found.Origin == OriginPanel {
+		return ErrPanelSession
+	}
 	// Asked again rather than read from found.Endable, to say why.
 	if err := t.endRefusal(found.Session, t.endChecks()); err != nil {
 		return err
@@ -120,6 +123,8 @@ func (t *Transcripts) handleEnd(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]bool{"ending": true})
 	case errors.Is(err, ErrNotTracked):
 		writeJSON(w, http.StatusNotFound, map[string]any{"code": "live_session_not_found", "message": "This session is no longer listed."})
+	case errors.Is(err, ErrPanelSession):
+		writePanelSession(w)
 	case errors.Is(err, ErrRunningCommand):
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "session_running_command", "message": "A background command is still running in this session. Stop it in the session, then end it."})
 	case errors.Is(err, errNotEndable):

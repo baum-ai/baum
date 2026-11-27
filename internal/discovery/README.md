@@ -53,6 +53,11 @@ validated in this process remains stale, but waiting for the next poll does
 not change every row. `Cached` retains deadline-based staleness for readers
 that use it to decide whether to fetch fresh data.
 
+`Seed` writes a repository's cache from a given snapshot, saved as a cache of
+the format before 3, under the client's credential. Only development data
+uses it ([`seeddata`](../seeddata/README.md), for profiling offline); the
+daemon never calls it.
+
 ## A poll
 
 Most polls are **incremental**. A poll reads the window of pull requests
@@ -103,7 +108,9 @@ shifted meanwhile.
 
 **Partial results.** Pages read before a failed request are merged into the
 cache and shown, stale, with the error. Nothing is dropped because a failed
-poll did not see it. The cursor moves only once the poll has read its whole
+poll did not see it. A failed poll may run again after `failedRetry` (5 s), or
+a minute for a rate limit; the background service backs off a repository that
+keeps failing. The cursor moves only once the poll has read its whole
 window and the re-reads by number it called for. A poll that read a new head
 and then failed still settles. Authors not yet asked about since an upgrade
 keep the older snapshot's permission.

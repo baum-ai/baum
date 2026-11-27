@@ -65,6 +65,9 @@ func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.
 	if err != nil {
 		return groupInputs{}, err
 	}
+	if group.Stack {
+		return groupInputs{}, reviewgroups.ErrStackOverview
+	}
 	if !strings.EqualFold(group.Repository, c.Repository) {
 		return groupInputs{}, errors.New("the clone is not of the group's repository")
 	}
@@ -79,6 +82,10 @@ func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.
 		pr, err := readPull(ctx, reader, repository, number)
 		if err != nil {
 			return groupInputs{}, fmt.Errorf("pull request #%d: %w", number, err)
+		}
+		// A group's combined review is of open pull requests only.
+		if pr.Closed {
+			return groupInputs{}, fmt.Errorf("pull request #%d: open pull request evidence required", number)
 		}
 		if i == 0 {
 			out.Head = pr.Head

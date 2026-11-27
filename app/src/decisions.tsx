@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useId, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { formatRelative, formatDateTime, formatTime } from "@baum/viewer/components/format";
 import { ChevronRightIcon } from "@baum/viewer/components/icons";
+import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { Item } from "@baum/viewer/components/review-parts";
 import { Badge, CardHeader } from "@baum/viewer/components/ui";
@@ -107,7 +108,7 @@ function FullSessionDecisions({ session }: { session: LiveSession }) {
   return s ? <SessionDecisionDisclosure session={s} /> : null;
 }
 
-export function relevanceState(s: SessionDecisions): string {
+function relevanceState(s: SessionDecisions): string {
   const r = s.relevance;
   if (!r) return "";
   const parts: string[] = [];
@@ -175,13 +176,30 @@ function decisionGroups(decisions: CapturedDecision[]) {
 /** One decision as a row to scan: its title, kind and time, with its summary
  *  on a line under it; opened, the whole summary, why it was made and the
  *  files it touched. Who decided is the group it is listed under. */
-function DecisionRow({ decision: d }: { decision: CapturedDecision }) {
-  const [open, setOpen] = useState(false);
+function DecisionRow({
+  decision: d,
+  opened = false,
+}: {
+  decision: CapturedDecision;
+  /** Opens with the pane, brought into view: the one the reader picked from
+   *  the side pane's list. */
+  opened?: boolean;
+}) {
+  const [open, setOpen] = useState(opened);
   const id = useId();
+  const row = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    const target = row.current;
+    if (!opened || !target) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+    const cancel = centerJump(target, reduced);
+    flashJump(target, reduced);
+    return cancel;
+  }, [opened]);
   const title = d.title || d.summary;
   const summary = d.title && d.summary ? d.summary : "";
   return (
-    <li className="local-decision" data-review-block="">
+    <li ref={row} className="local-decision" data-review-block="">
       <button
         type="button"
         className="local-decision-head"
@@ -387,6 +405,7 @@ export function PullRequestDecisionsPane({
   live,
   heading = false,
   scope = "this pull request",
+  open,
 }: {
   read: PullRequestDecisionsRead;
   /** Titles of the sessions in progress, which the answer leaves out. */
@@ -395,6 +414,8 @@ export function PullRequestDecisionsPane({
   heading?: boolean;
   /** What the sessions are linked to, in the heading. */
   scope?: string;
+  /** The decision to open and bring into view. */
+  open?: string;
 }) {
   const now = useNow();
   const { sessions, total, provisional, reviewGeneratedAt } = read;
@@ -419,10 +440,7 @@ export function PullRequestDecisionsPane({
       ) : null}
       <ol className="local-decisions-sessions">
         {sessions.map((s) => {
-          const title =
-            s.title ||
-            live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
-            s.session_id;
+          const title = sessionTitle(s, live);
           return (
             <Item key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
               <h3>
@@ -448,7 +466,11 @@ export function PullRequestDecisionsPane({
                   </h4>
                   <ul className="local-decisions-list">
                     {group.decisions.map((d) => (
-                      <DecisionRow key={d.decision_id} decision={d} />
+                      <DecisionRow
+                        key={d.decision_id}
+                        decision={d}
+                        opened={d.decision_id === open}
+                      />
                     ))}
                   </ul>
                 </section>
@@ -461,52 +483,12 @@ export function PullRequestDecisionsPane({
   );
 }
 
-/** The same decisions behind a closed disclosure, for a page with no
- *  Decisions pane, such as the walkthrough. */
-export function PullRequestDecisionsList({
-  repository,
-  number,
-  live,
-  revision,
-  read,
-}: {
-  repository: string;
-  number: number;
-  live: LiveSession[];
-  revision: number | string;
-  read?: PullRequestDecisionsRead | null;
-}) {
-  if (read !== undefined) return read ? <DecisionsList read={read} live={live} /> : null;
+/** What to call a session of the decisions: its title, else the title of the
+ *  session in progress, else its id. */
+function sessionTitle(s: SessionDecisions & { title?: string }, live: LiveSession[]) {
   return (
-    <ReadDecisionsList repository={repository} number={number} live={live} revision={revision} />
-  );
-}
-
-function ReadDecisionsList({
-  repository,
-  number,
-  live,
-  revision,
-}: {
-  repository: string;
-  number: number;
-  live: LiveSession[];
-  revision: number | string;
-}) {
-  const read = usePullRequestDecisions(repository, number, revision);
-  return read ? <DecisionsList read={read} live={live} /> : null;
-}
-
-function DecisionsList({ read, live }: { read: PullRequestDecisionsRead; live: LiveSession[] }) {
-  return (
-    <section aria-labelledby="pr-decisions-heading" className="mb-3 local-panel">
-      {/* Closed until asked for: a pull request's sessions can carry dozens of decisions. */}
-      <details className="local-decisions-disclosure">
-        <summary>
-          <h3 id="pr-decisions-heading">Decisions from sessions ({read.total})</h3>
-        </summary>
-        <PullRequestDecisionsPane read={read} live={live} />
-      </details>
-    </section>
+    s.title ||
+    live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
+    s.session_id
   );
 }

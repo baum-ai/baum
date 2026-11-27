@@ -195,7 +195,7 @@ it.each([
     if (action === "picked") return [...picked].map((repository) => ({ repository }));
     return {};
   };
-  vi.stubGlobal("__TAURI_INTERNALS__", {
+  vi.stubGlobal("baumDesktop", {
     invoke: async (
       _command: string,
       args: { action: string; query?: string; repository?: string },

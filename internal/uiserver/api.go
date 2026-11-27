@@ -1,6 +1,7 @@
 package uiserver
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -16,12 +17,16 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tiledrafts"
+	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -31,6 +36,7 @@ import (
 // Providers for later capabilities may be installed without changing the
 // authentication or instance boundary.
 type LocalAPI struct {
+	Integrations     http.Handler
 	Registry         *repos.Registry
 	Config           config.Config
 	PRs, Index, Jobs http.Handler
@@ -54,23 +60,34 @@ type LocalAPI struct {
 	// Review serves /api/prs/review: submitting a pull request review with
 	// inline comments from the app.
 	Review http.Handler
-	// Chat serves /api/prs/chat: asking the agent that wrote a review about
-	// the pull request, and the conversations so far (ChatHandler).
+	// Chat serves GET /api/prs/chat: the stored conversations of the earlier
+	// Ask feature with the agent that wrote a review (ChatHandler).
 	Chat http.Handler
 	// Update serves /api/prs/update-branch and /api/prs/rerun-checks, with
 	// their -options reads: updating a pull request's branch and re-running its
 	// failed workflow runs. With merging, submitting a review and a
 	// fix's push, they are the GitHub writes the app makes.
 	Update http.Handler
+	// GitHubReads serves /api/prs/threads, /api/prs/timeline and /api/issue:
+	// read-only GitHub answers for baum's MCP tools.
+	GitHubReads http.Handler
 	// Groups serves /api/groups: review groups and their combined reviews
 	// (internal/reviewgroups).
 	Groups http.Handler
 	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
 	// the app. Without it the route reports the capability unavailable.
 	Inboxes http.Handler
+	// Console serves /api/console/: the session panel's conversations and
+	// their proposals (internal/console). Without it the routes report the
+	// capability unavailable.
+	Console http.Handler
 	// Inbox serves /api/inbox: the queue the daemon builds, with which saved
 	// inboxes hold each pull request (internal/inboxqueue).
 	Inbox http.Handler
+	// TileChecks serves /api/tile-checks/: the render check's runner routes
+	// and the tiles page's first-show preflight (internal/tilechecks).
+	// Without it the routes report the capability unavailable.
+	TileChecks http.Handler
 	// UIState keeps inbox bookkeeping and review drafts across browser origins.
 	UIState http.Handler
 	// GitHubRepositories serves the account's repositories for picking
@@ -135,6 +152,29 @@ type LocalAPI struct {
 	// Version is this baum's version, named in the "Report a problem" link
 	// that /api/diagnostics returns.
 	Version string
+	// Added keeps the tiles each person added to a pull request's review
+	// page, which the tile route serves and POST /api/tiles/added removes
+	// and restores. Without it no tile is added and the route reports the
+	// capability unavailable.
+	Added *addedtiles.Service
+	// Fills fills the tiles a person added to a review that a version has
+	// no data for; nil leaves them pending.
+	Fills TileFiller
+	// TileTypes is the person's tile library, which GET
+	// /api/tile-types/{name}/preview draws a type from and the Tile library
+	// page's routes (tilelibrarypage.go) list and change. Without it only baum's
+	// own types preview and the library is empty.
+	TileTypes *tilelibrary.Store
+	// TileImportCheck runs the render check on an imported tile type's
+	// samples (tilechecks.Checker.ImportCheck). An import runs it and refuses
+	// a type that fails; with no runner, or nil, the type is saved "Not
+	// checked yet", and the check runs in the background on its first
+	// preview once a runner is there, marking it checked (Store.MarkChecked).
+	TileImportCheck tilelibrary.SampleCheck
+	// Drafts are the pending cards of tiles being made in the session panel,
+	// which the tile route serves beside the tiles and DELETE
+	// /api/tiles/drafts removes. Nil serves none.
+	Drafts *tiledrafts.Store
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -197,19 +237,24 @@ func (a LocalAPI) Handler() *LocalHandler {
 			writeJSON(w, map[string]any{"available": false, "code": code})
 		})
 	}
+	connections := provider(a.Integrations, "integrations_unavailable")
+	mux.Handle("/api/integrations", connections)
+	mux.Handle("/api/integrations/", connections)
 	merge := provider(a.Merge, "merge_unavailable")
 	mux.Handle("GET /api/prs/merge-options", merge)
 	mux.Handle("POST /api/prs/merge", merge)
 	mux.Handle("POST /api/prs/review", provider(a.Review, "review_unavailable"))
-	chat := provider(a.Chat, "chat_unavailable")
-	mux.Handle("GET /api/prs/chat", chat)
-	mux.Handle("POST /api/prs/chat", chat)
+	mux.Handle("GET /api/prs/chat", provider(a.Chat, "chat_unavailable"))
 	update := provider(a.Update, "update_unavailable")
 	mux.Handle("GET /api/prs/update-branch-options", update)
 	mux.Handle("POST /api/prs/update-branch", update)
 	mux.Handle("GET /api/prs/rerun-checks-options", update)
 	mux.Handle("POST /api/prs/rerun-checks", update)
 	mux.Handle("GET /api/prs/review-threads", update)
+	reads := provider(a.GitHubReads, "github_reads_unavailable")
+	mux.Handle("GET /api/prs/threads", reads)
+	mux.Handle("GET /api/prs/timeline", reads)
+	mux.Handle("GET /api/issue", reads)
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
 	mux.Handle("GET /api/prs/checks", update)
@@ -234,7 +279,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
+	mux.Handle("/api/console/", provider(a.Console, "console_unavailable"))
 	mux.Handle("/api/inbox", provider(a.Inbox, "inbox_unavailable"))
+	mux.Handle("/api/tile-checks/", provider(a.TileChecks, "tile_checks_unavailable"))
 	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
@@ -252,7 +299,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
 	var decisions http.Handler
 	if a.Decisions != nil {
-		decisions = a.Decisions(a.linkedSessions(cache))
+		decisions = a.Decisions(a.linkedSessions(cache, viewserver.MaxDocumentBytes))
 	}
 	mux.Handle("/api/decisions", provider(decisions, "decisions_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
@@ -268,6 +315,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			source = "file"
 		}
 		fixBackend, fixModel, fixEffort, fixClaudeDir, fixCodexHome := "", "", "", "", ""
+		fixNetwork := true
 		concurrency := repos.MaxJobConcurrency
 		prefs, prefsErr := a.Registry.Preferences(r.Context())
 		if prefsErr == nil {
@@ -282,6 +330,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			if prefs.FixEffort != nil {
 				fixEffort = *prefs.FixEffort
 			}
+			fixNetwork = prefs.FixNetworkAllowed()
 			if prefs.FixBackend != nil && prefs.FixClaudeConfigDir != nil {
 				fixClaudeDir = *prefs.FixClaudeConfigDir
 			}
@@ -303,6 +352,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			FixModel       string            `json:"fix_model"`
 			Effort         string            `json:"effort"`
 			FixEffort      string            `json:"fix_effort"`
+			FixNetwork     bool              `json:"fix_network"`
 			JobConcurrency int               `json:"job_concurrency"`
 			// The time limits in force, in whole minutes.
 			ReviewTimeLimit int `json:"review_time_limit_minutes"`
@@ -326,7 +376,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			// the config file's alone: not what a run started now would use
 			// once they can be read again.
 			PreferencesUnavailable bool `json:"preferences_unavailable,omitempty"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, fixNetwork, concurrency,
 			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout),
 			cfg.ClaudeConfigDir, fixClaudeDir, defaultAgentDir(cfg, agentdirs.Claude), agentdirs.Claude.All(""),
 			cfg.CodexHome, fixCodexHome, defaultAgentDir(cfg, agentdirs.Codex), agentdirs.Codex.All(""), userHome(), prefsErr != nil})
@@ -358,12 +408,19 @@ func (a LocalAPI) Handler() *LocalHandler {
 		budgets := prefs.Resolve(a.Config).Budgets
 		writeJSON(w, map[string]int{"review_time_limit_minutes": minutes(budgets.ReviewTimeout), "run_time_limit_minutes": minutes(budgets.RunTimeout)})
 	})
+	mux.HandleFunc("GET /api/settings/panel", a.getPanel)
+	mux.HandleFunc("PUT /api/settings/panel", a.putPanel)
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
+	mux.HandleFunc("POST /api/settings/appearance/themes", a.postTheme)
+	mux.HandleFunc("PATCH /api/settings/appearance/themes/{id}", a.patchTheme)
+	mux.HandleFunc("DELETE /api/settings/appearance/themes/{id}", a.deleteTheme)
 	mux.HandleFunc("GET /api/settings/plan-usage", a.getPlanUsageSettings)
 	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
+	mux.HandleFunc("GET /api/settings/labs", a.getLabs)
+	mux.HandleFunc("PUT /api/settings/labs", a.putLabs)
 	// Custom prompts; a run resolves them when it starts, so no change
 	// notification is needed.
 	mux.HandleFunc("GET /api/settings/prompts", func(w http.ResponseWriter, r *http.Request) {
@@ -509,39 +566,19 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		defer func() { <-cache.requests }()
-		c, key, n, ok := a.selector(w, r)
+		read, ok := a.selectReview(w, r)
 		if !ok {
-			return
-		}
-		s, err := store.Open(c.CommonDir, "", false)
-		if err != nil {
-			apiError(w, err)
 			return
 		}
 		// The store revision names the document without reading it, so a
 		// kept viewer answers without the document being read or hashed.
-		number, revision, err := s.Revision(r.Context(), key, n)
-		if err != nil {
-			apiError(w, err)
-			return
-		}
-		viewer, release, found, err := cache.cached(r.Context(), revisionKey(c, s, key, number, revision))
+		viewer, release, found, err := cache.cached(r.Context(), read.revisionKey())
 		if !found && err == nil {
-			var version store.Version
-			if n == 0 {
-				version, err = s.Latest(r.Context(), key)
-			} else {
-				version, err = s.Get(r.Context(), key, n)
-			}
-			if err != nil {
-				apiError(w, err)
+			version, ok := read.version(r.Context(), w)
+			if !ok {
 				return
 			}
-			if len(version.Document) > viewserver.MaxDocumentBytes {
-				http.Error(w, "stored document too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			viewer, release, err = cache.get(r.Context(), c, version.Document, revisionKey(c, s, key, version.Metadata.Version, version.Revision))
+			viewer, release, err = cache.get(r.Context(), read.clone, version.Document, revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision))
 		}
 		if err != nil {
 			if r.Context().Err() == nil {
@@ -565,6 +602,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 		viewer.Mux().ServeHTTP(w, routed)
 	}
 	mux.HandleFunc("GET /api/document", document)
+	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
+	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
+	a.tileLibraryRoutes(mux)
+	a.addedRoutes(mux)
+	a.draftRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
@@ -573,6 +615,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/commit-patch", document)
 	mux.HandleFunc("GET /api/file", document)
 	a.factsRoutes(mux, cache)
+	a.cloneRoutes(mux)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)
 		if !ok {
@@ -584,13 +627,31 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		image, err := s.Attachment(r.Context(), key, n, r.PathValue("id"))
+		if errors.Is(err, store.ErrNotFound) && a.Added != nil {
+			// An image of a tile the person added (an images tile) is the
+			// pull request's, on every version.
+			if added, aerr := a.Added.Image(r.Context(), addedtiles.Key(key.Repository, key.Number), r.PathValue("id")); aerr == nil {
+				image, err = store.Attachment{ID: r.PathValue("id"), ContentType: added.ContentType, Bytes: added.Bytes}, nil
+			}
+		}
 		if err != nil {
 			apiError(w, err)
 			return
 		}
+		var content io.ReadSeeker = bytes.NewReader(image.Bytes)
+		if image.Path != "" {
+			file, err := os.Open(image.Path)
+			if err != nil {
+				apiError(w, err)
+				return
+			}
+			defer file.Close()
+			content = file
+		}
 		w.Header().Set("Content-Type", image.ContentType)
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-		_, _ = w.Write(image.Bytes)
+		// ServeContent answers range requests, which video playback makes.
+		http.ServeContent(w, r, "", time.Time{}, content)
 	})
 
 	return &LocalHandler{Handler: mux, documents: cache}
@@ -635,6 +696,12 @@ func apiError(w http.ResponseWriter, err error) {
 func defaultAgentDir(cfg config.Config, agent agentdirs.Agent) string {
 	for _, entry := range cfg.AgentEnviron() {
 		if value, ok := strings.CutPrefix(entry, agent.Env+"="); ok && value != "" {
+			// Cleaned as the known directories are: "~/.claude.personal"
+			// expands to home + "/.claude.personal", which on Windows is not
+			// the same string as the recorded directory.
+			if dir, err := agentdirs.Normalize(value); err == nil {
+				return dir
+			}
 			return value
 		}
 	}

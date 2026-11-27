@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -134,10 +135,14 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const id = "att_0123456789abcdef0123456789abcdef"
+	const id, clipID = "att_0123456789abcdef0123456789abcdef", "att_00000000000000000000000000000c11"
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-	document := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"index":{"attachments":[{"id":%q}],"hunks":[{"id":"h_000000000001","path":"a.go","new_range":[3,1],"github_url":"diff-storedR3","diff":{"header":"@@ -3 +3 @@","lines":[]}}]}}`, id))
-	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: png}}}); err != nil {
+	clip, err := os.ReadFile("../../bundle/testdata/video/clip.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"index":{"attachments":[{"id":%q},{"id":%q}],"hunks":[{"id":"h_000000000001","path":"a.go","new_range":[3,1],"github_url":"diff-storedR3","diff":{"header":"@@ -3 +3 @@","lines":[]}}]}}`, id, clipID))
+	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: png}, {ID: clipID, ContentType: "video/mp4", Bytes: clip}}}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
@@ -168,6 +173,14 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 				t.Fatalf("document served as %s", w.Body.String())
 			}
 		})
+	}
+	// A clip is served from its file and answers the range requests playback makes.
+	ranged := httptest.NewRequest("GET", "http://local/api/attachments/"+clipID+selector, nil)
+	ranged.Header.Set("Range", "bytes=4-7")
+	served := httptest.NewRecorder()
+	handler.ServeHTTP(served, ranged)
+	if served.Code != http.StatusPartialContent || served.Body.String() != "ftyp" || served.Header().Get("Content-Type") != "video/mp4" || served.Header().Get("Content-Security-Policy") == "" {
+		t.Fatalf("range: %d %q %v", served.Code, served.Body.String(), served.Header())
 	}
 	// Registry writes are still rejected by the enclosing server before routing.
 	s, err := New(Options{API: handler})
@@ -318,9 +331,13 @@ func TestLocalAPIAgentEnvironment(t *testing.T) {
 		var body struct {
 			FixBackend *string `json:"fix_backend"`
 			FixModel   *string `json:"fix_model"`
+			FixNetwork *bool   `json:"fix_network"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.FixBackend == nil || body.FixModel == nil {
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.FixBackend == nil || body.FixModel == nil || body.FixNetwork == nil {
 			t.Fatal(rec.Body.String(), err)
+		}
+		if !*body.FixNetwork {
+			t.Fatal("fix network off by default: " + rec.Body.String())
 		}
 		return *body.FixBackend, *body.FixModel
 	}

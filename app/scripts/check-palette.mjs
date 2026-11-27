@@ -11,18 +11,7 @@ const oss = resolve(app, "..");
 const palette = join(oss, "viewer/src/palette.css");
 const paletteUtilities = join(oss, "viewer/src/palette-utilities.css");
 const markup = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html"]);
-const extensions = new Set([
-  ".css",
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".html",
-  ".svg",
-  ".rs",
-]);
+const extensions = new Set([".css", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".svg"]);
 const literal = /#[\da-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
 const property =
   /(?:--[\w-]+|\b(?:color|background(?:-color)?|backgroundColor|border(?:-[\w-]+)?|borderColor|outline(?:-color)?|outlineColor|fill|fillStyle|stroke|strokeStyle|stop-color|stopColor|box-shadow|boxShadow|shadowColor|text-shadow|textShadow))\s*["']?\s*[:=]\s*([^;{}\n]+)/gi;
@@ -41,8 +30,7 @@ const utility =
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
-    if (entry.isDirectory())
-      return ["precompiled", "generated"].includes(entry.name) ? [] : files(path);
+    if (entry.isDirectory()) return files(path);
     return extensions.has(extname(path)) && !/\.(test|spec)\./.test(path) ? [path] : [];
   });
 }
@@ -52,8 +40,7 @@ function sourceFiles() {
     ...files(join(app, "src")),
     ...files(join(oss, "viewer/src")),
     ...files(join(oss, "desktop/icons")),
-    ...files(join(oss, "desktop/src")),
-    join(oss, "desktop/tauri.conf.json"),
+    ...files(join(oss, "desktop/electron")),
     ...readdirSync(app)
       .filter((name) => name.endsWith(".html"))
       .map((name) => join(app, name)),

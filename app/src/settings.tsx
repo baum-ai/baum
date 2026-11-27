@@ -1,10 +1,15 @@
 import { Avatar } from "@baum/viewer/components/avatar";
 import { BrandMark } from "@baum/viewer/components/brand-logo";
+import { cn } from "@baum/viewer/components/classnames";
+import { DialogDetail, DialogHeader, DialogTitle } from "@baum/viewer/components/dialog-shell";
+import { dialogClassName, fieldClassName } from "@baum/viewer/components/primitive-classes";
+import { ListRow } from "@baum/viewer/components/list-row";
 import { usePreferences, type PageModifier } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentType,
@@ -12,7 +17,15 @@ import {
   type ReactNode,
 } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  CloseButton,
+  LiveDot,
+  SegmentedControl,
+} from "@baum/viewer/components/ui";
+import { Empty } from "@baum/viewer/components/states";
 import {
   formatCount,
   formatDateTime,
@@ -20,8 +33,10 @@ import {
   githubAvatarURL,
 } from "@baum/viewer/components/format";
 import {
+  agentName,
   appURL,
   automaticNotice,
+  homePath,
   isActiveJob,
   navigate,
   sameRepository,
@@ -36,10 +51,18 @@ import {
   type GitHubConnection,
   type Repository,
   type DiagnosticReport,
+  type IssueParts,
   type DecisionSettings,
   type PromptEntry,
   type RepositoryPromptEntry,
 } from "./api";
+import {
+  readPanelSettings,
+  type PanelAgent,
+  type PanelMode,
+  type PanelSettings,
+} from "./console-api";
+import { onPanelSettingsChanged, panelSettingsChanged } from "./session-panel";
 import {
   RepositoryPicker,
   CloneActions,
@@ -48,13 +71,14 @@ import {
 } from "./repositories";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection } from "./list";
+import { IntegrationConnections } from "./integrations";
 import { GitHubConnectionSection } from "./github-connection";
 import { OrganizationAccessNotice } from "./organization-access";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { pendingUpdate, UpdatesSection, type AppUpdates } from "./desktop/updates";
-import { invoke } from "./desktop/native";
+import { desktopShell, invoke } from "./desktop/native";
 import { withCode } from "./desktop/code-terms";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, MAC, onBody, pageModifier, useRowFocus, useShortcuts } from "./shortcuts";
@@ -93,12 +117,26 @@ import {
   modelPresets,
   withModel,
   type PullRequests,
+  modeSettings,
+  reviewMode,
+  reviewModes,
+  type ReviewMode,
+  type Updates,
   type ReviewSettings,
 } from "./desktop/setup-model";
 import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
+import { ReportProblemDialog } from "./report-problem";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
+import { AppearanceSection } from "./settings-appearance";
+import { TileLibrarySection } from "./settings-tiles";
+import { tileLibrary } from "./tile-library";
+
+/** The settings' controls, in the shared field look; widths stay the page's
+ *  (`settings-select`). */
+const SELECT_FIELD = fieldClassName({ kind: "select" });
+const INPUT_FIELD = fieldClassName();
 
 /** The harness and model reviews use, and the ones fixes use: an empty
  *  `fix_backend` follows the review's. */
@@ -110,6 +148,8 @@ export type ReviewDefaults = {
   fix_backend?: string;
   fix_model?: string;
   fix_effort?: string;
+  /** Whether the fix agent's commands get network access; absent is on. */
+  fix_network?: boolean;
   /** The Claude Code configuration directories reviews and fixes run with;
    *  empty leaves it to the environment, which gives
    *  `default_claude_config_dir`. `claude_config_dirs` are the ones baum
@@ -146,20 +186,26 @@ const extractionHarnesses = Object.keys(decisionModelDefaults);
 
 export const settingsSections = [
   "general",
+  "appearance",
   "reviews",
   "fixes",
+  "panel",
   "connections",
   "computer",
   "prompts",
+  "tiles",
 ] as const;
 export type SettingsSection = (typeof settingsSections)[number];
 const sectionTitles: Record<SettingsSection, string> = {
   general: "General",
+  appearance: "Appearance",
   reviews: "Reviews",
   fixes: "Fixes",
+  panel: "Session panel",
   connections: "Connections",
   computer: "This computer",
   prompts: "Prompts",
+  tiles: "Tile library",
 };
 
 /** The controls the keyboard steps through in the shown section, in reading
@@ -175,7 +221,7 @@ const SECTION_CONTROLS = [
 
 /** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
  *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
- *  previous section from anywhere, and 1 to 6 jump to one. j/↓ and k/↑ step
+ *  previous section from anywhere, and 1 to 9 jump to one. j/↓ and k/↑ step
  *  through the shown section's controls; from the section list j goes to its
  *  first control and k to its last, as Enter, l or → go to the first. Enter or
  *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
@@ -234,6 +280,14 @@ function useSettingsKeys<S extends string>(
         ? at.current
         : null;
     if (current) {
+      // The arrow keys move within a group of radios, as a browser does.
+      if (
+        key.startsWith("Arrow") &&
+        current instanceof HTMLInputElement &&
+        current.type === "radio" &&
+        current.closest('[role="radiogroup"]')
+      )
+        return;
       if (step) {
         event.preventDefault();
         const list = controls();
@@ -363,7 +417,7 @@ export function SettingRow({
 }
 
 /** A section's title and what it holds, with the outcome of its last save. */
-function SectionHead({
+export function SectionHead({
   id,
   title,
   detail,
@@ -397,6 +451,7 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const waiting = useRef<Record<string, unknown> | null>(null);
   const busy = useRef(false);
+  const pending = () => busy.current || waiting.current !== null;
   useEffect(() => () => clearTimeout(timer.current), []);
   const drain = async () => {
     busy.current = true;
@@ -431,7 +486,10 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
     }
   };
   const save = (body: Record<string, unknown>) => {
-    waiting.current = body;
+    // A save that waits keeps the fields of the one it replaces, so a control
+    // that sends one field (such as fix_network) and one that sends a whole
+    // section never drop each other's change.
+    waiting.current = { ...waiting.current, ...body };
     if (!busy.current) void drain();
   };
   const status = (
@@ -439,7 +497,32 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
       {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
     </p>
   );
-  return { save, error, status, failures };
+  return { save, pending, error, status, failures };
+}
+
+/** How many tile types the library holds, for the section list's line:
+ *  read when Settings opens and again whenever the Tile library's open type
+ *  changes (a change there goes back to the list or another type); null
+ *  until read or when it cannot be. */
+function useTileTypeCount(open: string | null | undefined) {
+  const [count, setCount] = useState<number | null>(null);
+  const [reads, setReads] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `open` and `reads` ask for a new read
+  useEffect(() => {
+    let live = true;
+    tileLibrary.list().then(
+      (list) => {
+        if (live) setCount(list.length);
+      },
+      () => {
+        if (live) setCount(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, reads]);
+  return { count, reload: () => setReads((n) => n + 1) };
 }
 
 /** The prompts baum uses, read once and kept in step with each save so the
@@ -562,6 +645,7 @@ const scopes: { value: PullRequests; label: string }[] = [
   { value: "both", label: "Mine and requested" },
   { value: "authored", label: "Only mine" },
   { value: "requested", label: "Only requested" },
+  { value: "inboxes", label: "In my inboxes" },
 ];
 
 const efforts: { value: string; label: string }[] = [
@@ -666,7 +750,7 @@ function AccountAdvanced({
         <div className="settings-model">
           <select
             id={id}
-            className="local-field settings-select"
+            className={cn(SELECT_FIELD, "settings-select")}
             value={custom ? CUSTOM : value}
             onChange={(event) => {
               const next = event.target.value;
@@ -685,7 +769,7 @@ function AccountAdvanced({
           </select>
           {custom ? (
             <input
-              className="local-field settings-select"
+              className={cn(INPUT_FIELD, "settings-select")}
               aria-label={`${account.name} folder`}
               placeholder={account.placeholder}
               value={text}
@@ -729,7 +813,7 @@ function AgentSelect({
   return (
     <select
       id={id}
-      className="local-field settings-select"
+      className={cn(SELECT_FIELD, "settings-select")}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
@@ -771,13 +855,14 @@ function ModelField({
   useEffect(() => setText(value), [value]);
   const commit = () => {
     const next = text.trim();
-    if (next && next !== value) onChange(next);
+    if (!next) setText(value);
+    else if (next !== value) onChange(next);
   };
   return (
     <div className="settings-model">
       <select
         id={id}
-        className="local-field settings-select"
+        className={cn(SELECT_FIELD, "settings-select")}
         value={custom ? CUSTOM : value}
         disabled={disabled}
         onChange={(event) => {
@@ -796,7 +881,7 @@ function ModelField({
       </select>
       {custom ? (
         <input
-          className="local-field settings-select"
+          className={cn(INPUT_FIELD, "settings-select")}
           aria-label="Custom model"
           placeholder={`Model name, as ${harnessName(backend)} lists it`}
           value={text}
@@ -836,7 +921,7 @@ function EffortSelect({
       id={id}
       aria-label={label}
       title="How hard the agent thinks. Default leaves it to the agent; higher thinks longer and costs more."
-      className="local-field settings-select settings-effort"
+      className={cn(SELECT_FIELD, "settings-select settings-effort")}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
@@ -873,6 +958,7 @@ function ReviewsSection({
         backend: shownBackend(defaults.backend),
         model: defaults.backend === "auto" ? "" : defaults.model,
         automatic: automatic.enabled,
+        updates: automatic.updates ?? "always",
         pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
       }),
       effort: defaults.effort ?? "",
@@ -891,6 +977,8 @@ function ReviewsSection({
     setDraft(next);
     save({
       enabled: next.automatic,
+      // Never leaves what a push does as it was.
+      ...(next.automatic ? { updates: next.updates } : {}),
       backend: next.backend,
       model: next.model,
       effort: next.effort,
@@ -903,6 +991,7 @@ function ReviewsSection({
     });
   };
   const harness = harnesses.find((h) => h.id === draft.backend);
+  const mode = reviewMode(draft.automatic, draft.updates as Updates);
   return (
     <section aria-labelledby="settings-reviews-heading" className="settings-section">
       <SectionHead
@@ -920,18 +1009,23 @@ function ReviewsSection({
       ) : null}
       <div className="local-panel settings-list">
         <SettingRow
+          pick
           label="Review pull requests automatically"
           htmlFor="review-automatic"
-          detail="New pushes and review requests in your repositories. Drafts, forks and authors without write access are skipped."
+          detail={`${reviewModes.find((m) => m.id === mode)!.detail} Drafts, forks and authors without write access are skipped.`}
         >
-          <input
+          <select
             id="review-automatic"
-            type="checkbox"
-            role="switch"
-            className="local-switch"
-            checked={draft.automatic}
-            onChange={(event) => change({ automatic: event.target.checked })}
-          />
+            className={cn(SELECT_FIELD, "settings-select settings-model-pick")}
+            value={mode}
+            onChange={(event) => change(modeSettings(event.target.value as ReviewMode))}
+          >
+            {reviewModes.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
         </SettingRow>
         {draft.automatic ? (
           <SettingRow
@@ -944,12 +1038,17 @@ function ReviewsSection({
                   Every pull request in your repositories gets reviewed, including your team's, so
                   reviews, notifications and cost grow with their activity.
                 </span>
+              ) : draft.pull_requests === "inboxes" ? (
+                <span id="review-inboxes-note">
+                  Pull requests in any inbox with Review automatically on get reviewed. Each inbox
+                  has the switch on its edit page; it is on unless you turn it off.
+                </span>
               ) : null
             }
           >
             <select
               id="review-pull-requests"
-              className="local-field settings-select settings-model-pick"
+              className={cn(SELECT_FIELD, "settings-select settings-model-pick")}
               value={draft.pull_requests}
               onChange={(event) => change({ pull_requests: event.target.value as PullRequests })}
             >
@@ -999,6 +1098,7 @@ function ReviewsSection({
             />
           </div>
         </SettingRow>
+        <TileReviewsRow />
         <AccountAdvanced
           id={draft.backend === "codex" ? "review-codex-home" : "review-claude-config-dir"}
           backend={draft.backend}
@@ -1040,6 +1140,14 @@ function FixesSection({
   const { save, error, status, failures } = useAutoSave(changed);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
   useEffect(() => setDraft(saved), [key, failures]);
+  const savedNetwork = defaults.fix_network ?? true;
+  const [network, setNetwork] = useState(savedNetwork);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `savedNetwork` stands for the saved choice
+  useEffect(() => setNetwork(savedNetwork), [savedNetwork, failures]);
+  const changeNetwork = (fix_network: boolean) => {
+    setNetwork(fix_network);
+    save({ fix_network });
+  };
   const change = (next: typeof saved) => {
     setDraft(next);
     save({
@@ -1120,6 +1228,20 @@ function FixesSection({
             </div>
           </SettingRow>
         ) : null}
+        <SettingRow
+          label="Network access"
+          htmlFor="fix-network"
+          detail="Lets the agent install dependencies and fetch what builds and tests need. With it off, the agent can't install dependencies."
+        >
+          <input
+            id="fix-network"
+            type="checkbox"
+            role="switch"
+            className="local-switch"
+            checked={network}
+            onChange={(event) => changeNetwork(event.target.checked)}
+          />
+        </SettingRow>
         <AccountAdvanced
           id={draft.backend === "codex" ? "fix-codex-home" : "fix-claude-config-dir"}
           backend={draft.backend}
@@ -1132,6 +1254,153 @@ function FixesSection({
         {draft.backend
           ? "Fixes use this agent in every repository."
           : "Fixes follow the review agent."}
+      </p>
+    </section>
+  );
+}
+
+/** The session panel's agents by the harness the other settings name them. */
+const panelHarness: Record<PanelAgent, string> = { "claude-code": "claude", codex: "codex" };
+const panelAgentOf = (harness: string): PanelAgent | "" =>
+  harness === "claude" ? "claude-code" : harness === "codex" ? "codex" : "";
+
+const panelModes: { value: PanelMode; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "full", label: "Full access" },
+  { value: "workspace", label: "Workspace" },
+];
+const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
+  { value: "bottom", label: "Bottom" },
+  { value: "top", label: "Top" },
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
+];
+
+/** Settings › Session panel: the agent and model a new session opens with
+ *  (the fix agent's unless chosen), the access it gets and the edge of the
+ *  window the panel opens from. */
+export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly string[] }) {
+  const [saved, setSaved] = useState<PanelSettings | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const load = () => readPanelSettings().then(setSaved);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, and again when it changes
+  useEffect(() => {
+    load().catch((e: unknown) => setLoadError(errorText(e)));
+    // A change to the fix or review agent changes what an unchosen agent follows.
+    return onPanelSettingsChanged(() => void load().catch(() => {}));
+  }, []);
+  const { save, error, status, failures } = useAutoSave(async () => {
+    await load();
+    panelSettingsChanged();
+  }, "api/settings/panel");
+  // The agent is "" while it follows the fix agent; its model is then the
+  // fix agent's too.
+  const choice = saved && {
+    agent: saved.agent_source === "panel" ? panelHarness[saved.agent] : "",
+    model: saved.agent_source === "panel" ? saved.model : "",
+    mode: saved.mode,
+    position: saved.position,
+  };
+  const key = JSON.stringify(choice);
+  const [draft, setDraft] = useState(choice);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `choice`
+  useEffect(() => setDraft(choice), [key, failures]);
+  if (!saved || !draft) return loadError ? <Alert>{loadError}</Alert> : null;
+  const change = (patch: Partial<typeof draft>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    save({
+      agent: panelAgentOf(next.agent),
+      // A chosen agent's model is saved with it; following the fix agent,
+      // its model follows too.
+      ...(next.agent ? { model: next.model } : {}),
+      mode: next.mode,
+      position: next.position,
+    });
+  };
+  const following = `Now ${agentName(saved.agent)}${saved.model ? ` · ${modelName(saved.model)}` : ""}, the fix agent.`;
+  return (
+    <section aria-labelledby="settings-panel-heading" className="settings-section">
+      <SectionHead
+        id="settings-panel-heading"
+        title="Session panel"
+        detail={`The agent you open from any page with the panel's key (\`) or button. It works as your own agent does, sees the page you have open and asks you to save or confirm any change to baum.`}
+        status={status}
+      />
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-panel settings-list">
+        <SettingRow
+          pick
+          label="Agent"
+          htmlFor="panel-agent"
+          detail={
+            signedOut.includes(draft.agent || panelHarness[saved.agent]) ? (
+              <SignedOutCaution
+                backend={draft.agent || panelHarness[saved.agent]}
+                work="the session panel"
+              />
+            ) : draft.agent ? null : (
+              following
+            )
+          }
+        >
+          <AgentSelect
+            id="panel-agent"
+            value={draft.agent}
+            options={fixHarnesses}
+            same="Same as fixes"
+            signedOut={signedOut}
+            onChange={(agent) => change({ agent, model: modelPresets[agent]?.[0] ?? "" })}
+          />
+        </SettingRow>
+        {draft.agent ? (
+          <SettingRow pick label="Model" htmlFor="panel-model">
+            <ModelField
+              key={draft.agent}
+              id="panel-model"
+              backend={draft.agent}
+              value={draft.model || (modelPresets[draft.agent]?.[0] ?? "")}
+              onChange={(model) => change({ model })}
+            />
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          label="Access of a new session"
+          detail={
+            draft.mode === "auto"
+              ? "Auto lets your agent's own reviewer approve each action or block the risky ones: Claude Code's auto mode, Codex's automatic review."
+              : draft.mode === "full"
+                ? "Full access runs your agent as you would with every prompt approved: it can push and use gh."
+                : "Workspace lets it edit files in its folder; what it would have to ask for is refused."
+          }
+        >
+          <SegmentedControl
+            label="Access of a new session"
+            value={draft.mode}
+            items={panelModes}
+            onChange={(mode) => change({ mode })}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Opens from"
+          detail="The edge of the window the session panel slides in from."
+        >
+          <SegmentedControl
+            label="Opens from"
+            value={draft.position}
+            items={panelPositions}
+            onChange={(position) => {
+              // Saves only the position, so a model that follows the fix
+              // agent's is not saved as the panel's own.
+              setDraft({ ...draft, position });
+              save({ position });
+            }}
+          />
+        </SettingRow>
+      </div>
+      <p className="settings-footnote">
+        Agent and access changes apply to the next session you start; a session keeps the agent and
+        access it started with.
       </p>
     </section>
   );
@@ -1530,12 +1799,18 @@ export function SettingsPage({
   codexTrust,
   commandLine,
   updates,
+  tileType = null,
+  openTileType = () => {},
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
   github: GitHubConnection | null;
   section: SettingsSection;
   setSection: (section: SettingsSection) => void;
+  /** The tile type open in Settings › Tile library (`type` in the
+   *  address), and how to open another or go back to the list. */
+  tileType?: string | null;
+  openTileType?: (type: string | null) => void;
   changed: () => Promise<void>;
   problems: number;
   diagnosticsOpen: boolean;
@@ -1555,11 +1830,15 @@ export function SettingsPage({
   const noHooks = setup.desktop && hooksMissing(setup.view);
   const update = pendingUpdate(updates?.view ?? null);
   const prompts = usePrompts();
+  const tileTypes = useTileTypeCount(section === "tiles" ? tileType : undefined);
   // Only the desktop app can ask the agent CLIs whether they are signed in.
   const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
+  // The session panel's agent follows the fix agent, and through it the
+  // review agent, unless chosen: it reads its setting again after either.
+  const agentsChanged = () => changed().finally(panelSettingsChanged);
   const connectionTone: Tone =
     gh.tone === "critical"
       ? "critical"
@@ -1570,7 +1849,11 @@ export function SettingsPage({
   const nav: { id: SettingsSection; sub: string; tone?: Tone; count?: number }[] = [
     {
       id: "general",
-      sub: "Appearance and keyboard",
+      sub: "Keyboard and plan usage",
+    },
+    {
+      id: "appearance",
+      sub: "Theme and colours",
     },
     {
       id: "reviews",
@@ -1582,6 +1865,10 @@ export function SettingsPage({
       id: "fixes",
       sub: defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews",
       tone: fix && !fix.fixable ? "caution" : undefined,
+    },
+    {
+      id: "panel",
+      sub: "Agent, access and position",
     },
     {
       id: "connections",
@@ -1616,6 +1903,15 @@ export function SettingsPage({
           ? "Unavailable"
           : "Reading…",
       tone: prompts.entries && promptsNeedAttention(prompts.entries) ? "caution" : undefined,
+    },
+    {
+      id: "tiles",
+      sub:
+        tileTypes.count === null
+          ? "Your saved tile types"
+          : tileTypes.count === 0
+            ? "No saved tile types"
+            : `${tileTypes.count} saved ${tileTypes.count === 1 ? "type" : "types"}`,
     },
   ];
   const keys = useSettingsKeys(
@@ -1682,7 +1978,9 @@ export function SettingsPage({
                     </span>
                   ) : null}
                 </span>
-                <span className="settings-nav-sub">{item.sub}</span>
+                <span className="settings-nav-sub" title={item.sub}>
+                  {item.sub}
+                </span>
               </span>
             </button>
           ))}
@@ -1735,13 +2033,15 @@ export function SettingsPage({
           ) : null}
           {section === "general" ? (
             <GeneralSection />
+          ) : section === "appearance" ? (
+            <AppearanceSection />
           ) : section === "reviews" ? (
             automatic && defaults ? (
               <>
                 <ReviewsSection
                   automatic={automatic}
                   defaults={defaults}
-                  changed={changed}
+                  changed={agentsChanged}
                   available={
                     setup.desktop && setup.view && !setup.view.hooks.error
                       ? detectedHarnesses(setup.view.hooks.agents)
@@ -1761,12 +2061,28 @@ export function SettingsPage({
             )
           ) : section === "fixes" ? (
             defaults ? (
-              <FixesSection defaults={defaults} changed={changed} signedOut={signedOut} />
+              <FixesSection defaults={defaults} changed={agentsChanged} signedOut={signedOut} />
             ) : (
               loading
             )
+          ) : section === "panel" ? (
+            <SessionPanelSection signedOut={signedOut} />
           ) : section === "prompts" ? (
             <PromptsSection prompts={prompts} />
+          ) : section === "tiles" ? (
+            <TileLibrarySection
+              type={tileType}
+              open={openTileType}
+              onChanged={tileTypes.reload}
+              head={(status) => (
+                <SectionHead
+                  id="settings-tiles-heading"
+                  title="Tile library"
+                  detail="Your own tile types, made in the session panel and saved. A saved type is offered to later reviews where it applies; its code and instructions stay on this computer."
+                  status={status}
+                />
+              )}
+            />
           ) : section === "connections" ? (
             <section aria-labelledby="settings-connections-heading" className="settings-section">
               <SectionHead
@@ -1774,11 +2090,12 @@ export function SettingsPage({
                 title="Connections"
                 detail={
                   setup.desktop
-                    ? "GitHub, where baum finds pull requests, and the coding agents it follows."
-                    : "GitHub, where baum finds pull requests."
+                    ? "Manage connected services and the coding agents baum follows."
+                    : "Manage the services connected to baum."
                 }
               />
               <GitHubConnectionSection onChanged={authChanged} />
+              <IntegrationConnections />
               {setup.desktop ? <AgentHooksPanel setup={setup} /> : null}
               {setup.feedback}
             </section>
@@ -1840,6 +2157,63 @@ export function SettingsPage({
 /** The most jobs the daemon runs at once (repos.MaxJobConcurrency). */
 const MAX_JOB_CONCURRENCY = 4;
 
+/** The labs switch that arranges new reviews as tiles: one more model call
+ *  after a review is written chooses which tiles lead. Off by default. */
+function TileReviewsRow() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    request<{ tile_reviews?: boolean }>("api/settings/labs").then(
+      (labs) => setOn(labs.tile_reviews ?? false),
+      (e) => setError(errorText(e)),
+    );
+  }, []);
+  async function choose(next: boolean) {
+    if (saving) return;
+    const before = on;
+    setOn(next);
+    setSaving(true);
+    setError("");
+    try {
+      const answer = await request<{ tile_reviews: boolean }>(
+        "api/settings/labs",
+        { tile_reviews: next },
+        "PUT",
+      );
+      setOn(answer.tile_reviews);
+    } catch (e) {
+      setOn(before);
+      setError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <SettingRow
+      label="Generate reviews as tiles (experimental)"
+      htmlFor="review-tiles"
+      detail={
+        error ? (
+          <Alert>{error}</Alert>
+        ) : (
+          "After a review is written, one more short call arranges its tile page: which tiles it shows and in what order."
+        )
+      }
+    >
+      <input
+        id="review-tiles"
+        type="checkbox"
+        role="switch"
+        className="local-switch"
+        disabled={on === null}
+        checked={on ?? false}
+        onChange={(event) => void choose(event.target.checked)}
+      />
+    </SettingRow>
+  );
+}
+
 /** How many reviews, fixes and feature builds run at once; questions to a
  *  review's agent run beside them. The daemon applies a change at once. */
 function JobConcurrencyRow() {
@@ -1886,7 +2260,7 @@ function JobConcurrencyRow() {
     >
       <select
         id="job-concurrency"
-        className="local-field settings-select"
+        className={cn(SELECT_FIELD, "settings-select")}
         disabled={value === null}
         value={value ?? MAX_JOB_CONCURRENCY}
         onChange={(e) => void choose(Number(e.target.value))}
@@ -1962,7 +2336,7 @@ function TimeLimitRows() {
       >
         <select
           id={id}
-          className="local-field settings-select"
+          className={cn(SELECT_FIELD, "settings-select")}
           disabled={value === null}
           value={current}
           onChange={(e) => void choose(key, Number(e.target.value))}
@@ -2037,7 +2411,7 @@ function ZoomSection() {
           {mod} + and {mod} − also change it, and {mod} 0 resets it to 100%.
         </p>
         <select
-          className="local-field"
+          className={SELECT_FIELD}
           aria-label="Zoom"
           disabled={!zoom}
           value={zoom?.level ?? 1}
@@ -2462,9 +2836,11 @@ function AgentEnvSection() {
           <p role="status" className="text-xs text-tertiary">
             {done
               ? "Saved. Applies to the next agent run."
-              : dirty
-                ? "You have unsaved changes."
-                : ""}
+              : dirty && Object.keys(problems).length > 0
+                ? "Name every variable, or remove the empty row, to save."
+                : dirty
+                  ? "You have unsaved changes."
+                  : ""}
           </p>
           <Button
             size="compact"
@@ -2487,28 +2863,52 @@ function DiagnosticsDialog({
   close: () => void;
   onReport: (report: DiagnosticReport | null) => void;
 }) {
-  const dialog = useModal();
+  const [problem, setProblem] = useState<{ parts: IssueParts | null } | null>(null);
+  const reportOpener = useRef<HTMLButtonElement>(null);
+  const dialog = useModal(problem === null);
   const title = useRef<HTMLHeadingElement>(null);
   // Open on the title rather than on the close control, the first button.
   useEffect(() => title.current?.focus({ preventScroll: true }), []);
+  // The report replaces Diagnostics in the top layer while it is open.
+  // Return to its trigger when the Diagnostics dialog opens again.
+  useLayoutEffect(() => {
+    if (problem !== null) return;
+    reportOpener.current?.focus({ preventScroll: true });
+    reportOpener.current = null;
+  }, [problem]);
   return (
-    <dialog
-      ref={dialog}
-      onCancel={close}
-      aria-labelledby="diagnostics-dialog-title"
-      className="local-dialog-wide"
-    >
-      <div className="local-dialog-head">
-        <div>
-          <h2 ref={title} id="diagnostics-dialog-title" tabIndex={-1} className="outline-none">
+    <>
+      <dialog
+        ref={dialog}
+        onCancel={close}
+        aria-labelledby="diagnostics-dialog-title"
+        className={dialogClassName({ size: "wide" })}
+      >
+        <DialogHeader aside={<CloseButton onClick={close} />}>
+          <DialogTitle
+            ref={title}
+            id="diagnostics-dialog-title"
+            tabIndex={-1}
+            className="outline-none"
+          >
             Check this computer
-          </h2>
-          <p>What baum needs here, what it found, and how to fix each problem.</p>
-        </div>
-        <CloseButton onClick={close} />
-      </div>
-      <DiagnosticsSection onReport={onReport} />
-    </dialog>
+          </DialogTitle>
+          <DialogDetail>
+            What baum needs here, what it found, and how to fix each problem.
+          </DialogDetail>
+        </DialogHeader>
+        <DiagnosticsSection
+          onReport={onReport}
+          onProblem={(parts, opener) => {
+            reportOpener.current = opener;
+            setProblem({ parts });
+          }}
+        />
+      </dialog>
+      {problem ? (
+        <ReportProblemDialog parts={problem.parts} close={() => setProblem(null)} />
+      ) : null}
+    </>
   );
 }
 
@@ -2600,13 +3000,10 @@ export function RepositoriesPage({
         {repositories.length === 0 && loading ? (
           <LoadingStatus block>Loading repositories…</LoadingStatus>
         ) : repositories.length === 0 ? (
-          <div className="local-empty">
-            <h2>No repositories yet</h2>
-            <p>
-              Pick GitHub repositories to see their pull requests. baum finds their local clones for
-              you.
-            </p>
-          </div>
+          <Empty variant="page" title="No repositories yet" className="px-6">
+            Pick GitHub repositories to see their pull requests. baum finds their local clones for
+            you.
+          </Empty>
         ) : null}
         {menu.menu}
         {repositories.length > 0 ? (
@@ -2669,14 +3066,31 @@ function RepositoryReviews({
     decisions: clone.settings.decisions !== false,
   });
   const [draft, setDraft] = useState(stored);
+  // What the controls hold now.
+  const latest = useRef(draft);
   // A failed save puts the controls back to what is stored.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only after a failure
   useEffect(() => {
-    if (saver.failures) setDraft(stored());
+    if (saver.failures) {
+      latest.current = stored();
+      setDraft(latest.current);
+    }
   }, [saver.failures]);
+  // Settings changed elsewhere (the assistant's saved proposal, another
+  // window) show here, unless this page is saving.
+  const storedKey = JSON.stringify(clone.settings);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the stored settings change
+  useEffect(() => {
+    if (saver.pending()) return;
+    latest.current = stored();
+    setDraft(latest.current);
+  }, [storedKey]);
   const change = (patch: Partial<ReturnType<typeof stored>>) => {
-    const next = { ...draft, ...patch };
+    const next = { ...latest.current, ...patch };
+    latest.current = next;
     setDraft(next);
+    // The daemon keeps the stored tile settings (the library types pinned
+    // to the repository) when a save leaves them out.
     saver.save({
       automatic: next.mode === "default" ? null : next.mode === "on",
       decisions: next.decisions ? null : false,
@@ -2717,7 +3131,7 @@ function RepositoryReviews({
           >
             <select
               id="repository-automatic"
-              className="local-field settings-select"
+              className={cn(SELECT_FIELD, "settings-select")}
               value={draft.mode}
               onChange={(e) => change({ mode: e.target.value as AutomaticMode })}
             >
@@ -2770,9 +3184,6 @@ function repositoryActivity(repository: string, entries: Entry[], jobs: Job[]): 
   };
 }
 
-/** A clone's path with the home folder written as `~`. */
-const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
-
 /** One registered repository: what it does at a glance; its name opens its
  *  page. */
 function RepositoryRow({
@@ -2824,10 +3235,10 @@ function RepositoryRow({
   const cloneState =
     !clone.available && (cloneActions.progress || cloneActions.form || cloneActions.errors);
   return (
-    <li
+    <ListRow
       data-row-id={repository.repository}
       data-focused={focused || undefined}
-      className="list-row local-repo-row"
+      className="local-repo-row"
       onContextMenu={(event) => menu.open(event, actions(), clone.repository)}
     >
       <div className="local-repo-main">
@@ -2944,7 +3355,7 @@ function RepositoryRow({
           </Button>
         </div>
       ) : null}
-    </li>
+    </ListRow>
   );
 }
 
@@ -3027,12 +3438,9 @@ export function RepositoryPage({
           {loading ? (
             <LoadingStatus block>Reading the repositories…</LoadingStatus>
           ) : (
-            <div className="local-empty">
-              <h2>This repository is not registered</h2>
-              <p>
-                <Link href={appURL("?page=repositories")}>Go to Repositories</Link>
-              </p>
-            </div>
+            <Empty variant="page" title="This repository is not registered">
+              <Link href={appURL("?page=repositories")}>Go to Repositories</Link>
+            </Empty>
           )}
         </div>
       </section>
@@ -3086,7 +3494,11 @@ export function RepositoryPage({
       <PageBar
         title={repository.repository}
         detail={
-          clone.available ? homePath(clone.path) : `${clone.path} · unavailable; history retained`
+          clone.available
+            ? homePath(clone.path)
+            : repository.clones.length === 0
+              ? "Needs a local clone"
+              : `${clone.path} · unavailable; history retained`
         }
         back={back}
       />
@@ -3116,7 +3528,11 @@ export function RepositoryPage({
                     </span>
                   ) : null}
                 </span>
-                {item.sub ? <span className="settings-nav-sub">{item.sub}</span> : null}
+                {item.sub ? (
+                  <span className="settings-nav-sub" title={item.sub}>
+                    {item.sub}
+                  </span>
+                ) : null}
               </span>
             </button>
           ))}
@@ -3173,7 +3589,7 @@ export function RepositoryPage({
 
 /** Whether the daemon page runs in the desktop app. */
 function hasFolderPicker() {
-  return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  return Boolean(desktopShell());
 }
 
 function GeneralSection() {
@@ -3183,7 +3599,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Appearance, keyboard and plan usage preferences on this device."
+        detail="Keyboard and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -3194,19 +3610,6 @@ function GeneralSection() {
         </Alert>
       ) : null}
       <div className="local-panel settings-list">
-        <SettingRow label="Preferred theme" htmlFor="preferred-theme">
-          <select
-            id="preferred-theme"
-            disabled={!ready}
-            className="local-field settings-select"
-            value={preferences.theme}
-            onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </SettingRow>
         <SettingRow
           label="Page shortcut modifier"
           htmlFor="page-modifier"
@@ -3215,7 +3618,7 @@ function GeneralSection() {
           <select
             id="page-modifier"
             disabled={!ready}
-            className="local-field settings-select"
+            className={cn(SELECT_FIELD, "settings-select")}
             value={pageModifier(preferences.page_modifier)}
             onChange={(event) => update({ page_modifier: event.target.value as PageModifier })}
           >

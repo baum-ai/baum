@@ -54,6 +54,38 @@ type Proposal struct {
 	Operation *OperationProposal `json:"operation,omitempty"`
 }
 
+// ProposalAnywhere is a sentinel page name, not a page: the proposals that
+// are not about the page the person has open, which the person saves from
+// anywhere. They are the two colour theme targets (TargetTheme, a custom
+// theme, and TargetThemeChoice, switching to an existing one), which the app
+// previews wherever they are, and the prompts (TargetPrompt+id, a global
+// prompt, and RepositoryTarget(repository, TargetPrompt+id), a repository's),
+// so a prompt can be changed while reading a review it wrote. Propose and
+// Save skip the same-page check for it, and no other target may use it: its
+// proposer refuses any but these targets, and these targets refuse any real
+// page.
+const ProposalAnywhere = "app"
+
+// isAnywhereTarget reports whether target is one proposed under
+// ProposalAnywhere: a theme target or a prompt.
+func isAnywhereTarget(target string) bool {
+	return isThemeTarget(target) || isPromptTarget(target)
+}
+
+// isThemeTarget reports whether target is one of the two theme targets.
+func isThemeTarget(target string) bool {
+	return target == TargetTheme || target == TargetThemeChoice
+}
+
+// isPromptTarget reports whether target is a global prompt (TargetPrompt+id)
+// or a repository's (RepositoryTarget(repository, TargetPrompt+id)).
+func isPromptTarget(target string) bool {
+	if repository, what, ok := ParseRepositoryTarget(target); ok && repository != "" {
+		target = what
+	}
+	return strings.HasPrefix(target, TargetPrompt) && len(target) > len(TargetPrompt)
+}
+
 // Proposer is how one page takes proposals. Every method gets the page
 // context the proposal was made on, so it can refuse a target that does not
 // belong to what that page shows (another pull request's item on a pull
@@ -79,7 +111,31 @@ type Proposer interface {
 // learns. It is passed to Apply alone and never kept in the proposal.
 type SaveInput struct {
 	Value *string `json:"value,omitempty"`
+	// Theme is what the person chose when saving a colour theme proposal: its
+	// name, the slot it goes in and whether it updates the theme it names or
+	// is saved as new. Empty fields take the proposal's own. For a theme
+	// choice only Slot is read: the slot in use, which the app resolves.
+	Theme *ThemeSave `json:"theme,omitempty"`
 }
+
+// ThemeSave is the person's choices when saving a theme proposal. Slot is
+// "light", "dark" or empty for the theme's base. Mode is ThemeModeUpdate or
+// ThemeModeNew, or empty for update when the proposal names a theme
+// (propose_theme's theme_id) and new otherwise.
+type ThemeSave struct {
+	Name string `json:"name,omitempty"`
+	Slot string `json:"slot,omitempty"`
+	Mode string `json:"mode,omitempty"`
+}
+
+// The modes of a theme save (ThemeSave.Mode), and the slot a theme choice
+// records when the agent named none (SlotInUse): the daemon cannot see the
+// operating system's appearance, so the app resolves it.
+const (
+	ThemeModeUpdate = "update"
+	ThemeModeNew    = "new"
+	SlotInUse       = "in_use"
+)
 
 // String, GoString and LogValue never print the value, so neither a log line
 // nor an error formatted with an input can carry it.
@@ -87,10 +143,15 @@ func (in SaveInput) String() string       { return in.redacted() }
 func (in SaveInput) GoString() string     { return in.redacted() }
 func (in SaveInput) LogValue() slog.Value { return slog.StringValue(in.redacted()) }
 func (in SaveInput) redacted() string {
-	if in.Value == nil {
-		return "SaveInput{}"
+	switch {
+	case in.Value != nil && in.Theme != nil:
+		return "SaveInput{Value: [withheld], Theme: set}"
+	case in.Value != nil:
+		return "SaveInput{Value: [withheld]}"
+	case in.Theme != nil:
+		return "SaveInput{Theme: set}"
 	}
-	return "SaveInput{Value: [withheld]}"
+	return "SaveInput{}"
 }
 
 // A consumer holds at most maxProposals proposals; a new one past that is
@@ -122,23 +183,56 @@ type Proposals struct {
 	writer    writer
 	mu        sync.Mutex
 	open      map[string][]Proposal
+	// notify are the OnChange functions.
+	notify []func(consumer string)
 }
 
 func newProposals(registry *Registry, proposers func(string) Proposer, operation func(string) *Operation, reader *Reader, api http.Handler) *Proposals {
 	p := &Proposals{registry: registry, proposers: proposers, operation: operation, reader: reader, writer: writer{api}, open: map[string][]Proposal{}}
 	registry.onRevoke(func(id string) {
 		p.mu.Lock()
+		had := len(p.open[id]) > 0
 		delete(p.open, id)
 		p.mu.Unlock()
+		if had {
+			p.changed(id)
+		}
 	})
 	return p
+}
+
+// OnChange registers f, called with a consumer's id after its open proposals
+// changed: one was proposed, saved, confirmed or dismissed, an operation's
+// summary was replaced by Confirm, or the consumer was revoked with
+// proposals open. It is called without the proposals' lock, after the
+// change, and must not block.
+func (p *Proposals) OnChange(f func(consumer string)) {
+	p.mu.Lock()
+	p.notify = append(p.notify, f)
+	p.mu.Unlock()
+}
+
+// changed calls the OnChange functions. p.mu must not be held.
+func (p *Proposals) changed(consumer string) {
+	p.mu.Lock()
+	notify := slices.Clone(p.notify)
+	p.mu.Unlock()
+	for _, f := range notify {
+		f(consumer)
+	}
 }
 
 // Propose records a proposal for the consumer with this id. Only a chat may
 // propose, and only for the page it has open. The target's current value and
 // revision are read from the proposer, not taken from the agent: a Before the
 // agent sent must match the current value.
-func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Proposal) (Proposal, error) {
+func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Proposal) (_ Proposal, err error) {
+	// Registered first, so it runs after the lock is released.
+	defer func() {
+		if err == nil {
+			p.changed(consumer)
+		}
+	}()
 	c, ok := p.registry.Consumer(consumer)
 	if !ok {
 		return Proposal{}, ErrUnknownConsumer
@@ -152,7 +246,14 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	}
 	proposal.Kind = ProposalDiff
 	page, ok := p.registry.Page(consumer)
-	if !ok || page.Page != proposal.Page {
+	// The exception is for the theme and prompt targets alone, and they are
+	// proposed under it alone.
+	if (proposal.Page == ProposalAnywhere) != isAnywhereTarget(proposal.Target) {
+		return Proposal{}, ErrNoProposer
+	}
+	// The theme and prompt proposals are the exception: they are not about a
+	// page, so whatever page is open will do.
+	if !ok || (proposal.Page != ProposalAnywhere && page.Page != proposal.Page) {
 		return Proposal{}, ErrNotCurrentPage
 	}
 	proposer := p.proposers(proposal.Page)
@@ -183,6 +284,15 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	// and one that runs later drops this too.
 	if !p.registry.live(consumer) {
 		return Proposal{}, ErrUnknownConsumer
+	}
+	// A new colour theme or theme choice replaces the open ones of either
+	// before it: only the newest is previewed and saved, and an older one must
+	// not resurface when the newest is saved or dismissed. A replaced proposal
+	// is dropped like a dismissed one.
+	if proposal.Page == ProposalAnywhere && isThemeTarget(proposal.Target) {
+		p.open[consumer] = slices.DeleteFunc(slices.Clone(p.open[consumer]), func(open Proposal) bool {
+			return open.Page == ProposalAnywhere && isThemeTarget(open.Target)
+		})
 	}
 	if len(p.open[consumer]) >= maxProposals {
 		return Proposal{}, errTooManyProposals
@@ -234,7 +344,12 @@ func (p *Proposals) find(consumer, id string) (Proposal, bool) {
 // write runs under the lock a revoke takes to drop proposals, after checking
 // the consumer is still live and the proposal still open: a revoke either
 // comes first and the save fails, or waits for the write.
-func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInput) error {
+func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInput) (err error) {
+	defer func() {
+		if err == nil {
+			p.changed(consumer)
+		}
+	}()
 	proposal, ok := p.find(consumer, id)
 	if !ok {
 		return ErrUnknownProposal
@@ -249,7 +364,7 @@ func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInp
 	// The person may have navigated since: the page must still be the one
 	// the proposal was made on, showing the same thing.
 	page, ok := p.registry.Page(consumer)
-	if !ok || !samePage(page, proposal.Context) {
+	if !ok || (proposal.Page != ProposalAnywhere && !samePage(page, proposal.Context)) {
 		return ErrNotCurrentPage
 	}
 	// Current refuses a target that does not belong to the page as it is
@@ -288,6 +403,7 @@ func (p *Proposals) Dismiss(consumer, id string) error {
 	if !p.remove(consumer, id) {
 		return ErrUnknownProposal
 	}
+	p.changed(consumer)
 	return nil
 }
 

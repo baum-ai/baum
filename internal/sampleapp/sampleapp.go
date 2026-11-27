@@ -80,8 +80,8 @@ func (w *Workspace) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		w.Own.ServeHTTP(rw, r)
 		return
 	}
-	// The sample keeps its own view state (what the Inbox folds, a
-	// walkthrough's place), which changes nothing that matters.
+	// The sample keeps its own view state (what the Inbox folds, a draft
+	// review), which changes nothing that matters.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/api/ui-state/") {
 		rw.Header().Set("X-Baum-Sample", Refused)
 		rw.Header().Set("Content-Type", "application/json")
@@ -195,7 +195,7 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	w.closers = append(w.closers, func() { _ = queue.Shutdown(context.Background()) })
 	cfg := config.Default()
 	cfg.Backend, cfg.Model = config.BackendClaude, "claude-sonnet-4-5"
-	queue.SetChat(&chat.Service{Registry: registry, Config: cfg, Root: filepath.Join(dir, "review-runs")})
+	queue.SetChat(&chat.Service{Registry: registry})
 	groups, err := reviewgroups.Open(appDB)
 	if err != nil {
 		return nil, err

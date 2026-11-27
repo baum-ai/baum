@@ -1,6 +1,6 @@
 import { openExternal, type PR } from "./api";
 import type { Toast } from "./toast";
-import type { ReviewEvent } from "./walkthrough-model";
+import type { ReviewEvent } from "./pending-review-model";
 
 /** What the toast says once GitHub has a review sent from the app. */
 export const REVIEW_SENT_TITLES: Record<ReviewEvent, string> = {

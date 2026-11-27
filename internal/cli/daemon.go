@@ -24,8 +24,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/decisions"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentdirs"
@@ -39,6 +42,7 @@ import (
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/console"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -49,12 +53,15 @@ import (
 	"github.com/baum-ai/baum/internal/githooks"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
+	"github.com/baum-ai/baum/internal/githubreads"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/inboxqueue"
+	"github.com/baum-ai/baum/internal/integrations"
+	"github.com/baum-ai/baum/internal/integrations/linear"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -68,6 +75,11 @@ import (
 	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
+	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilechecks"
+	"github.com/baum-ai/baum/internal/tiledrafts"
+	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
@@ -293,7 +305,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 			})
 			// Nobody answers prompts in the daemon: fetches over SSH run in
 			// batch mode with an agent socket that still exists.
-			gitlocal.SetBackground(&gitlocal.Background{SSHAgent: sshAgent().Socket})
+			gitlocal.SetBackground(&gitlocal.Background{SSHAgent: daemonSSHAgent().Socket})
 			return nil
 		},
 		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
@@ -336,6 +348,10 @@ var resolveShell = shellenv.Resolve
 // recordedAgentsInterval is how often the daemon checks whether `baum
 // desktop-setup` recorded the coding agents again.
 const recordedAgentsInterval = 15 * time.Second
+
+// daemonSSHAgent is the daemon's one sshAgent, which fetches and the
+// session panel's turns share.
+var daemonSSHAgent = sync.OnceValue(sshAgent)
 
 // sshAgent replaces a stale SSH agent socket with the login shell's. The
 // shell is not given the stale socket, so it reports the one its own startup
@@ -437,6 +453,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
+		// A stack's page sums up its members' saved reviews in a few
+		// sentences, written again when they change; it runs once a model
+		// call can be made and recorded (the decision log's ledger, below).
+		summaries := &reviewgroups.Summarizer{Store: groups, Index: index.Snapshot, Read: latestReview(registry), Changed: changed, Log: log}
 		// Automatic generation is separate from the model-free background
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
@@ -465,30 +485,50 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
 				} else if synced {
 					changed()
+					summaries.Wake()
 				}
 			}
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
 		}
 		scheduler.Discovered = worker.Discovered
-		chats := &chat.Service{Registry: registry, Config: cfg, Log: log}
+		chats := &chat.Service{Registry: registry}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
 		// Held until the application is wired below: a journaled feature
-		// build needs the feature log, and the queue's logger, usage events
-		// and chat service are set after it opens.
-		queue, err := jobs.OpenHeld(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
+		// build needs the feature log, and the queue's logger and usage
+		// events are set after it opens.
+		// The tiles each person added to a pull request's review page, served
+		// on every version and draft the tile routes serve; a write tells
+		// the app's open page to read its tiles again. Reviews fill the
+		// library types people added (jobs.Local.Added).
+		tileLibrary := &tilelibrary.Store{Path: database}
+		added := &addedtiles.Service{Path: database, Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
+		}}
+		if err := added.Sweep(ctx); err != nil {
+			log.Warn("the added tiles were not swept", "error", err)
+		}
+		// A review's agent reads baum's MCP server with a read-only review
+		// token; the server is built after the executor, which reviewMCP
+		// learns once it is (Serve, below).
+		reviewMCP := &agentcontext.ReviewMCP{}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary, ReviewMCP: reviewMCP.Attach,
+			Attributions: &commitattribution.Store{}}
+		// The tiles a person added that a version has no data for are
+		// filled beside the queue.
+		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Added: added, Log: log}
+		queue, err := jobs.OpenHeld(database, executor, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
-			if event, ok := jobs.ChatEvent(job); ok {
-				_ = server.Publish("chat", event)
-			}
 			if job.Phase == "finished" {
 				changed()
 				// Reading the index takes a moment; the queue must not wait.
 				go notify.JobDone(ctx, job)
 				// A PR whose job finished may have a pending head.
 				scheduler.Wake()
+				// A new saved review may call for its stack's summary.
+				summaries.Wake()
 				// A fix pushed a new head: show it at once, and poll again
 				// until its checks appear, which takes GitHub a few seconds.
 				if repo, err := github.ParseRepository(job.Repository); err == nil && job.Kind == jobs.KindFix && job.Commit != "" {
@@ -509,6 +549,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
+		queue.SetAdded(added.Added)
 		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
@@ -600,6 +641,12 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				builds.worker.Store(featureLog)
 				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
 					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
+				// A stack summary is one short call with the cheap data
+				// extraction model, recorded in the decision log's ledger.
+				calls := &decisionlog.Calls{Store: decisionStore, Registry: registry, Config: cfg, Log: log}
+				summaries.Complete = func(ctx context.Context, g reviewgroups.Group, req decisions.ModelRequest, check func([]byte) error) ([]byte, string, error) {
+					return calls.Complete(ctx, decisionlog.Attempt{Repository: g.Repository, Stage: decisionlog.StageStackSummary, Item: "group:" + g.ID, Mode: "summarize"}, req, check)
+				}
 			}
 		}
 		home, _ := os.UserHomeDir()
@@ -748,9 +795,48 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			state, err := savedInboxes.Read()
 			return state.Inboxes, err
 		}}
+		// Automatic reviews that follow the inboxes review what they hold.
+		scheduler.InAutoReviewInbox = inboxQueue.AutoReview
 		inboxesAPI := &inboxes.API{Store: savedInboxes, Changed: changed}
 		var lastHookTrust uiserver.LastHookTrust
-		local := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		// The session panel's service needs the MCP server, which reads
+		// through this API, so its routes find it once it is built below,
+		// before the server serves.
+		var conversations *console.Service
+		var conversationRoutes http.Handler
+		consoleRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if conversationRoutes == nil {
+				console.Unavailable().ServeHTTP(w, r)
+				return
+			}
+			conversationRoutes.ServeHTTP(w, r)
+		})
+		// The tile checks compile their schemas on first use; do it now, off
+		// the request path, so the first review opened does not wait.
+		go func() {
+			if err := tileview.Warm(); err != nil {
+				log.Warn("the tile checks could not be prepared", "error", err.Error())
+			}
+		}()
+		// The render check: the app's check runner draws candidate tile types
+		// and the tiles page's first-show preflights.
+		// A custom tile's data holds references to the images the host
+		// stored for it; the runner draws them as data: URLs.
+		tileChecks, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Database: database, Log: log,
+			Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+			Subscribed: server.Subscribed, Inline: added.InlineImages})
+		if err != nil {
+			log.Warn("the render check could not keep its verdicts", "error", err.Error())
+			tileChecks, _ = tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Log: log,
+				Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+				Subscribed: server.Subscribed, Inline: added.InlineImages})
+		}
+		// The pending cards of tiles being made in the session panel; a
+		// change tells the open page to read its tiles again.
+		drafts := &tiledrafts.Store{Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
+		}}
+		local := uiserver.LocalAPI{Integrations: integrations.Handler(linear.New(ctx, os.Getenv("BAUM_LINEAR_CLIENT_ID"))), Drafts: drafts, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
@@ -758,7 +844,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 			}
 			return cached
-		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), GitHubReads: uiserver.GitHubReadsHandler(registry, &githubreads.Service{Client: githubClient}), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
 			Inboxes:   inboxesAPI.Handler(),
 			Groups:    groupsAPI.Handler(),
@@ -787,13 +873,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version()}
+			Diagnostics: uiDiagnostics, Version: version(), Added: added, Fills: tileFills, TileTypes: tileLibrary}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		// What a chat proposes is saved, when the person saves it, through
 		// the pages' own saves.
-		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState}
+		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState, TileTypes: tileLibrary}
 		if requests != nil {
 			proposers.CodexApprovals = func() bool { return requests.Settings().CodexApprovals }
 			proposers.SetCodexApprovals = func(on bool, check func(bool) error) error {
@@ -803,7 +889,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Added: uiserver.AddedTilesAPI{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary, Checks: tileChecks}, ChatTiles: &uiserver.ChatTiles{API: local, Checks: tileChecks, Drafts: drafts}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
 			listing, loaded, err := pickList.Cached(ctx, query)
 			if err != nil {
 				return agentcontext.PickList{}, err
@@ -826,6 +912,82 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			return "", errors.New("unknown clone")
 		}})
+		// The app server listens after Start returns, so its origin is read
+		// whenever an agent run starts.
+		mcpURL := func() string {
+			if origin := server.Origin(); origin != "" {
+				return origin + "/api/mcp"
+			}
+			return ""
+		}
+		reviewMCP.Serve(mcp.Registry, mcpURL)
+		// The session panel's conversations run the person's own agent CLI
+		// with baum's MCP server; each holds a chat token of this server.
+		// A store that does not open leaves the panel off, not the daemon.
+		conversations, err = console.New(console.Options{Database: database, Registry: mcp.Registry, Proposals: mcp.Proposals, Clones: registry.List, Log: log,
+			// Before each turn a stale SSH agent socket is replaced, as
+			// before a fetch.
+			SSHAgent: daemonSSHAgent().Socket,
+			MCPURL:   mcpURL,
+			Defaults: func(ctx context.Context) (console.Defaults, error) {
+				prefs, err := registry.Preferences(ctx)
+				if err != nil {
+					return console.Defaults{}, err
+				}
+				panel := prefs.ResolvePanel(prefs.Resolve(cfg))
+				return console.Defaults{Agent: panel.Agent, Model: panel.Model, Mode: panel.Mode}, nil
+			},
+			Pull: func(ctx context.Context, repository string, number int) (console.Pull, error) {
+				repo, err := github.ParseRepository(repository)
+				if err != nil {
+					return console.Pull{}, err
+				}
+				snapshot, err := discover.Cached(ctx, repo)
+				if err != nil {
+					return console.Pull{}, err
+				}
+				for _, pr := range snapshot.PullRequests {
+					if pr.Number == number {
+						return console.Pull{HeadRef: pr.HeadRef, HeadSHA: pr.HeadSHA, Fork: pr.Fork}, nil
+					}
+				}
+				return console.Pull{}, fmt.Errorf("pull request %d of %s is not among the discovered ones", number, repository)
+			},
+			Config: func(ctx context.Context) (config.Config, error) {
+				prefs, err := registry.Preferences(ctx)
+				if err != nil {
+					return config.Config{}, err
+				}
+				return prefs.Resolve(cfg), nil
+			},
+			Price: func(backend string, accounting *agent.Accounting) (*float64, string) {
+				return pricing.Active().BackendAccountingCost(backend, accounting)
+			},
+			Publish:          func(event console.Event) { _ = server.Publish("console", event) },
+			Transcript:       conversationTranscript(transcripts),
+			SessionDirectory: sessionDirectory(transcripts),
+			SessionRunning:   sessionRunning(transcripts),
+		})
+		if err != nil {
+			log.Warn("the session panel is off: its conversations did not open", "error", err)
+			conversations = nil
+		} else {
+			conversationRoutes = conversations.Handler()
+			if live != nil {
+				// Panel sessions are listed on the Sessions page, marked as
+				// the panel's, even in a conversation's empty directory.
+				live.Panel = conversations.Owns
+			}
+			if requests != nil {
+				// The panel runs its sessions headless: their requests are
+				// left to their own permission mode, and the panel, not a
+				// queued message, writes to them.
+				requests.Panel = func(agent, id string) bool {
+					_, ok := conversations.Owns(agent, id, "")
+					return ok
+				}
+			}
+		}
 		// Everything the journaled jobs need is wired: start them.
 		queue.Resume()
 		return daemon.App{
@@ -861,6 +1023,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					wg.Go(func() { capture.Run(ctx) })
 					wg.Go(func() { featureLog.Run(ctx) })
 				}
+				if summaries.Complete != nil {
+					summaries.Wake()
+					wg.Go(func() { summaries.Run(ctx) })
+				}
 				if requestEvents != nil {
 					wg.Go(func() { requests.Run(ctx, requestEvents) })
 				}
@@ -869,6 +1035,11 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				wg.Go(func() { hooks.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
+				if conversations != nil {
+					// Stopping ends every running turn and revokes the
+					// conversations' tokens.
+					wg.Go(func() { conversations.Run(ctx) })
+				}
 				if endedSessions != nil {
 					wg.Go(func() {
 						for {
@@ -905,6 +1076,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Close: func() {
 				sample.Close()
 				api.Close()
+				_ = tileChecks.Close()
 				groupsAPI.Close()
 				unsubscribe()
 				unsubscribeClones()
@@ -913,6 +1085,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				events.Close()
 				if decisionStore != nil {
 					_ = decisionStore.Close()
+				}
+				if conversations != nil {
+					_ = conversations.CloseStore()
 				}
 				_ = groups.Close()
 				_ = registry.Close()
@@ -956,6 +1131,40 @@ func (h hookEvents) Methods() map[string]daemon.Method {
 		return nil
 	}
 	return h.service.Methods()
+}
+
+// conversationTranscript serves a session panel conversation's transcript
+// as the live sessions' transcript route does, whether the tracker still
+// lists its session or not; nil without live transcripts.
+func conversationTranscript(transcripts *livesessions.Transcripts) func(http.ResponseWriter, *http.Request, string, string) {
+	if transcripts == nil {
+		return nil
+	}
+	return func(w http.ResponseWriter, r *http.Request, agent, id string) {
+		answer, err := transcripts.Read(r.Context(), agent, id, "", "")
+		transcripts.WriteAnswer(w, r, answer, err)
+	}
+}
+
+// sessionRunning tells the panel whether something else, such as the
+// person's terminal, runs a session it is about to write to; nil without
+// live transcripts.
+func sessionRunning(transcripts *livesessions.Transcripts) func(string, string, time.Time) bool {
+	if transcripts == nil {
+		return nil
+	}
+	return transcripts.Running
+}
+
+// sessionDirectory finds where a session the panel resumes worked; nil
+// without live transcripts.
+func sessionDirectory(transcripts *livesessions.Transcripts) func(context.Context, string, string) (string, error) {
+	if transcripts == nil {
+		return nil
+	}
+	return func(_ context.Context, agent, id string) (string, error) {
+		return transcripts.SessionDirectory(agent, id)
+	}
 }
 
 // liveSessions tracks the agent sessions the record's events show, or nothing
@@ -1100,8 +1309,9 @@ func gitHooks(registry *repos.Registry, log *slog.Logger) *githooks.Service {
 	return service
 }
 
-// maintainReviewRuns expires the run directories of reviews that kept their
-// agent session, at start and then daily.
+// maintainReviewRuns expires the run directories, and their agent sessions,
+// that reviews of earlier versions kept, at start and then daily. Reviews keep
+// none any more, so this only clears what is left.
 func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 	root, err := reviewruns.DefaultRoot()
 	if err != nil {
@@ -1226,6 +1436,28 @@ func coalesce(every time.Duration, f func()) func() {
 			mu.Unlock()
 			f()
 		})
+	}
+}
+
+// latestReview reads the latest saved review of a pull request from a
+// registered clone's store, for the stack summaries.
+func latestReview(registry *repos.Registry) func(context.Context, string, int) (store.Version, error) {
+	return func(ctx context.Context, id string, number int) (store.Version, error) {
+		clones, err := registry.List(ctx)
+		if err != nil {
+			return store.Version{}, err
+		}
+		for _, clone := range clones {
+			if clone.ID != id {
+				continue
+			}
+			versions, err := store.Open(clone.CommonDir, "", false)
+			if err != nil {
+				return store.Version{}, err
+			}
+			return versions.Latest(ctx, store.Key{Repository: clone.Repository, Number: number})
+		}
+		return store.Version{}, store.ErrNotFound
 	}
 }
 

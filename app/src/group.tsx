@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useId, useRef, useState } from "react";
 import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
-import { ChevronRightIcon, MergeIcon, StackIcon } from "@baum/viewer/components/icons";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  MergeIcon,
+  StackIcon,
+} from "@baum/viewer/components/icons";
 import { documentFilesSlot } from "./facts";
 import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import { useHistoryView } from "@baum/viewer/use-review-version";
@@ -11,6 +16,7 @@ import {
   type ReviewDocument,
 } from "@baum/viewer/review-document";
 import { RepositoryFileDialog } from "./repository-file";
+import { type RepositoryFileSources, RepositoryFileSourceContext } from "./repository-file-source";
 import {
   MAX_GROUP_MEMBERS,
   appURL,
@@ -33,9 +39,16 @@ import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
 import { ConfirmDialog, NameDialog } from "./group-dialogs";
-import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
+import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
+import { StackOverview, type StackMember } from "./stack-overview";
 import { useVersionLoader } from "./version-cache";
-import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
+import {
+  openActiveBlock,
+  reviewKeyStep,
+  SIDE_PANE_KEY,
+  toggleActiveBlock,
+  useShortcuts,
+} from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { listedForGroup, useGroupRail, type RailMember } from "./group-rail";
 import { useLiveThreadsOf } from "./threads";
@@ -73,19 +86,7 @@ function waitingText(numbers: number[]) {
   }.`;
 }
 
-/** A review group: one combined review of its member pull requests, with the
- *  members and the controls that change them above it. */
-export function GroupPage({
-  group,
-  entries,
-  jobs,
-  clones,
-  cloneFor,
-  live = [],
-  revision,
-  changed,
-  refresh,
-}: {
+type GroupPageProps = {
   group: ReviewGroup;
   /** The inbox's entries, with generating ones marked. */
   entries: Entry[];
@@ -98,7 +99,123 @@ export function GroupPage({
   changed: () => Promise<void>;
   /** Reads the group's repository from GitHub again, from the head's refresh. */
   refresh?: (run: RefreshRun) => Promise<unknown>;
-}) {
+};
+
+/** A review group's page: a stack's overview, or the combined review of a
+ *  group a person made. */
+export function GroupPage(props: GroupPageProps) {
+  return props.group.stack ? <StackPage {...props} /> : <GroupReviewPage {...props} />;
+}
+
+/** Where a stack's pull request stands on its page: its review, and the
+ *  review's risk. */
+function stackMemberState(entry: Entry): { text: string; tone: string } {
+  const status = reviewStatus[entry.status] ?? entry.status;
+  const score = entry.risk_score?.score;
+  const text = score != null ? `${status} · Risk ${score} of 5` : status;
+  switch (entry.status) {
+    case "generating":
+      return { text, tone: "working" };
+    case "failed":
+      return { text, tone: "fix" };
+    case "no_review":
+      return { text, tone: "waiting" };
+    default:
+      return { text, tone: "review" };
+  }
+}
+
+/** A stack's page: its overview, with each pull request opening its own
+ *  review page. A stack has no combined review. */
+function StackPage({ group, entries, cloneFor, refresh }: GroupPageProps) {
+  usePageRefreshAction(refresh);
+  const url = useUrlState();
+  const back = backTo(url.search);
+  const memberHref = (entry: Entry) => {
+    const cloneId = cloneFor(entry);
+    return appURL(
+      `?${back.prefix}${cloneId ? `clone=${encodeURIComponent(cloneId)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${entry.pull_request.number}`,
+    );
+  };
+  const read = (number: number) => {
+    const same = entries.filter(
+      (e) =>
+        sameRepository(e.pull_request.repository, group.repository) &&
+        e.pull_request.number === number,
+    );
+    return same.find((e) => !e.historical) ?? same[0];
+  };
+  const members: StackMember[] = [
+    ...(group.landed ?? []).map(({ number, state }) => {
+      const entry = read(number);
+      return {
+        number,
+        entry,
+        state: {
+          text: landedLabel[state] ?? "No longer open",
+          tone: state === "merged" ? "merged" : "waiting",
+        },
+        href: entry ? memberHref(entry) : undefined,
+      };
+    }),
+    ...group.members.flatMap((number) => {
+      const entry = read(number);
+      return entry
+        ? [{ number, entry, state: stackMemberState(entry), href: memberHref(entry) }]
+        : [];
+    }),
+  ];
+  return (
+    <section className="local-stack-page">
+      <PageBar
+        title={group.name}
+        back={
+          <ViewerLink
+            href={back.href}
+            className="local-page-back"
+            aria-label={`Back to ${back.label}`}
+            title={`Back to ${back.label} (Esc)`}
+          >
+            <ChevronLeftIcon size={18} />
+            <kbd aria-hidden="true" className="key-hint">
+              Esc
+            </kbd>
+          </ViewerLink>
+        }
+        actions={
+          refresh ? <RefreshButton refresh={refresh} label="Refresh from GitHub" /> : undefined
+        }
+      />
+      {/* The Inbox's panel styles, the page scrolling under its bar. */}
+      <div className="upnext-page">
+        <div className="upnext-detail">
+          <StackOverview
+            group={group}
+            members={members}
+            entries={entries}
+            memberHref={memberHref}
+            Link={ViewerLink}
+            titled={false}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** A review group a person made: one combined review of its member pull
+ *  requests, with the members and the controls that change them above it. */
+function GroupReviewPage({
+  group,
+  entries,
+  jobs,
+  clones,
+  cloneFor,
+  live = [],
+  revision,
+  changed,
+  refresh,
+}: GroupPageProps) {
   // The refresh key works before the head and its button are drawn.
   usePageRefreshAction(refresh);
   const url = useUrlState();
@@ -151,6 +268,8 @@ export function GroupPage({
   const [retry, setRetry] = useState(0);
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
+  // Groups and stacks show the full review, whichever review page the
+  // reader chose for a pull request.
   const loadVersion = useVersionLoader(
     group.id,
     (version) => groupDocumentRequest(group.id, version),
@@ -166,6 +285,16 @@ export function GroupPage({
       ? history.state.document
       : null
     : doc;
+  // Where "Where this fits" reads the files it names, whole, at the stack's
+  // head, from the group's own file route.
+  // Each pane reads its own version's files: two compared versions differ.
+  const repositoryFiles = useMemo<RepositoryFileSources>(
+    () => (document) => ({
+      source: `api/groups/${encodeURIComponent(group.id)}/file?version=${document.review.version}`,
+      href: (path) => contextRefUrl(document, path),
+    }),
+    [group.id],
+  );
   // The group review's threads are its members' (removed and landed included), as a
   // snapshot from when it was generated; the Activity tab reads them as
   // GitHub has them now.
@@ -429,10 +558,24 @@ export function GroupPage({
       step.go();
     }
   });
+  const sectionLabels = (section: { pull_requests?: number[] }) =>
+    section.pull_requests?.length ? (
+      <>
+        {section.pull_requests.map((number) => {
+          const entry = members.find((m) => m.number === number)?.entry;
+          return (
+            <Badge key={number} size="compact">
+              {entry ? <ViewerLink href={memberHref(entry)}>#{number}</ViewerLink> : `#${number}`}
+            </Badge>
+          );
+        })}
+      </>
+    ) : null;
 
   return (
-    <>
+    <RepositoryFileSourceContext.Provider value={repositoryFiles}>
       <ReviewViewer
+        sidePaneKey={SIDE_PANE_KEY}
         // A file a context chip names opens here, in a dialog over the page,
         // read at the stack's head from the group's own file route.
         openRepositoryFile={(reference) => {
@@ -734,24 +877,7 @@ export function GroupPage({
             ) : null}
           </>
         }
-        renderSectionLabels={(section) =>
-          section.pull_requests?.length ? (
-            <>
-              {section.pull_requests.map((number) => {
-                const entry = members.find((m) => m.number === number)?.entry;
-                return (
-                  <Badge key={number} size="compact">
-                    {entry ? (
-                      <ViewerLink href={memberHref(entry)}>#{number}</ViewerLink>
-                    ) : (
-                      `#${number}`
-                    )}
-                  </Badge>
-                );
-              })}
-            </>
-          ) : null
-        }
+        renderSectionLabels={sectionLabels}
         hunkPatches={patches}
         {...rail}
       />
@@ -799,6 +925,6 @@ export function GroupPage({
           your agent runs in an isolated environment.
         </ConfirmDialog>
       ) : null}
-    </>
+    </RepositoryFileSourceContext.Provider>
   );
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,83 @@ func (r *takeAll) Validate(context.Context, PageContext, Proposal) error { retur
 func (r *takeAll) Apply(_ context.Context, _ PageContext, _ Proposal, _ string, input SaveInput) error {
 	r.inputs = append(r.inputs, input)
 	return r.fail
+}
+
+// A prompt is proposed from any page, such as a pull request's while the
+// person reads its review: the repository named, else a repository page's,
+// else the global prompt. A prompt proposal leaves the open theme proposal
+// alone, and a theme proposal the prompt's.
+func TestPromptProposalsFromAnyPage(t *testing.T) {
+	rec := &takeAll{}
+	s := New(Options{API: http.NotFoundHandler(), Proposers: map[string]Proposer{ProposalAnywhere: rec}})
+	token, id := chat(t, s)
+	pull := PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12}
+	repository := PageContext{Page: PageRepositories, Repository: "acme/web", Section: "reviews"}
+	for _, tt := range []struct {
+		name   string
+		page   PageContext
+		tool   string
+		args   map[string]any
+		target string
+		after  string
+	}{
+		{"the pull request's repository", pull, "propose_prompt", map[string]any{"id": "review", "text": "t", "repository": "ACME/web"}, "acme/web:prompt/review", `{"text":"t"}`},
+		{"global from a pull request", pull, "propose_prompt", map[string]any{"id": "review", "text": "t"}, TargetPrompt + "review", `{"text":"t"}`},
+		{"another repository", pull, "propose_prompt_reset", map[string]any{"id": "fix", "repository": "acme/api"}, "acme/api:prompt/fix", `{"text":null}`},
+		{"a repository's on Settings", PageContext{Page: PageSettings, Section: "general"}, "propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "acme/web"}, "acme/web:prompt/fix", `{"text":"t"}`},
+		{"global on Settings", PageContext{Page: PageSettings, Section: "prompts"}, "propose_prompt_reset", map[string]any{"id": "fix"}, TargetPrompt + "fix", `{"text":null}`},
+		{"the repository page's", repository, "propose_prompt", map[string]any{"id": "fix", "text": "t"}, "acme/web:prompt/fix", `{"text":"t"}`},
+		{"another from a repository page", repository, "propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "acme/other"}, "acme/other:prompt/fix", `{"text":"t"}`},
+		{"global from the Inbox", PageContext{Page: PageInbox}, "propose_prompt_reset", map[string]any{"id": "fix"}, TargetPrompt + "fix", `{"text":null}`},
+	} {
+		setPage(t, s, id, tt.page)
+		text, failed := data(t, s, token, tt.tool, tt.args)
+		if failed {
+			t.Errorf("%s: %s", tt.name, text)
+			continue
+		}
+		list := s.Proposals.List(id)
+		p := list[len(list)-1]
+		if p.Page != ProposalAnywhere || p.Target != tt.target || string(p.After) != tt.after || p.Context.Page != tt.page.Page {
+			t.Errorf("%s recorded %s %s %s on %s", tt.name, p.Page, p.Target, p.After, p.Context.Page)
+		}
+		if !isAnywhereTarget(p.Target) {
+			t.Errorf("%s: %q is not an any-page target", tt.name, p.Target)
+		}
+		if err := s.Proposals.Dismiss(id, p.ID); err != nil {
+			t.Fatalf("%s: dismiss: %v", tt.name, err)
+		}
+	}
+	setPage(t, s, id, pull)
+	if text, failed := data(t, s, token, "propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "acme"}); !failed {
+		t.Errorf("a repository without its owner: %s", text)
+	}
+	for _, target := range []string{"prompt/", "acme/web:prompt/", "acme/web:settings", "settings"} {
+		if isPromptTarget(target) {
+			t.Errorf("%q is a prompt target", target)
+		}
+	}
+	theme := map[string]any{"name": "T", "base": "light", "tokens": map[string]string{}}
+	for _, step := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"propose_theme", theme},
+		{"propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "acme/web"}},
+		{"propose_theme", theme},
+		{"propose_prompt", map[string]any{"id": "review", "text": "t"}},
+	} {
+		if text, failed := data(t, s, token, step.tool, step.args); failed {
+			t.Fatalf("%s: %s", step.tool, text)
+		}
+	}
+	var targets []string
+	for _, p := range s.Proposals.List(id) {
+		targets = append(targets, p.Target)
+	}
+	if want := []string{"acme/web:prompt/fix", TargetTheme, TargetPrompt + "review"}; !slices.Equal(targets, want) {
+		t.Errorf("open proposals %v, want %v", targets, want)
+	}
 }
 
 // Each propose tool records its page's target and the change asked for, and
@@ -45,23 +123,21 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 		target string
 		after  string
 	}{
-		{settings("general"), "propose_appearance", map[string]any{"theme": "dark"}, TargetAppearance, `{"theme":"dark"}`},
+		{settings("general"), "propose_appearance", map[string]any{"key_hints": false}, TargetAppearance, `{"key_hints":false}`},
 		{settings("general"), "propose_plan_usage", map[string]any{"provider": "codex", "shown": nil}, TargetPlanUsage + "codex", `{"shown":null}`},
 		{settings("reviews"), "propose_reviews", map[string]any{"enabled": false, "model": "m"}, TargetReviews, `{"enabled":false,"model":"m"}`},
 		{settings("reviews"), "propose_decision_capture", map[string]any{"effort": "low"}, TargetDecisions, `{"effort":"low"}`},
 		{settings("fixes"), "propose_fixes", map[string]any{"backend": ""}, TargetFixes, `{"backend":""}`},
 		{settings("computer"), "propose_time_limits", map[string]any{"run_time_limit_minutes": 5}, TargetTimeLimits, `{"run_time_limit_minutes":5}`},
 		{settings("computer"), "propose_job_concurrency", map[string]any{"job_concurrency": 2}, TargetJobConcurrency, `{"job_concurrency":2}`},
+		{settings("reviews"), "propose_labs", map[string]any{"tile_reviews": true}, TargetLabs, `{"tile_reviews":true}`},
 		{settings("computer"), "propose_codex_approvals", map[string]any{"codex_approvals": false}, TargetCodexApprovals, `{"codex_approvals":false}`},
 		{settings("computer"), "propose_agent_env", map[string]any{"name": "API_URL", "action": "add"}, TargetAgentEnv + "API_URL", `{"name":"API_URL","needs_value":true}`},
 		{settings("computer"), "propose_agent_env", map[string]any{"name": "API_URL", "action": "remove"}, TargetAgentEnv + "API_URL", `{"name":"API_URL","remove":true}`},
-		{settings("prompts"), "propose_prompt", map[string]any{"id": "fix", "text": "t"}, TargetPrompt + "fix", `{"text":"t"}`},
-		{settings("prompts"), "propose_prompt_reset", map[string]any{"id": "fix"}, TargetPrompt + "fix", `{"text":null}`},
-		{repository, "propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "ACME/web"}, "acme/web:prompt/fix", `{"text":"t"}`},
-		{repository, "propose_prompt_reset", map[string]any{"id": "fix"}, "acme/web:prompt/fix", `{"text":null}`},
 		{repository, "propose_repository_settings", map[string]any{"automatic": nil}, "acme/web:settings", `{"automatic":null}`},
 		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"name": "N"}, TargetNewInbox, `{"name":"N"}`},
 		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"id": strings.Repeat("a", 32), "badge": false}, TargetInbox + strings.Repeat("a", 32), `{"badge":false}`},
+		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"id": strings.Repeat("a", 32), "auto_review": false}, TargetInbox + strings.Repeat("a", 32), `{"auto_review":false}`},
 		{PageContext{Page: PageGroup, Group: "g1"}, "propose_group", map[string]any{"add": []int{3}}, TargetGroup + "g1", `{"add":[3]}`},
 		{PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12}, "propose_review_comment", map[string]any{"body": "b"}, "acme/web#12:review_comment", `{"body":"b"}`},
 	} {
@@ -96,20 +172,12 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 	before := len(s.Proposals.List(id))
 	setPage(t, s, id, PageContext{Page: PageInbox})
 	for tool, args := range map[string]map[string]any{
-		"propose_appearance": {"theme": "dark"}, "propose_prompt": {"id": "fix", "text": "t"}, "propose_group": {"name": "x"},
+		"propose_appearance": {"key_hints": false}, "propose_group": {"name": "x"},
 		"propose_repository_settings": {"automatic": true}, "propose_review_comment": {"body": "b"},
 	} {
 		if text, failed := data(t, s, token, tool, args); !failed {
 			t.Errorf("%s on the Inbox: %s", tool, text)
 		}
-	}
-	setPage(t, s, id, PageContext{Page: PageSettings, Section: "prompts"})
-	if text, failed := data(t, s, token, "propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "acme/web"}); !failed {
-		t.Errorf("a repository's prompt on Settings: %s", text)
-	}
-	setPage(t, s, id, repository)
-	if text, failed := data(t, s, token, "propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "acme/other"}); !failed {
-		t.Errorf("another repository's prompt: %s", text)
 	}
 	if len(s.Proposals.List(id)) != before {
 		t.Error("a refused proposal was recorded")

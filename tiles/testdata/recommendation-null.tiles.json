@@ -1,0 +1,797 @@
+{
+  "schema": "baum.tiles/1",
+  "origin": {
+    "kind": "converted",
+    "from": "baum.review/1",
+    "schema_revision": "2026-11-12.1",
+    "converter": 1
+  },
+  "review": {
+    "base": "0f1e2d3c4b5a69788796a5b4c3d2e1f001234567",
+    "evidence_refreshed_at": "2026-11-01T10:05:00Z",
+    "generated_at": "2026-11-01T10:00:00Z",
+    "generation_state": "current",
+    "generator": {
+      "model": "example-model",
+      "review_md": null,
+      "schema_revision": "2026-11-12.1",
+      "truncated": []
+    },
+    "head": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+    "merge_base": "0f1e2d3c4b5a69788796a5b4c3d2e1f001234567",
+    "merged_commit": null,
+    "pr_state": "open",
+    "previous_version": 2,
+    "pull_request": 42,
+    "relations": [],
+    "repository": "acme/widgets",
+    "sources": {
+      "agent_reviews": 1,
+      "checks": 0,
+      "diff": true,
+      "review_md": false,
+      "review_threads": false,
+      "sessions": 0,
+      "spec_links": false,
+      "test_reports": 0
+    },
+    "version": 3
+  },
+  "facts": {
+    "title": "Retry failed deliveries with backoff",
+    "author": {
+      "association": "MEMBER",
+      "bot": false,
+      "login": "octo-dev"
+    },
+    "authorship": {
+      "anchors": [],
+      "declared": "ai_assisted",
+      "declared_tools": [],
+      "observed_sessions": 0,
+      "observed_vendors": []
+    },
+    "review_exchange": {
+      "back_and_forths": null,
+      "changes_after_open": null,
+      "critical_issues_found": null,
+      "reviews": 0,
+      "summary": null
+    },
+    "review_minutes": 6
+  },
+  "stats": {
+    "additions": 120,
+    "agent_findings": {
+      "dismissed": 0,
+      "open": 1,
+      "resolved": 0
+    },
+    "checks": {
+      "optional_failed": 0,
+      "pending": 0,
+      "required_failed": 0,
+      "skipped": 0
+    },
+    "deletions": 20,
+    "files": 5,
+    "hunks": 7,
+    "risk_loc": {
+      "critical": 0,
+      "high": 60,
+      "low": 30,
+      "mechanical": 30,
+      "medium": 0,
+      "unrated": 0
+    },
+    "role_loc": {
+      "code": 90,
+      "generated": 30,
+      "test": 20
+    },
+    "sections": 3
+  },
+  "index": {
+    "attachments": [
+      {
+        "content_type": "image/png",
+        "height": 320,
+        "id": "att_aa01",
+        "position": 1,
+        "width": 640
+      }
+    ],
+    "checks": [],
+    "comments": [],
+    "hunks": [
+      {
+        "additions": 40,
+        "change": "modified",
+        "deletions": 5,
+        "id": "h_000000000001",
+        "new_range": [
+          10,
+          40
+        ],
+        "path": "worker/deliver.go",
+        "role": "code"
+      },
+      {
+        "additions": 20,
+        "change": "modified",
+        "deletions": 5,
+        "id": "h_000000000002",
+        "new_range": [
+          1,
+          30
+        ],
+        "path": "worker/deliver_test.go",
+        "role": "test"
+      },
+      {
+        "additions": 30,
+        "change": "modified",
+        "deletions": 0,
+        "id": "h_000000000003",
+        "new_range": [
+          20,
+          12
+        ],
+        "path": "config/config.go",
+        "role": "code"
+      },
+      {
+        "additions": 20,
+        "change": "modified",
+        "deletions": 5,
+        "id": "h_000000000004",
+        "new_range": [
+          1,
+          20
+        ],
+        "path": "client/client.gen.go",
+        "role": "generated"
+      },
+      {
+        "additions": 10,
+        "change": "modified",
+        "deletions": 5,
+        "id": "h_000000000005",
+        "new_range": [
+          80,
+          10
+        ],
+        "path": "client/client.gen.go",
+        "role": "generated"
+      },
+      {
+        "additions": 3,
+        "change": "modified",
+        "deletions": 0,
+        "id": "h_000000000006",
+        "new_range": [
+          5,
+          3
+        ],
+        "path": "README.md",
+        "role": "docs"
+      },
+      {
+        "additions": 2,
+        "change": "modified",
+        "deletions": 0,
+        "id": "h_000000000007",
+        "new_range": [
+          1,
+          2
+        ],
+        "path": "go.sum",
+        "role": "config"
+      }
+    ],
+    "prs": [],
+    "reports": [],
+    "sessions": [],
+    "threads": []
+  },
+  "agent_reviews": [
+    {
+      "anchors": [],
+      "assessed_head": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      "blocked_on": null,
+      "counts": {
+        "consider": 0,
+        "must_fix": 0,
+        "should_fix": 1
+      },
+      "findings": [
+        {
+          "addressed_by": null,
+          "anchors": [
+            {
+              "id": "h_000000000001",
+              "type": "hunk"
+            }
+          ],
+          "id": "fnd_add_jitter",
+          "section": "sec_retry_policy",
+          "severity": "should_fix",
+          "state": "open",
+          "text": "Add jitter to the retry delay."
+        }
+      ],
+      "id": "ar_review_bot",
+      "stale": false,
+      "tool": "review-bot",
+      "verdict": "comment"
+    }
+  ],
+  "unassigned_hunks": [
+    "h_000000000006",
+    "h_000000000007"
+  ],
+  "recommendation": null,
+  "risk_score": {
+    "limitations": [],
+    "reasons": [
+      {
+        "risk": "rsk_retry_storm",
+        "section": "sec_retry_policy",
+        "text": "Retries can pile up."
+      }
+    ],
+    "rubric": "risk-v1",
+    "score": 4,
+    "status": "assessed"
+  },
+  "changes": [
+    {
+      "id": "sec_retry_policy",
+      "title": "Retry failed deliveries",
+      "kind": "logical",
+      "hunks": [
+        "h_000000000001",
+        "h_000000000002"
+      ],
+      "assessment": {
+        "factors": [
+          "concurrency"
+        ],
+        "level": 4,
+        "reasons": [
+          {
+            "anchors": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "text": "A retry loop runs per delivery."
+          }
+        ]
+      },
+      "derived": {
+        "additions": 60,
+        "deletions": 10,
+        "evidence_summary": {
+          "asserted": 1,
+          "missing": 1
+        },
+        "open_findings": 1,
+        "review_reason": {
+          "risk": "rsk_retry_storm",
+          "text": "Retries can pile up."
+        },
+        "review_score": 4,
+        "reviewers": [],
+        "risk_tier": "high",
+        "role_loc": {
+          "code": 50,
+          "test": 20
+        },
+        "state": "new"
+      }
+    },
+    {
+      "id": "sec_config_flag",
+      "title": "Add a flag that turns retries off",
+      "kind": "logical",
+      "hunks": [
+        "h_000000000003",
+        "h_000000000002"
+      ],
+      "assessment": {
+        "factors": [],
+        "level": 2,
+        "reasons": [
+          {
+            "anchors": [
+              {
+                "id": "h_000000000003",
+                "type": "hunk"
+              }
+            ],
+            "text": "A boolean read once at start."
+          }
+        ]
+      },
+      "derived": {
+        "additions": 30,
+        "deletions": 0,
+        "evidence_summary": {
+          "asserted": 1
+        },
+        "open_findings": 0,
+        "review_score": 2,
+        "reviewers": [
+          {
+            "login": "ops-lead",
+            "source": "codeowners"
+          }
+        ],
+        "risk_tier": "low",
+        "role_loc": {
+          "code": 30
+        },
+        "state": "unchanged"
+      }
+    },
+    {
+      "id": "sec_generated_client",
+      "title": "Regenerate the API client",
+      "kind": "mechanical",
+      "hunks": [
+        "h_000000000004",
+        "h_000000000005"
+      ],
+      "derived": {
+        "additions": 30,
+        "deletions": 10,
+        "evidence_summary": {},
+        "open_findings": 0,
+        "reviewers": [],
+        "risk_tier": "mechanical",
+        "role_loc": {
+          "generated": 30
+        },
+        "state": "changed"
+      }
+    }
+  ],
+  "risks": [
+    {
+      "id": "rsk_retry_storm",
+      "tier": "high",
+      "category": "availability",
+      "source": "model",
+      "text": "Every worker retries at the same moments, so an outage ends in a burst (see ev_retry_test).",
+      "anchors": [
+        {
+          "id": "h_000000000001",
+          "type": "hunk"
+        }
+      ],
+      "finding": null,
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_retry_policy"
+    },
+    {
+      "id": "rsk_old_backoff",
+      "tier": "medium",
+      "category": "correctness",
+      "source": "model",
+      "text": "The first draft retried without a limit.",
+      "anchors": [
+        {
+          "id": "h_000000000002",
+          "type": "hunk"
+        }
+      ],
+      "state": "mitigated",
+      "introduced_version": 1,
+      "mitigated_version": 2,
+      "change": "sec_retry_policy"
+    },
+    {
+      "id": "rsk_flag_default",
+      "tier": "low",
+      "category": "configuration",
+      "source": "model",
+      "text": "Existing deployments start retrying after the upgrade.",
+      "anchors": [
+        {
+          "id": "h_000000000003",
+          "type": "hunk"
+        }
+      ],
+      "finding": null,
+      "state": "active",
+      "introduced_version": 3,
+      "mitigated_version": null,
+      "change": "sec_config_flag"
+    },
+    {
+      "id": "rsk_generated_drift",
+      "tier": "mechanical",
+      "category": "generated_code",
+      "source": "tool",
+      "text": "The generated file differs from what the generator would write now.",
+      "anchors": [
+        {
+          "path": "client/client.gen.go",
+          "type": "file"
+        }
+      ],
+      "state": "active",
+      "introduced_version": 3,
+      "mitigated_version": null,
+      "change": "sec_generated_client"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev_retry_test",
+      "kind": "test",
+      "claim": "A test drives five failures and checks the delays.",
+      "status": "asserted",
+      "source": "model",
+      "anchors": [
+        {
+          "id": "h_000000000002",
+          "type": "hunk"
+        }
+      ],
+      "change": "sec_retry_policy"
+    },
+    {
+      "id": "ev_load_run",
+      "kind": "run",
+      "claim": "No run shows the behaviour under an outage.",
+      "status": "missing",
+      "source": "model",
+      "anchors": [],
+      "expects": "A load run against a failing endpoint.",
+      "change": "sec_retry_policy"
+    },
+    {
+      "id": "ev_flag_test",
+      "kind": "test",
+      "claim": "A test reads the setting both ways.",
+      "status": "asserted",
+      "source": "model",
+      "anchors": [
+        {
+          "path": "config/config_test.go",
+          "type": "file"
+        }
+      ],
+      "detail": "Covers the default too.",
+      "change": "sec_config_flag"
+    }
+  ],
+  "tiles": [
+    {
+      "id": "overview",
+      "type": "overview",
+      "title": "Retry failed deliveries with backoff",
+      "headline": "Failed webhook deliveries are retried with exponential backoff",
+      "data": {
+        "text": "Failed webhook deliveries are retried with exponential backoff; a flag turns it off. The retry loop is the part to read (rsk_retry_storm).",
+        "change_kind": "feature",
+        "release_note": "Webhook deliveries are retried.",
+        "breaking_change": null,
+        "attention": {
+          "refs": [
+            "sec_retry_policy",
+            "rsk_retry_storm"
+          ],
+          "text": "Check that the retry loop stops after the last attempt."
+        }
+      },
+      "state": "ready"
+    },
+    {
+      "id": "risks",
+      "type": "risks",
+      "title": "Risks",
+      "headline": "3 open risks, 1 high or critical",
+      "data": {
+        "ranked": [
+          "rsk_retry_storm",
+          "rsk_flag_default",
+          "rsk_generated_drift"
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "sec_retry_policy",
+      "type": "change",
+      "title": "Retry failed deliveries",
+      "headline": "Deliver retries a failed request up to five times",
+      "data": {
+        "change": "sec_retry_policy",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_000000000001",
+              "lines": [
+                10,
+                30
+              ],
+              "type": "hunk"
+            }
+          ],
+          "text": "Deliver retries a failed request up to five times. The delay doubles each time."
+        },
+        "attention": {
+          "refs": [
+            "rsk_retry_storm"
+          ],
+          "text": "rsk_retry_storm: the loop has no jitter."
+        },
+        "blocks": [
+          {
+            "kind": "behavior",
+            "steps": [
+              {
+                "anchors": [
+                  {
+                    "id": "h_000000000001",
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_retry_test"
+                ],
+                "id": "beh_first_failure",
+                "text": "The worker schedules a retry after one second.",
+                "title": "A delivery fails"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_000000000001",
+                    "lines": [
+                      40,
+                      44
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [],
+                "id": "beh_give_up",
+                "text": "After the fifth failure the delivery is dropped."
+              }
+            ]
+          }
+        ]
+      },
+      "covers": [
+        "h_000000000001",
+        "h_000000000002"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "sec_config_flag",
+      "type": "change",
+      "title": "Add a flag that turns retries off",
+      "headline": "A new setting, retries_enabled, defaults to true",
+      "data": {
+        "change": "sec_config_flag",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_000000000003",
+              "type": "hunk"
+            }
+          ],
+          "text": "A new setting, retries_enabled, defaults to true."
+        },
+        "attention": null,
+        "blocks": [
+          {
+            "kind": "behavior",
+            "steps": [
+              {
+                "anchors": [
+                  {
+                    "id": "h_000000000003",
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_flag_test"
+                ],
+                "id": "beh_flag_off",
+                "text": "With retries_enabled false, a failure drops the delivery at once."
+              }
+            ]
+          }
+        ]
+      },
+      "covers": [
+        "h_000000000003",
+        "h_000000000002"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "headline": "3 items, 1 missing",
+      "data": {},
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
+      "headline": "1 media block",
+      "data": {
+        "items": [
+          {
+            "change": "sec_retry_policy",
+            "block": {
+              "items": [
+                {
+                  "attachment": "att_aa01",
+                  "caption": "The retry timeline."
+                }
+              ],
+              "kind": "images",
+              "source": [
+                {
+                  "section": null,
+                  "type": "pr_body"
+                }
+              ]
+            },
+            "origin": {
+              "change": "sec_retry_policy",
+              "block": 3
+            }
+          }
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "intent",
+      "type": "intent",
+      "title": "Intent",
+      "data": {
+        "implements": [
+          {
+            "key": "acme/widgets#12",
+            "system": "github",
+            "type": "issue"
+          }
+        ],
+        "lines": [
+          {
+            "change": "sec_retry_policy",
+            "text": "Stop losing webhooks when a subscriber is briefly down.",
+            "anchors": [
+              {
+                "section": null,
+                "type": "pr_body"
+              }
+            ],
+            "origin": {
+              "change": "sec_retry_policy",
+              "block": 0
+            }
+          },
+          {
+            "change": "sec_config_flag",
+            "text": "Let operators keep the old behaviour.",
+            "anchors": [],
+            "origin": {
+              "change": "sec_config_flag",
+              "block": 1
+            }
+          }
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "context",
+      "type": "context",
+      "title": "Context",
+      "headline": "The delivery worker sends queued webhooks to subscriber endpoints",
+      "data": {
+        "area": {
+          "refs": [
+            {
+              "path": "worker/deliver.go",
+              "symbol": "Deliver"
+            }
+          ],
+          "text": "The delivery worker sends queued webhooks to subscriber endpoints."
+        }
+      },
+      "state": "ready"
+    },
+    {
+      "id": "decisions",
+      "type": "decisions",
+      "title": "Decisions",
+      "headline": "1 decision",
+      "data": {
+        "items": [
+          {
+            "anchors": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "by": "agent",
+            "change": "sec_retry_policy",
+            "id": "dec_doubling_delay",
+            "origin": {
+              "change": "sec_retry_policy",
+              "block": 2,
+              "item": 0
+            },
+            "rejected": "A fixed one-second delay.",
+            "text": "Double the delay rather than use a fixed one."
+          }
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "everything_else",
+      "type": "everything_else",
+      "title": "Everything else",
+      "headline": "The client is regenerated from the updated spec",
+      "data": {
+        "change": "sec_generated_client",
+        "unassigned": [
+          "h_000000000006",
+          "h_000000000007"
+        ],
+        "summary": {
+          "anchors": [
+            {
+              "path": "client/client.gen.go",
+              "type": "file"
+            }
+          ],
+          "text": "The client is regenerated from the updated spec."
+        },
+        "attention": null,
+        "blocks": [
+          {
+            "items": [
+              {
+                "count": 2,
+                "hunks": [
+                  "h_000000000004",
+                  "h_000000000005"
+                ],
+                "id": "grp_generated",
+                "rule": "Generated from the API spec."
+              }
+            ],
+            "kind": "groups"
+          }
+        ]
+      },
+      "covers": [
+        "h_000000000004",
+        "h_000000000005",
+        "h_000000000006",
+        "h_000000000007"
+      ],
+      "state": "ready"
+    }
+  ]
+}

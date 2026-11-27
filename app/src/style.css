@@ -28,6 +28,10 @@ body {
      browser's blue. */
   accent-color: var(--action-primary);
 }
+/* Search fields drop the browser's clear glyph; Escape still clears them. */
+input[type="search"]::-webkit-search-cancel-button {
+  appearance: none;
+}
 /* The window holds the sidebar and the page's panel, which stay in place:
    the panel's notices and each page's bar stay at its top and only what is
    under them scrolls (`.local-main`). */
@@ -70,6 +74,17 @@ body {
   padding: 0.5rem;
   box-sizing: border-box;
   transition: width 0.15s ease-out;
+}
+/* Unpinned, it opens over the page and over the session panel on it, which
+   starts at the folded sidebar's edge, even the panel in use. Folded and
+   closed, it stays under the page's own sheets (the review's, the chat's
+   scrim), which span the window. Menus draw over it from the top layer
+   (`top-layer.ts`). */
+.local-rail-lane:not([data-rail="pinned"]) {
+  z-index: calc(var(--z-sheet, 40) + 2);
+}
+.local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
+  z-index: 5;
 }
 /* Open over the page, it needs the canvas under it and the lift. */
 .local-rail-lane:not([data-rail="pinned"]) > .local-rail {
@@ -300,8 +315,8 @@ body {
   color: var(--text-tertiary);
 }
 .local-rail-more {
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
   margin-left: 0.125rem;
   opacity: 0;
 }
@@ -336,7 +351,6 @@ body {
    clip it. */
 .local-rail-menu {
   position: fixed;
-  z-index: 10;
   top: 0;
   left: 0;
   display: flex;
@@ -487,10 +501,12 @@ body {
   display: none;
 }
 /* Folded to its glyphs: unpinned, or in a narrow window, and neither under
-   the pointer (`data-rail="open"`) nor holding keyboard focus. A menu it
+   the pointer (`data-rail="open"`) nor holding keyboard focus
+   (`data-keyboard-focus`, set by the sidebar: see `useKeyboardFocusWithin`
+   in shell.tsx for why it is not a `:has()` here). A menu it
    shows does not open it: the menu hangs where its button was. The links
    keep their names. */
-.local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+.local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
   .local-rail {
     width: var(--rail-folded-width);
     box-shadow: none;
@@ -545,7 +561,7 @@ body {
 /* Without a pointer that hovers, the folded sidebar never opens to show
    Help, so it keeps Help under the mark. */
 @media (hover: none) {
-  .local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+  .local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
     .local-rail-head {
       flex-direction: column;
     }
@@ -575,8 +591,13 @@ body {
   padding: 0.75rem 1.5rem 0;
 }
 /* What scrolls, a size container so a pane held beside the page (the
-   review's rail) can fill the panel's height rather than the window's. */
+   review's rail) can fill the panel's height rather than the window's.
+   Positioned, so what is placed absolutely in a page (a transcript's
+   screen-reader labels) scrolls with it: placed against the window instead,
+   it would lengthen the window, and scrolling past the page's end would then
+   scroll the whole app away. */
 .local-main {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -1198,6 +1219,17 @@ select.local-field {
   overflow-wrap: anywhere;
   line-height: 1.4;
 }
+/* The review dot's slot (review-dot.tsx) before every title, empty without a
+   saved review so titles line up; one title line high, the dot centred in it. */
+.review-dot {
+  flex: none;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.875rem;
+  height: 1.4em;
+}
 .inbox-meta {
   overflow-wrap: anywhere;
   margin-top: 0.2rem;
@@ -1490,15 +1522,10 @@ select.local-field {
   color: var(--text-tertiary);
 }
 /* Report a problem: what happened, what to attach and a preview of it. */
-dialog.report-problem {
-  max-height: calc(100vh - 4rem);
-  overflow-y: auto;
-}
 .report-problem-field {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  margin-top: 1rem;
   color: var(--text-secondary);
   font-size: var(--text-xs);
   font-weight: 500;
@@ -1593,20 +1620,37 @@ dialog.report-problem {
   }
 }
 
-dialog {
-  margin: auto;
-  background: var(--surface-popup);
-  color: var(--text-primary);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-overlay);
-  padding: 1.5rem;
-  max-width: calc(100vw - 2rem);
-  width: 36rem;
+/* A menu raised into the top layer (`top-layer.ts`) drops the browser's
+   popover box: its own rules place and draw it, and a submenu hung from it
+   is not clipped. */
+@layer base {
+  [popover] {
+    inset: auto;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    color: inherit;
+    background-color: transparent;
+  }
 }
 
-dialog::backdrop {
-  background: var(--surface-scrim);
+/* Every dialog's box, under Tailwind's utilities so a dialog drawn with the
+   shared dialog shell (dialogClassName) or its own classes sets its own. */
+@layer base {
+  dialog {
+    margin: auto;
+    background: var(--surface-popup);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-overlay);
+    padding: 1.5rem;
+    max-width: calc(100vw - 2rem);
+    width: 36rem;
+  }
+  dialog::backdrop {
+    background: var(--surface-scrim);
+  }
 }
 @media (width >= 64rem) {
   .local-main:has([data-review-page]) {
@@ -1649,14 +1693,6 @@ dialog.local-dialog-wide {
   margin: 0.125rem 0 0;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
-}
-.diagnostics-group-title {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 /* Something worth knowing that is not a failure of this page. */
 /* Above a review, a notice stands apart from what follows it, as the job and
@@ -1794,6 +1830,178 @@ dialog.local-dialog-wide {
   .local-repo-figure {
     display: none;
   }
+}
+/* Settings › Tile library: its list of saved types, as the app's lists
+   are drawn, inside the section, and a type's pane. */
+.tile-library-list .list-heading,
+.tile-library-list .list-row {
+  padding-right: 0.75rem;
+  padding-left: 0.75rem;
+}
+.tile-type-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+.tile-type-row h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.tile-type-name {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.tile-type-name:hover {
+  text-decoration: underline;
+}
+.tile-type-main {
+  min-width: 0;
+}
+.tile-type-use {
+  margin: 0.125rem 0 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile-type-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0.125rem 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.tile-type-figure {
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.tile-type-actions {
+  display: flex;
+  align-items: center;
+}
+@media (width < 48rem) {
+  .tile-type-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .tile-type-figure {
+    display: none;
+  }
+}
+.tile-type-pane {
+  display: grid;
+  gap: 1.25rem;
+  min-width: 0;
+}
+.tile-type-pane-head {
+  display: grid;
+  gap: 0.5rem;
+}
+.tile-type-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.tile-type-title h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.tile-type-title-field {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+.tile-type-pane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.tile-type-block {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.tile-type-block .settings-subhead {
+  margin: 0;
+}
+.tile-type-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+.tile-type-fill {
+  padding: 0.875rem 1.25rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.tile-type-fill summary {
+  font-weight: 500;
+  cursor: pointer;
+}
+.tile-type-fill pre {
+  max-height: 20rem;
+  margin: 0.5rem 0 0.75rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tile-type-glances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.tile-type-glance,
+.tile-type-detail {
+  display: grid;
+  gap: 0.375rem;
+  max-width: 100%;
+  margin: 0;
+}
+.tile-type-glance figcaption,
+.tile-type-detail figcaption {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.tile-type-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 0;
+  padding: 0.75rem 1rem 0.875rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+}
+.tile-type-kicker {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tile-type-unavailable {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+.tile-type-versions {
+  margin: 0;
 }
 /* What opens under a row, across its width: the clone choices of a
    repository without one, or the registered clones of one that has. */
@@ -2186,6 +2394,16 @@ dialog.local-dialog-wide {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A review kept for newer commits: a quiet fact beside the groups, its reason
+   in the title. */
+.local-kept-note {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
 /* The pull request's state on its page, which opens to its remedies: drawn
    as the state is, boxed only under the pointer or while open. */
 .local-status-menu {
@@ -2290,9 +2508,9 @@ dialog.local-dialog-wide {
 .settings-nav-item:active {
   transform: translateY(1px);
 }
-/* The selection follows the keyboard's focus, so it is the focus mark. */
 .settings-nav-item:focus-visible {
   outline: none;
+  box-shadow: inset var(--focus-ring);
 }
 .settings-nav-item[aria-current="page"] {
   background: var(--nav-selected);
@@ -2442,6 +2660,221 @@ dialog.local-dialog-wide {
 .settings-select {
   width: 15rem;
 }
+/* Settings › Appearance. Each theme's thumbnail is a
+   [data-theme-scope] element: the palette's recipes apply to it, so it
+   shows its own theme whatever the page's mode. The scope redeclares the
+   palette's radii, so the app's are put back on it. */
+[data-theme-scope] {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+.theme-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.875rem 1.25rem 1.125rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.theme-row-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.theme-row-use {
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.theme-row-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.theme-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 0.875rem;
+  padding-top: 0.25rem;
+}
+.theme-option {
+  position: relative;
+  width: 7rem;
+}
+/* Six built-ins fit one row at the usual desktop width. */
+.settings-content > .settings-section:has(.theme-strip) {
+  max-width: 900px;
+}
+/* The selection and focus rings sit on this frame, outside the thumbnail's
+   [data-theme-scope], so they take the page's colours, not the theme's. */
+.theme-mini-frame {
+  display: block;
+  border-radius: var(--radius-md);
+}
+.theme-option-label {
+  display: grid;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+.theme-option-label:has(input:disabled) {
+  cursor: default;
+  opacity: 0.6;
+}
+.theme-option-name {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+.theme-option-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.theme-option-check {
+  flex: none;
+  display: none;
+  color: var(--text-primary);
+}
+.theme-option-label:has(input:checked) .theme-option-check {
+  display: block;
+}
+.theme-option-label:has(input:checked) .theme-mini-frame {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+.theme-option-label:has(input:focus-visible) .theme-mini-frame {
+  box-shadow: var(--focus-ring);
+}
+.theme-option-label:has(input:checked) .theme-option-text {
+  font-weight: 500;
+}
+.theme-option-menu {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+}
+/* The ⋯ sits over the thumbnail, so it is a chip in the page's colours that
+   reads on a dark or a light thumbnail alike. */
+.theme-option .theme-option-menu .row-menu-button {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--border-default);
+  background: var(--surface-popup);
+  color: var(--text-primary);
+}
+.theme-option .theme-option-menu .row-menu-button:hover,
+.theme-option .theme-option-menu .row-menu-button[aria-expanded="true"] {
+  background: var(--surface-popup);
+  border-color: var(--text-secondary);
+}
+.theme-rename {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.75rem;
+}
+/* A sketch of baum's layout: sidebar on the canvas, the page's panel with its
+   header and action, text bars and a diff, drawn with palette roles only. */
+.theme-mini {
+  display: grid;
+  grid-template-columns: 18% 1fr;
+  gap: 0.25rem;
+  aspect-ratio: 16 / 10;
+  box-sizing: border-box;
+  padding: 0.25rem;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+}
+.theme-mini-rail {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  padding-top: 0.125rem;
+}
+.theme-mini-panel {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.3125rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-page);
+}
+.theme-mini-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding-bottom: 0.1875rem;
+  border-bottom: 1px solid var(--border-default);
+}
+.theme-mini-bar {
+  display: block;
+  height: 0.25rem;
+  border-radius: var(--radius-full);
+  background: var(--text-secondary);
+  opacity: 0.4;
+}
+.theme-mini-bar.theme-mini-selected {
+  height: 0.4375rem;
+  border-radius: var(--radius-xs);
+  background: var(--nav-selected);
+  opacity: 1;
+}
+.theme-mini-bar.theme-mini-title {
+  width: 40%;
+  background: var(--text-primary);
+  opacity: 0.7;
+}
+.theme-mini-bar.theme-mini-short {
+  width: 65%;
+}
+.theme-mini-action {
+  flex: none;
+  width: 1.125rem;
+  height: 0.4375rem;
+  border-radius: var(--radius-full);
+  background: var(--action-primary);
+}
+.theme-mini-diff {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+}
+.theme-mini-line {
+  display: flex;
+  align-items: center;
+  gap: 0.1875rem;
+  padding: 0.125rem 0.1875rem;
+}
+.theme-mini-line > .theme-mini-bar {
+  flex: 1;
+}
+.theme-mini-line[data-tone="positive"] {
+  background: var(--status-positive-bg);
+}
+.theme-mini-line[data-tone="critical"] {
+  background: var(--status-critical-bg);
+}
+.theme-mini-mark {
+  flex: none;
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: var(--radius-xs);
+}
+.theme-mini-mark[data-tone="positive"] {
+  background: var(--status-positive);
+}
+.theme-mini-mark[data-tone="critical"] {
+  background: var(--status-critical);
+}
 .settings-model {
   display: grid;
   gap: 0.5rem;
@@ -2470,7 +2903,6 @@ dialog.local-dialog-wide {
 }
 .settings-row-pick .settings-row-label {
   grid-area: label;
-  white-space: nowrap;
 }
 .settings-row-pick .settings-row-detail {
   grid-area: detail;
@@ -2785,6 +3217,27 @@ dialog.local-dialog-wide {
   background: var(--status-critical-bg);
   color: var(--text-primary);
 }
+/* A diff that folds its unchanged runs is as tall as what it shows. */
+.prompt-diff.folded {
+  height: auto;
+  max-height: 24rem;
+}
+.prompt-diff-fold {
+  margin: 0.15rem 0;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised, var(--surface-card));
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.prompt-diff-fold:hover {
+  color: var(--text-primary);
+}
+.prompt-diff-fold:active {
+  transform: translateY(1px);
+}
 @media (max-width: 760px) {
   .settings-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -2792,7 +3245,7 @@ dialog.local-dialog-wide {
   }
   .settings-nav {
     flex-direction: row;
-    overflow-x: auto;
+    flex-wrap: wrap;
     border-right: 0;
     border-bottom: 1px solid var(--border-subtle);
   }
@@ -2809,12 +3262,12 @@ dialog.local-dialog-wide {
   .settings-nav-sub {
     display: none;
   }
-  .settings-row-control,
+  .settings-row-control:has(.settings-select, .settings-model),
   .settings-select,
   .settings-model {
     width: 100%;
   }
-  .settings-row-control {
+  .settings-row-control:has(.settings-select, .settings-model) {
     justify-content: flex-start;
   }
 }
@@ -2876,6 +3329,17 @@ dialog.local-dialog-wide {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A session panel's session, tagged as the panel's. */
+.local-session-origin {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
 .local-session-pr {
   color: var(--text-secondary);
   font-weight: 500;
@@ -2931,17 +3395,6 @@ a.local-session-pr:hover {
 }
 /* The sessions on a pull request's page: who and how on one line, where and
    when below it, in the narrow middle column. */
-.local-pr-sessions h3 {
-  margin: 0 0 0.5rem;
-  font-weight: 600;
-}
-.local-pr-sessions ul {
-  display: grid;
-  gap: 0.6rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
 .local-pr-session {
   display: grid;
   justify-items: start;
@@ -2996,17 +3449,6 @@ a.local-session-pr:hover {
   padding-left: 1rem;
   list-style: disc;
   color: var(--text-primary);
-}
-.local-decisions-disclosure > summary {
-  cursor: pointer;
-}
-.local-decisions-disclosure[open] > summary {
-  margin-bottom: 0.5rem;
-}
-.local-decisions-disclosure > summary h3 {
-  display: inline;
-  margin: 0;
-  font-weight: 600;
 }
 .local-decisions-note,
 .local-decisions-state {
@@ -3383,6 +3825,10 @@ a.local-session-pr:hover {
   color: inherit;
   text-decoration: none;
 }
+/* The agent mark keeps its size and gap when the title truncates. */
+.local-feed-head > .local-feed-open {
+  flex: none;
+}
 /* A card led by the agent's mark opens by it: the mark sits centred on the
    head's line. */
 .local-feed-open:has(> img) {
@@ -3390,90 +3836,16 @@ a.local-session-pr:hover {
   flex: none;
   align-items: center;
 }
-/* The app's right-click menu (context-menu.tsx), drawn as Up next's snooze
-   menu: warm paper on the page, the stopping choices in the critical tone. */
-.context-menu {
-  position: fixed;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  /* Its own width wherever it starts, so the width measured before it is
-     placed under its button is the width it keeps once it is there. */
-  width: max-content;
-  min-width: 200px;
-  max-width: 320px;
-  padding: 6px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  background: var(--surface-popup);
-  box-shadow: var(--shadow-overlay);
-  animation: upnext-drop 0.12s ease-out;
-}
-.context-menu button {
-  padding: 7px 10px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-base);
-  text-align: left;
-  cursor: pointer;
-}
-/* Every menu's items answer the pointer, the keyboard and a press alike. */
-:is(.context-menu, .local-rail-menu, .upnext-menu)
-  button:not(:disabled):is(:hover, :focus-visible) {
+/* The rail's and Up next's menus. (The right-click menu is the shared
+   Menu, in context-menu.tsx.) Their items answer the pointer, the keyboard
+   and a press alike. */
+:is(.local-rail-menu, .upnext-menu) button:not(:disabled):is(:hover, :focus-visible) {
   outline: none;
   background: var(--surface-hover);
 }
-:is(.context-menu, .local-rail-menu, .upnext-menu) button:not(:disabled):active {
+:is(.local-rail-menu, .upnext-menu) button:not(:disabled):active {
   background: var(--surface-pressed);
   transform: none;
-}
-.context-menu button.danger {
-  color: var(--status-critical);
-}
-.context-menu kbd {
-  color: var(--text-disabled);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-.context-menu button {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.context-menu-label {
-  flex: 1;
-}
-/* A choice that cannot be made now, with why under it. */
-.context-menu button:disabled {
-  color: var(--text-disabled);
-  cursor: default;
-}
-.context-menu-note {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-}
-.context-menu kbd {
-  margin-left: 1rem;
-}
-/* A menu with an on-or-off choice keeps a column for its tick on every
-   choice, so the labels line up. */
-.context-menu-check {
-  display: inline-flex;
-  flex: none;
-  width: 14px;
-  color: var(--text-primary);
-}
-/* What stops or removes something sits apart, below the rest. */
-.context-menu-separator {
-  height: 1px;
-  margin: 4px 2px;
-  background: var(--border-subtle);
 }
 /* A row's ⋯: the list's one way to the row's actions, beside a right click
    and ⌘. on the row. A quiet square at the row's end, shown while the row is
@@ -3506,17 +3878,15 @@ a.local-session-pr:hover {
   .row-menu-button {
     opacity: 0;
   }
-  .list-row:hover .row-menu-button,
-  .list-row:focus-within .row-menu-button,
-  .list-row[data-focused] .row-menu-button,
+  :is(.list-row, [data-list-row]):hover .row-menu-button,
+  :is(.list-row, [data-list-row]):focus-within .row-menu-button,
+  :is(.list-row, [data-list-row])[data-focused] .row-menu-button,
+  .view-tile:hover .row-menu-button,
+  .view-tile:focus-within .row-menu-button,
+  .view-tile[data-review-block-active] .row-menu-button,
   .row-menu-button[aria-expanded="true"],
   .row-menu-button:focus-visible {
     opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .context-menu {
-    animation: none;
   }
 }
 /* A waiting card's head: the session's title, then its branch, each cut
@@ -4205,7 +4575,7 @@ a.local-session-pr:hover {
    it was about, and where. */
 .local-toast {
   position: fixed;
-  z-index: 40;
+  z-index: calc(var(--z-sheet, 40) + 2);
   bottom: 22px;
   left: calc(50% + var(--rail-width) / 2);
   display: flex;
@@ -4273,8 +4643,8 @@ a.local-session-pr:hover {
   display: grid;
   flex: none;
   place-items: center;
-  width: 1.375rem;
-  height: 1.375rem;
+  width: 1.75rem;
+  height: 1.75rem;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -4291,12 +4661,6 @@ a.local-session-pr:hover {
   from {
     opacity: 0;
     transform: translate(-50%, 8px);
-  }
-}
-@media (width < 48rem) {
-  .local-toast {
-    left: 50%;
-    width: calc(100vw - 2rem);
   }
 }
 @keyframes local-feed-rise {
@@ -4648,6 +5012,13 @@ dialog.local-message-reader[open] {
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--text-primary);
+}
+.local-job-facts dd a {
+  color: var(--text-link);
+}
+.local-job-facts dd a:hover {
+  color: var(--text-link-hover);
+  text-decoration: underline;
 }
 .local-job-facts dd > code {
   display: block;
@@ -5250,51 +5621,61 @@ dialog.go-to {
   padding: 1rem;
   color: var(--text-secondary);
 }
-.shortcuts-sheet {
-  width: 28rem;
-  padding: 0;
+/* The shortcuts sheet: Go to's dialog, with a title over its search field
+   and a list that scrolls below them, read more often than searched. */
+dialog.shortcuts-sheet[open] {
+  display: flex;
+  flex-direction: column;
+  max-height: min(40rem, 76vh);
 }
 .shortcuts-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  margin-bottom: 0;
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-popup);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem 0;
 }
+.shortcuts-sheet .go-to-input {
+  padding-top: 0.5rem;
+  font-size: var(--text-base);
+}
+/* Sized by its rows (an auto basis), shrinking to the dialog's max-height.
+   With a 0% basis (`flex: 1`), the dialog, whose height is its content's,
+   takes the list's height from the basis and the list collapses to nothing
+   under the search field. */
 .shortcuts-body {
-  padding: 0 1.5rem 1.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 0.35rem 0.75rem;
+  overflow-y: auto;
+  outline: none;
 }
 .shortcuts-group h3 {
-  margin: 1.125rem 0 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  margin: 1rem 0.65rem 0.25rem;
 }
-/* One grid for every row, so the descriptions share a column right after
-   the widest keys instead of a fixed gutter. */
+/* A row as a Go to option: what it does, then its keys at the right. */
 .shortcuts-list {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0.45rem 1rem;
-  margin: 0.5rem 0 0;
+  margin: 0;
 }
 .shortcuts-list > div {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: subgrid;
+  display: flex;
   align-items: baseline;
+  gap: 1rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: var(--radius-sm);
 }
 .shortcuts-list dt {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  order: 1;
+  max-width: 45%;
   gap: 0.25rem;
+  margin-left: auto;
 }
 .shortcuts-list dd {
   margin: 0;
+  color: var(--text-primary);
 }
 /* A place's keys in one line (`KeyBar`), shown with the hints while Alt is
    held: along the foot of the page's panel, over what scrolls under it, or
@@ -5327,16 +5708,9 @@ dialog.go-to {
   display: none;
 }
 /* One key, wherever a key is shown outside a menu: inside a button, in a
-   page's key bar, in the shortcuts sheet and the walkthrough. A menu lists its
+   page's key bar, in the shortcuts sheet and the up-next page. A menu lists its
    keys as plain grey text instead, as a desktop menu does. */
-:is(
-  kbd.key-hint,
-  .key-bar kbd,
-  .shortcuts-sheet kbd,
-  .walkthrough kbd,
-  .upnext-page kbd,
-  .tour kbd
-) {
+:is(kbd.key-hint, .key-bar kbd, .shortcuts-sheet kbd, .upnext-page kbd, .tour kbd) {
   padding: 1px 5px;
   border: 1px solid currentColor;
   border-radius: var(--radius-xs);
@@ -5464,7 +5838,7 @@ kbd.key-hint {
     outline-offset: 2px;
   }
 }
-.upnext-page button:not(:disabled):active {
+.upnext-page button:not(:disabled, [role^="menuitem"]):active {
   transform: translateY(1px);
 }
 .upnext-page kbd {
@@ -5583,6 +5957,17 @@ kbd.key-hint {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
+/* The review dot (review-dot.tsx) leads the line under the title, smaller
+   than in the other lists so it stays out of the title's way. */
+.upnext-row-line > .review-dot {
+  width: auto;
+  height: 1lh;
+  margin-right: -2px;
+  font-size: var(--text-xs);
+}
+.review-dot-compact > span:first-child {
+  transform: scale(0.75);
+}
 /* The line under the title, its inbox tag after it: a long line gives way first. */
 .upnext-row-line {
   display: flex;
@@ -5611,6 +5996,25 @@ kbd.key-hint {
   flex: none;
   border-radius: 50%;
   background: var(--status-critical);
+}
+/* What happened on a pull request since its page was last open, counted in
+   the row's top right corner as a messaging app counts unread messages. */
+.upnext-unread {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--status-info);
+  color: var(--text-inverse);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
 }
 .upnext-snoozed li {
   display: flex;
@@ -5680,6 +6084,13 @@ a.upnext-done-text:hover {
   flex: 1;
   min-width: 0;
   overflow: auto;
+}
+/* A stack's page: its bar, then its overview as the Inbox's panel draws it. */
+.local-stack-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 .upnext-panel {
   display: flex;
@@ -5843,18 +6254,16 @@ a.upnext-done-text:hover {
   flex-wrap: wrap;
   gap: 8px;
 }
-.upnext-snooze {
-  position: relative;
-}
 .upnext-menu {
   position: absolute;
-  z-index: 3;
   top: calc(100% + 6px);
   left: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 260px;
+  width: min(260px, calc(100vw - 8px));
+  max-height: calc(100vh - 8px);
+  overflow: auto;
   padding: 6px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
@@ -5871,6 +6280,8 @@ a.upnext-done-text:hover {
   border-radius: var(--radius-sm);
   background: transparent;
   font-size: var(--text-base);
+  color: var(--text-primary);
+  cursor: pointer;
   text-align: left;
 }
 .upnext-menu-key {
@@ -6181,6 +6592,9 @@ a.upnext-done-text:hover {
 }
 .upnext-check-running {
   color: var(--status-caution);
+}
+.upnext-check-cancelled {
+  color: var(--text-secondary);
 }
 .upnext-check-passing {
   color: var(--status-positive);
@@ -6539,8 +6953,18 @@ a.upnext-done-text:hover {
   position: fixed;
   left: 50%;
 }
-/* A narrow window stacks the list over the panel and scrolls them as one. */
-@container (width < 760px) {
+/* A narrower queue leaves room to read its selection at the smallest
+   desktop window. */
+@container (560px <= width < 760px) {
+  .upnext-list {
+    flex-basis: 40%;
+  }
+  .upnext-list-title {
+    gap: 4px;
+  }
+}
+/* A very narrow view stacks the panes and scrolls them as one. */
+@container (width < 560px) {
   .upnext-page {
     flex-direction: column;
     overflow: auto;
@@ -6554,6 +6978,8 @@ a.upnext-done-text:hover {
   .upnext-detail {
     overflow: visible;
   }
+}
+@container (width < 760px) {
   .upnext-panel {
     padding: 24px 20px 60px;
   }
@@ -6590,10 +7016,15 @@ a.upnext-done-text:hover {
   .upnext-failed,
   .upnext-unchanged,
   .upnext-menu,
-  .upnext-toast {
+  .upnext-toast,
+  .upnext-noreview,
+  .local-rail-menu,
+  .inbox-selection-bar {
     animation: none;
   }
-  .upnext-bar div {
+  .upnext-bar div,
+  .local-rail-lane,
+  .local-rail {
     transition: none;
   }
 }
@@ -6628,270 +7059,17 @@ a.upnext-done-text:hover {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
-/* The walkthrough: a guided tour of the review's behaviours and the list of
-   all of them (walkthrough.tsx). */
-.walkthrough {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-  background: var(--surface-card);
-}
-.walkthrough kbd {
-  padding: 1px 5px;
+.review-textarea {
+  min-height: 84px;
+  padding: 8px 10px;
   border: 1px solid var(--border-default);
-  border-bottom-width: 2px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-card);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-.walkthrough :is(button, a, textarea):focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-.walk-dot {
-  flex: 1;
-  min-width: 10px;
-  height: 8px;
-  border: 0;
-  border-radius: 3px;
-  padding: 0;
-  background: var(--border-subtle);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    height 0.15s;
-}
-.walk-dot:hover {
-  background: var(--border-strong);
-}
-.walk-dot.seen {
-  background: var(--status-positive);
-}
-.walk-dot.commented {
-  background: var(--status-caution);
-}
-.walk-dot.current {
-  height: 10px;
-  background: var(--text-primary);
-}
-.walk-route,
-.walk-event {
-  display: flex;
-  align-items: center;
-  gap: 0.875rem;
-  padding: 0.875rem 1rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm, 8px);
-  background: var(--surface-card);
-  text-align: left;
-  box-shadow: var(--shadow-raised);
-  cursor: pointer;
-}
-.walk-route:hover,
-.walk-event:hover:not([aria-disabled="true"]) {
-  background: var(--surface-hover);
-}
-.walk-route:active,
-.walk-event:active:not([aria-disabled="true"]) {
-  transform: translateY(1px);
-  box-shadow: none;
-}
-.walk-route-number {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-wash);
-  font-weight: 600;
-}
-.walk-risk {
-  flex: none;
-  padding: 3px 8px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-wash);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-.walk-risk.high {
-  background: var(--status-caution-bg);
-  color: var(--status-caution);
-}
-.walk-event {
-  padding: 0.625rem 0.75rem;
-  gap: 0.625rem;
-}
-.walk-event[aria-checked="true"] {
-  border-color: var(--text-primary);
-}
-.walk-event[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.walk-event-dot {
-  flex: none;
-  box-sizing: border-box;
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: 50%;
-}
-.walk-event[aria-checked="true"] .walk-event-dot {
-  border: 4px solid var(--text-primary);
-}
-.walk-link.muted {
-  color: var(--text-secondary);
-  text-decoration: none;
-}
-.walk-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-  padding: 0.875rem 1rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm, 8px);
-  background: var(--surface-wash);
-}
-.walk-panel.after {
-  border-color: color-mix(in srgb, var(--status-positive) 30%, transparent);
-  background: var(--status-positive-bg);
-}
-.walk-panel.question {
-  border-color: var(--border-default);
-  background: var(--surface-card);
-}
-.walk-panel.comment {
-  border-color: color-mix(in srgb, var(--status-caution) 35%, transparent);
-  background: var(--status-caution-bg);
-}
-.walk-panel.saved {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 0.75rem;
-}
-.walk-badge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--status-positive-bg);
-  color: var(--status-positive);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
-.walk-badge.commented {
-  background: var(--status-caution-bg);
-  color: var(--status-caution);
-}
-.walk-textarea {
-  min-height: 72px;
-  padding: 0.5rem 0.625rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;
   font-size: var(--text-base);
+  line-height: 1.5;
   resize: vertical;
-}
-.walk-chapter-stop {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.625rem;
-  width: 100%;
-  padding: 0.4375rem 0.5rem;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-.walk-chapter-stop:hover {
-  background: var(--surface-hover);
-}
-.walk-chapter-stop[aria-current="step"] {
-  background: var(--surface-selected);
-  font-weight: 600;
-}
-.walk-state-dot {
-  flex: none;
-  box-sizing: border-box;
-  width: 9px;
-  height: 9px;
-  margin-top: 0.4em;
-  border: 1.5px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface-card);
-}
-.walk-state-dot.seen {
-  border-color: var(--status-positive);
-  background: var(--status-positive);
-}
-.walk-state-dot.commented {
-  border-color: var(--status-caution);
-  background: var(--status-caution);
-}
-.walk-filter {
-  padding: 0.375rem 0.75rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--surface-card);
-  box-shadow: var(--shadow-raised);
-  cursor: pointer;
-}
-.walk-filter:hover {
-  background: var(--surface-hover);
-}
-.walk-filter:active {
-  transform: translateY(1px);
-}
-.walk-filter[aria-pressed="true"] {
-  border-color: var(--action-primary);
-  background: var(--action-primary);
-  color: var(--text-inverse);
-}
-.walk-row {
-  border-bottom: 1px solid var(--border-subtle);
-  border-left: 3px solid transparent;
-  transition: background 0.15s;
-}
-.walk-row.commented {
-  background: color-mix(in srgb, var(--status-caution-bg) 50%, transparent);
-}
-.walk-row.current {
-  border-left-color: var(--text-primary);
-  background: var(--surface-selected);
-}
-.walk-row-state {
-  display: grid;
-  place-items: center;
-  flex: none;
-  box-sizing: border-box;
-  width: 22px;
-  height: 22px;
-  margin-top: 1px;
-  border: 1.5px solid var(--border-default);
-  border-radius: 50%;
-  font-size: var(--text-xs);
-  font-weight: 700;
-}
-.walk-row-state.seen {
-  border: 0;
-  background: var(--status-positive-bg);
-  color: var(--status-positive);
-}
-.walk-row-state.commented {
-  border: 0;
-  background: var(--status-caution-bg);
-  color: var(--status-caution);
-}
-.walk-note {
-  padding: 0.375rem 0.625rem;
-  border: 1px solid color-mix(in srgb, var(--status-caution) 30%, transparent);
-  border-radius: var(--radius-sm);
-  background: var(--status-caution-bg);
 }
 /* The Ask panel: questions to the agent that wrote the review (chat.tsx). It
    docks beside the review on wide screens and overlays it on narrow ones. */
@@ -6921,6 +7099,12 @@ a.upnext-done-text:hover {
   inset: 0;
   z-index: calc(var(--z-sheet, 40) - 1);
   background: var(--surface-scrim);
+}
+/* Of the sheets over the page, the session panel and the chat, the one in
+   use draws in front; both stay open. */
+.session-panel:focus-within,
+.ask-panel:focus-within {
+  z-index: calc(var(--z-sheet, 40) + 1);
 }
 @media (width >= 72rem) {
   .ask-backdrop {
@@ -7529,6 +7713,7 @@ dialog.local-file-dialog {
   color: var(--text-tertiary);
 }
 .local-file-code {
+  position: relative;
   max-height: min(65vh, 48rem);
   overflow: auto;
   border: 1px solid var(--border-subtle);
@@ -7538,6 +7723,12 @@ dialog.local-file-dialog {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1.55;
+}
+/* In a side column the code takes the column's height and scrolls there. */
+.local-file-code[data-fill] {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 .local-file-line {
   display: grid;
@@ -7592,7 +7783,6 @@ dialog.local-file-dialog {
   position: absolute;
   top: calc(100% + 0.3rem);
   left: 0;
-  z-index: 30;
   padding: 0.5rem;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -7894,4 +8084,27 @@ dialog.review-dialog {
   padding: 0.5rem 0 0;
   border-top: 1px solid var(--border-subtle);
   list-style: none;
+}
+
+/* A tile's heading takes the keys as its detail opens, for the next Tab to
+   start there; it is no control, so it shows no ring. */
+#review-section h2[tabindex="-1"]:focus {
+  outline: none;
+}
+
+/* The import dialog scrolls as one; its detail preview keeps to a box of
+   its own, and Import stays in reach at the foot. */
+dialog.tile-import-dialog > * + * {
+  margin-top: 1rem;
+}
+.tile-import-detail {
+  max-height: 24rem;
+  overflow-y: auto;
+}
+dialog.tile-import-dialog .local-dialog-actions {
+  position: sticky;
+  bottom: -1.5rem;
+  margin-bottom: -1.5rem;
+  padding-bottom: 1.5rem;
+  background: var(--surface-popup);
 }

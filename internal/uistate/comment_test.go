@@ -14,7 +14,16 @@ func TestCheckReviewComment(t *testing.T) {
 	if err := CheckReviewComment(json.RawMessage(good)); err != nil {
 		t.Fatal(err)
 	}
+	// A tile's comment names the tile, as a section's does.
+	tile := strings.Replace(good, `"kind":"file","id":"a.go","title":"a.go"`, `"kind":"tile","id":"risks","title":"Risks"`, 1)
+	if err := CheckReviewComment(json.RawMessage(tile)); err != nil {
+		t.Fatalf("a tile target: %v", err)
+	}
+	if validate("review", []byte(`{"comments":[`+tile+`],"note":""}`)) != nil {
+		t.Error("a record refuses a tile comment")
+	}
 	for _, tc := range []struct{ from, to, reason string }{
+		{`"kind":"file","id":"a.go","title":"a.go"`, `"kind":"tile","id":"","title":"Risks"`, "names its id"},
 		{`"id":"c1"`, `"id":"no spaces"`, "id"},
 		{`"body":"Why?"`, `"body":"  "`, "body"},
 		{`"body":"Why?"`, `"body":"` + strings.Repeat("x", MaxCommentBody+1) + `"`, "body"},

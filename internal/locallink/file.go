@@ -129,8 +129,9 @@ func fileText(content []byte) FileResult {
 const maxCitedPathBytes = 4096
 
 // CitedFiles reads the paths a review document cites, which are the only
-// ones the app's file routes read (GET /api/file, a group's file): the context's references
-// (summary.context.<part>.refs[].path), the hunks' paths and old paths
+// ones the app's file routes read (GET /api/file, a group's file): the
+// context's files (a baum.review/1 summary.context.<part>.refs[].path, a
+// baum.review/2 context.<part>.files[]), the hunks' paths and old paths
 // (index.hunks[].path, old_path), and the path of every anchor of type
 // "file" anywhere in the document. A document that does not parse cites none.
 func CitedFiles(document []byte) map[string]struct{} {
@@ -143,6 +144,9 @@ func CitedFiles(document []byte) map[string]struct{} {
 				} `json:"refs"`
 			} `json:"context"`
 		} `json:"summary"`
+		Context map[string]*struct {
+			Files []string `json:"files"`
+		} `json:"context"`
 		Index struct {
 			Hunks []struct {
 				Path    string `json:"path"`
@@ -164,6 +168,14 @@ func CitedFiles(document []byte) map[string]struct{} {
 		}
 		for _, ref := range part.Refs {
 			add(ref.Path)
+		}
+	}
+	for _, part := range parsed.Context {
+		if part == nil {
+			continue
+		}
+		for _, path := range part.Files {
+			add(path)
 		}
 	}
 	for _, hunk := range parsed.Index.Hunks {

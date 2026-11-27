@@ -424,7 +424,13 @@ const operationStatus = "proposed: the person reads what will happen and confirm
 // id: only a chat, only on a page that offers the operation, and only for a
 // target that belongs to that page (Build and Describe refuse others).
 // Nothing runs.
-func (p *Proposals) ProposeOperation(ctx context.Context, consumer, name string, args json.RawMessage) (Proposal, error) {
+func (p *Proposals) ProposeOperation(ctx context.Context, consumer, name string, args json.RawMessage) (_ Proposal, err error) {
+	// Registered first, so it runs after the lock is released.
+	defer func() {
+		if err == nil {
+			p.changed(consumer)
+		}
+	}()
 	c, ok := p.registry.Consumer(consumer)
 	if !ok {
 		return Proposal{}, ErrUnknownConsumer
@@ -442,7 +448,7 @@ func (p *Proposals) ProposeOperation(ctx context.Context, consumer, name string,
 	}
 	// The arguments are checked here, not only by the tool, so no caller
 	// reaches Build with arguments the schema refuses.
-	args, err := (&Tool{schema: op.schema}).arguments(args)
+	args, err = (&Tool{schema: op.schema}).arguments(args)
 	if err != nil {
 		return Proposal{}, err
 	}
@@ -537,10 +543,12 @@ func (p *Proposals) Confirm(ctx context.Context, consumer, id, seen string) (Ope
 	if fresh := summary.revision(); seen == "" || seen != stored.Revision || fresh != stored.Revision {
 		stored.Summary, stored.Revision = summary.clone(), fresh
 		p.mu.Unlock()
+		p.changed(consumer)
 		return OperationOutcome{}, ErrOperationChanged
 	}
 	p.removeLocked(consumer, id)
 	p.mu.Unlock()
+	p.changed(consumer)
 	// Taken, it runs to the end: the person confirmed it, and a run cut off
 	// halfway would leave its outcome unknown.
 	return p.writer.run(context.WithoutCancel(ctx), op, req)

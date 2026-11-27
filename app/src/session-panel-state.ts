@@ -1,0 +1,187 @@
+import { useSyncExternalStore } from "react";
+import type { ChatFocus } from "./api";
+
+// The session panel's own state, kept for the whole window: whether it is
+// open, the conversation it shows, its height (from the top or the foot), its
+// width (from a side) and what is typed in it. Open, height, width and
+// conversation are remembered across reloads in this window's
+// storage, as the sidebar's fold is. It has a module of its own so any page
+// can open the panel (Sessions' "Open in panel") without drawing it.
+const STORE_KEY = "baum.session-panel.v1";
+export const MIN_HEIGHT = 200;
+export const DEFAULT_HEIGHT = 380;
+export const MIN_WIDTH = 320;
+export const DEFAULT_WIDTH = 480;
+
+export type PanelState = {
+  open: boolean;
+  /** The conversation shown; null for a new one. */
+  conversation: string | null;
+  height: number;
+  /** Its width when it opens from a side of the window. */
+  width: number;
+  /** Whether the daemon runs the session panel; null until known. */
+  available: boolean | null;
+  /** What is typed in the composer. */
+  draft: string;
+  /** Counts the requests to put the keys in the composer. */
+  focus: number;
+  /** The last Ask on a pull request's page, while that page is open. */
+  ask: PanelAsk | null;
+};
+
+/** An Ask on a pull request's page: the pull request, the part of its review
+ *  picked (a section or the overview), which the page context's
+ *  focus carries to the agent, and a count, so asking twice is two asks. */
+export type PanelAsk = {
+  repository: string;
+  pull_request: number;
+  focus: ChatFocus | null;
+  seq: number;
+};
+
+function loadState(): PanelState {
+  const loaded: PanelState = {
+    open: false,
+    conversation: null,
+    height: DEFAULT_HEIGHT,
+    width: DEFAULT_WIDTH,
+    available: null,
+    draft: "",
+    focus: 0,
+    ask: null,
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as Partial<PanelState>;
+    if (saved && typeof saved === "object") {
+      loaded.open = saved.open === true;
+      loaded.conversation = typeof saved.conversation === "string" ? saved.conversation : null;
+      if (typeof saved.height === "number" && saved.height >= MIN_HEIGHT)
+        loaded.height = saved.height;
+      if (typeof saved.width === "number" && saved.width >= MIN_WIDTH) loaded.width = saved.width;
+    }
+  } catch {
+    // Starts closed.
+  }
+  return loaded;
+}
+
+let state = loadState();
+let askSequence = 0;
+const listeners = new Set<() => void>();
+function change(patch: Partial<PanelState>) {
+  state = { ...state, ...patch };
+  try {
+    localStorage.setItem(
+      STORE_KEY,
+      JSON.stringify({
+        open: state.open,
+        conversation: state.conversation,
+        height: state.height,
+        width: state.width,
+      }),
+    );
+  } catch {
+    // Not remembered across reloads.
+  }
+  for (const listener of listeners) listener();
+}
+
+/** What had the keys before the panel took them, where they go back when it
+ *  gives them up or hides. */
+let returnTo: Element | null = null;
+
+/** What opens, hides and points the session panel, from anywhere in the app:
+ *  its button, its key, Go to, the Sessions page's "Open in panel" and a pull
+ *  request's Ask. */
+export const sessionPanel = {
+  /** Opens it with the keys in its composer; on `conversation` when given
+   *  (null for a new one), else on the one it showed. */
+  show(conversation?: string | null) {
+    // What has the keys now gets them back, unless the panel already does.
+    if (!state.open || !document.activeElement?.closest(".session-panel"))
+      returnTo = document.activeElement;
+    change({
+      open: true,
+      focus: state.focus + 1,
+      ...(conversation !== undefined ? { conversation } : {}),
+    });
+  },
+  hide() {
+    if (state.open) change({ open: false });
+  },
+  toggle() {
+    if (state.open) sessionPanel.hide();
+    else sessionPanel.show();
+  },
+  select(conversation: string | null) {
+    change({ conversation, focus: state.focus + 1 });
+  },
+  setHeight(height: number) {
+    change({ height: Math.max(MIN_HEIGHT, Math.round(height)) });
+  },
+  setWidth(width: number) {
+    change({ width: Math.max(MIN_WIDTH, Math.round(width)) });
+  },
+  setAvailable(available: boolean) {
+    if (state.available !== available) change({ available });
+  },
+  setDraft(draft: string) {
+    change({ draft });
+  },
+  /** Opens it on a pull request, about `focus` when given: the panel's host
+   *  picks the pull request's conversation (`conversationFor`) and puts the
+   *  keys in the composer, leaving what is typed there as it was. */
+  ask(pull: { repository: string; number: number }, focus: ChatFocus | null = null) {
+    change({
+      ask: {
+        repository: pull.repository,
+        pull_request: pull.number,
+        focus,
+        seq: ++askSequence,
+      },
+    });
+  },
+  /** Leaves out the part of the review an Ask picked; the pull request stays. */
+  clearFocus() {
+    if (state.ask?.focus) change({ ask: { ...state.ask, focus: null } });
+  },
+  /** Forgets the last Ask, once its pull request's page is left. */
+  dropAsk() {
+    if (state.ask) change({ ask: null });
+  },
+  /** What is typed in the composer now. */
+  draft() {
+    return state.draft;
+  },
+  /** What had the keys before the panel opened, once: the panel gives them
+   *  back as it hides. */
+  takeReturnTo() {
+    const element = returnTo;
+    returnTo = null;
+    return element;
+  },
+};
+
+/** Puts the panel back as a fresh window starts it; for tests. */
+export function resetSessionPanel() {
+  try {
+    localStorage.removeItem(STORE_KEY);
+  } catch {
+    // Nothing kept.
+  }
+  state = loadState();
+  askSequence = 0;
+  returnTo = null;
+  for (const listener of listeners) listener();
+}
+
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+export function useSessionPanel(): PanelState {
+  return useSyncExternalStore(subscribe, () => state);
+}

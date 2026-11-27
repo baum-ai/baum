@@ -16,7 +16,10 @@ import (
 func opener(path string, opens *atomic.Int32) func() (*sql.DB, bool, error) {
 	return func() (*sql.DB, bool, error) {
 		opens.Add(1)
-		db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=busy_timeout(10000)")
+		// Without the flushes: on the Windows runners each commit's
+		// FlushFileBuffers takes long enough that sixteen queued writers
+		// outwait the busy timeout.
+		db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=busy_timeout(10000)&_pragma=synchronous(OFF)")
 		return db, true, err
 	}
 }

@@ -563,6 +563,50 @@ type SessionCommit struct {
 	Confidence            float64
 }
 
+// inferredMethod is the edit-overlap guess earlier versions stored beside
+// commit_ref links. Links now need a recorded creation of the commit.
+const inferredMethod = "files_overlap"
+
+// dropInferredLinks removes the edit-overlap links earlier versions stored,
+// through ReplaceSessionCommits so the features they put sessions in are
+// marked. Once none is left it changes nothing.
+func (s *Store) dropInferredLinks(ctx context.Context) error {
+	type commit struct{ repository, sha string }
+	inferred, err := collect(func(rows *sql.Rows) (commit, error) {
+		var c commit
+		return c, rows.Scan(&c.repository, &c.sha)
+	})(s.db.QueryContext(ctx, `SELECT DISTINCT repository, sha FROM session_commit WHERE method=?`, inferredMethod))
+	if err != nil || len(inferred) == 0 {
+		return err
+	}
+	byRepository := map[string][]string{}
+	for _, c := range inferred {
+		byRepository[c.repository] = append(byRepository[c.repository], c.sha)
+	}
+	for repository, shas := range byRepository {
+		var kept []SessionCommit
+		for chunk := range slices.Chunk(shas, maxParameters) {
+			args := []any{repository, inferredMethod}
+			for _, sha := range chunk {
+				args = append(args, sha)
+			}
+			links, err := collect(func(rows *sql.Rows) (SessionCommit, error) {
+				var l SessionCommit
+				return l, rows.Scan(&l.Agent, &l.SessionID, &l.SHA, &l.Method, &l.Confidence)
+			})(s.db.QueryContext(ctx, `SELECT agent, session_id, sha, method, confidence FROM session_commit
+WHERE repository=?1 AND method<>?2 AND sha IN (`+placeholders(3, len(chunk))+`)`, args...))
+			if err != nil {
+				return err
+			}
+			kept = append(kept, links...)
+		}
+		if err := s.ReplaceSessionCommits(ctx, repository, shas, kept, time.Time{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ReplaceSessionCommits makes links the sessions linked to the commits shas:
 // every earlier link of those commits goes. relinked, when not zero, records
 // a full re-link.

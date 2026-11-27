@@ -43,6 +43,16 @@ it("shows the head's checks as GitHub lists them now, over the review's snapshot
   expect(node.textContent).toContain("build");
 });
 
+it("counts a cancelled check over the passing ones, as GitHub fails on it", async () => {
+  const doc = document_();
+  const live = liveDetailsChecks(doc, pr(doc.review.head), {
+    checks: [check("build", "success"), check("e2e", "cancelled"), check("docs", "skipped")],
+  });
+  expect(live.failing).toBe(true);
+  await act(async () => root.render(<>{live.content}</>));
+  expect(node.querySelector("[role=status]")!.textContent).toBe("1/3 cancelled");
+});
+
 it("flags the tab when a live check fails", () => {
   const doc = document_();
   const live = liveDetailsChecks(doc, pr(doc.review.head), {
@@ -74,7 +84,7 @@ const failing = (over: Partial<Check> = {}): Check => ({
   ...over,
 });
 
-const render = (checks: Check[]) =>
+const render = (checks: Check[], canRetry = false) =>
   act(async () =>
     root.render(
       <PullRequestChecks
@@ -82,7 +92,7 @@ const render = (checks: Check[]) =>
         number={7}
         head="abc"
         url="https://github.com/baum-ai/example/pull/7"
-        canRetry={false}
+        canRetry={canRetry}
         checks={{ checks }}
       />,
     ),
@@ -197,4 +207,20 @@ it("says how many checks GitHub lists when the daemon capped them", async () => 
   await act(async () => root.render(<>{live.content}</>));
   expect(node.textContent).toContain("Showing 2 of 130 checks, failing and running first.");
   expect(node.querySelector("a[href$='/pull/7/checks']")?.textContent).toBe("See all on GitHub");
+});
+
+it("offers Retry on a cancelled GitHub Actions job, shown before the passing checks", async () => {
+  await render(
+    [
+      failing({ name: "CI / Desktop app", conclusion: "success", job_id: undefined, id: 22 }),
+      failing({ name: "CI / Open-source module", conclusion: "cancelled" }),
+    ],
+    true,
+  );
+  const rows = [...node.querySelectorAll("li")];
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.textContent).toContain("CI / Open-source module");
+  expect(rows[0]!.textContent).toContain("Cancelled");
+  expect(button("Retry")).toBeDefined();
+  expect(button("Show 1 other check")).toBeDefined();
 });

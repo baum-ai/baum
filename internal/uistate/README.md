@@ -1,6 +1,7 @@
 # Durable desktop reading state
 
-`uistate` owns the Inbox's bookkeeping, review walkthrough drafts, each page's
+`uistate` owns the Inbox's bookkeeping, what happened on each pull request
+since its page was last open, review drafts, each page's
 filter and saved Pull requests tabs, and whether the first-run tour was seen
 in the shared private application database
 (`internal/appdb`). It imports no legacy
@@ -10,35 +11,48 @@ reviews are outside this store.
 | Document | Contents |
 | --- | --- |
 | `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes; archives (`archived`, optional) |
-| `ui/filters` | each page's filter query and the saved Pull requests tabs (`{pages: {<page>: query}, tabs: [{id, name, view, query}]}`) |
+| `ui/filters` | each page's filter query and the saved Pull requests tabs and sort (`{pages: {<page>: query}, sorts?: {<page>: sort}, tabs: [{id, name, view, query, sort?}]}`) |
+| `ui/activity` | per-PR what happened since its page was last open: `{prs: {<key>: {at, last: {head, versions, unresolved, review, updated, answers}, unread: {<kind>: count}}}}`, at most 2000 pull requests |
 | `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
-| `ui/walkthrough` | per repository/PR/review-version seen stops, draft comments per stop, and overall comment |
 | `ui/review` | per repository/PR, the comments and summary of the reader's own review until it is sent, and the reviews sent from the app |
 
 A filter page is `inbox`, `inbox:<inbox id>` or `pulls`, at most 64 of them,
 and a page without a filter is left out (the app drops the least recently
 changed beyond 60). A query is one line of at most 500 characters; the daemon
 never parses it. A tab has a 32-hex `id` (unique), a trimmed `name` of 1 to 40
-characters, a `view` (`open` or `history`, Closed) and a query; at most 20 tabs. A stored filters document in another shape
+characters, a `view` (`open` or `history`, Closed), a query and an optional
+`sort`; at most 20 tabs. The optional `sorts` map holds the app's sort of each
+page (the same page keys as `pages`, plus `tab:<tab id>`; at most 64); a sort
+is one line of at most 200 characters, a comma-separated list of keys each
+optionally prefixed with `-` (`opened,-risk`), which the daemon never parses.
+A document without `sorts` or tab sorts is still valid. A stored filters document in another shape
 reads as none (at its revision), and the next save replaces it.
 
-A walkthrough key is `owner/repository#number@vversion` (optionally prefixed
-with an Enterprise host). The latest 40 saved review versions are retained.
-A review key is `owner/repository#number`, and the latest 200 pull requests'
-reviews are retained. A review is `{comments, note}`: at most 100 comments,
+A review key is `owner/repository#number` (optionally prefixed with an
+Enterprise host), and the latest 200 pull requests' reviews are retained. A review is `{comments, note}`: at most 100 comments,
 each `{id, target: {kind, id, title}, body, place, head, created}` with a
-unique `id` (1–64 of `A-Za-z0-9_-`), `kind` `general`, `section`, `risk` or
-`file` (all but `general` with an `id`), a non-blank body, `place` null or
+unique `id` (1–64 of `A-Za-z0-9_-`), `kind` `general`, `section`, `risk`, `file` or
+`tile` (all but `general` with an `id`; a `tile`'s is the tile's ID), a non-blank body, `place` null or
 `{path, line, side, start_line?}` (side `RIGHT` or `LEFT`, `start_line`
 before `line`), and `head` empty or the hex commit the place is on;
 `CheckReviewComment` applies these rules to one comment and says which it
 breaks (a chat's proposed comment is checked with it, then appended with
-`Replace` at the revision it was read at). An optional `sent` holds
+`Replace` at the revision it was read at). A release that predates the `tile`
+kind finds a review record holding such a comment invalid, and reads the whole
+saved-reviews document as unreadable, every pull request's, until a release
+that knows `tile` returns; the inbox, filters and tour documents are
+unaffected. An optional `sent` holds
 at most 20 reviews sent from the app, each `{url, event, at, note, comments}`
 with an `https://` URL, `event` `APPROVE`, `COMMENT` or `REQUEST_CHANGES`, and
 at most 100 `{title, where, body}` comments.
 The save timestamp is advanced monotonically within the transaction so an
 unchanged or backwards wall clock cannot prune the draft just saved.
+The session panel uses the MCP `propose_review_comment` diff proposal. Only
+the person's Save appends it through `uiserver.Proposers`, using `Replace`
+with the pending review's revision and keeping its other comments, note and
+sent reviews. A changed revision refuses the save. The panel reloads the
+shared review record after Save so the comment appears at once; nothing is
+sent to GitHub until the person sends their review.
 Inbox rollover/clearing semantics remain in the frontend queue model, which
 knows whether its GitHub index read is complete and which actions clear work.
 
@@ -51,10 +65,10 @@ JSON-content checks. These routes grant no filesystem access.
 - `PUT /api/ui-state/inbox`
 - `GET /api/ui-state/filters`
 - `PUT /api/ui-state/filters`
+- `GET /api/ui-state/activity`
+- `PUT /api/ui-state/activity`
 - `GET /api/ui-state/tour`
 - `PUT /api/ui-state/tour`
-- `GET /api/ui-state/walkthrough?key=<URL-encoded review key>`
-- `PUT /api/ui-state/walkthrough?key=<URL-encoded review key>`
 - `GET /api/ui-state/review?key=<URL-encoded pull request key>`
 - `PUT /api/ui-state/review?key=<URL-encoded pull request key>`
 
@@ -62,7 +76,7 @@ Reads return `{revision, value}`; an absent record is `{revision: 0, value:
 null}`. Reads never create a database. Writes require `{revision, mutation_id,
 value}` and return the saved record. A stale revision is 409
 `stale_ui_state` with the current revision/value. Revisions are per record,
-so editing another review cannot stale this one. All walkthrough and review
+so editing another review cannot stale this one. All review
 retention and revision changes commit atomically through `appdb.Update`.
 
 Each window's record client has a random identifier and increasing batch
@@ -78,7 +92,7 @@ Requests are limited to 512 KiB; values to 384 KiB, with bounded collection,
 key and note sizes. Invalid keys/types/values are 400. An unreadable stored
 record or database is 500 with a fixed message; it is never overwritten with
 defaults. Required fields and string/map values reject null and missing
-values. Every retained walkthrough or review record is validated before reading, writing or pruning;
+values. Every retained review record is validated before reading, writing or pruning;
 a corrupt sibling fails the operation and leaves original bytes untouched.
 Callback errors and stale writes leave prior bytes untouched.
 
@@ -87,9 +101,7 @@ Callback errors and stale writes leave prior bytes untouched.
 `oss/app/src/ui-state.tsx` owns per-window shared snapshots, asynchronous
 hydration, sequential pending changes and explicit Retry after a failed
 read/write. Changes made during a read are replayed on what the daemon returns.
-An in-flight refresh cannot race a save. The walkthrough and Ask panel share
-one record; append/Undo replay against current text, preserving unrelated
-comments and later edits. Focus refreshes an idle record from another window.
+An in-flight refresh cannot race a save. Focus refreshes an idle record from another window.
 
 Tests cover database reopening, concurrent CAS and independent reviews,
 retention with repeated/backwards clocks, corruption preservation, input

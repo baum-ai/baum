@@ -6,9 +6,7 @@ type Connection = { phase: string; message?: string; details?: string[] };
 
 /** The window's first screen. The app reports the connection state through
  *  its `connection` command; this screen only renders it and asks to
- *  reconnect. withGlobalTauri is off so the daemon's pages get no Tauri
- *  globals, which leaves the core IPC bridge Tauri injects into its own
- *  pages. */
+ *  reconnect. */
 export function Connecting() {
   const [connection, setConnection] = useState<Connection>({ phase: "connecting" });
   useEffect(() => {

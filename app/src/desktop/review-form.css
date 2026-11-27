@@ -159,7 +159,7 @@
   flex: 0 0 240px;
   min-width: 0;
 }
-/* A CSS chevron: the native control is WebKitGTK's grey one. */
+/* A CSS chevron in place of the native control's, which ignores the theme. */
 .select::after {
   content: "";
   position: absolute;

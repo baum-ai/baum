@@ -8,6 +8,7 @@ import { BrandMark } from "./brand-logo";
 import { cn, FOCUS_RING } from "./classnames";
 import { useLogLayout } from "./conversation-layout";
 import { formatCompact, formatTime } from "./format";
+import { ImageViewer } from "./image-viewer";
 import { Markdown } from "./markdown";
 
 /** The pieces a session's conversation is drawn with, laid out like a
@@ -153,29 +154,10 @@ export function PromptBubble({
   );
 }
 
-const IMAGE_DIALOG = {
-  width: "auto",
-  maxWidth: "none",
-  maxHeight: "none",
-  padding: 0,
-  border: 0,
-  borderRadius: 0,
-  background: "transparent",
-  boxShadow: "none",
-  overflow: "visible",
-} as const;
-
-/** A prompt's images as thumbnails, each opening at full size in a dialog
- *  that a click on the image or Escape closes. */
+/** A prompt's images as thumbnails, each opening large in the shared
+ *  image viewer. */
 function PromptImages({ images }: { images: TranscriptImage[] }) {
   const [open, setOpen] = useState<TranscriptImage | null>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const element = dialog.current;
-    if (!element) return;
-    if (open && !element.open) element.showModal();
-    if (!open && element.open) element.close();
-  }, [open]);
   return (
     <>
       <ul className="mt-2 flex flex-wrap gap-2">
@@ -199,31 +181,7 @@ function PromptImages({ images }: { images: TranscriptImage[] }) {
           </li>
         ))}
       </ul>
-      <dialog
-        ref={dialog}
-        aria-label={open?.alt}
-        onClose={() => setOpen(null)}
-        className="m-auto outline-none backdrop:bg-surface-scrim"
-        // Inline, so a host's own dialog box (its width, padding and card)
-        // cannot frame the image.
-        style={IMAGE_DIALOG}
-      >
-        {open ? (
-          // The image closes itself, as Escape does.
-          <button
-            type="button"
-            aria-label="Close image"
-            onClick={() => dialog.current?.close()}
-            className="block cursor-zoom-out border-0 bg-transparent p-0"
-          >
-            <img
-              src={open.src}
-              alt={open.alt}
-              className="block max-h-[90vh] max-w-[90vw] rounded-md object-contain shadow-lg"
-            />
-          </button>
-        ) : null}
-      </dialog>
+      <ImageViewer image={open} label={open?.alt || "Image"} onClose={() => setOpen(null)} />
     </>
   );
 }
@@ -400,6 +358,7 @@ export function AgentText({
   onExpand,
   caption,
   progress = false,
+  open = false,
 }: {
   vendor?: string;
   author?: string;
@@ -408,6 +367,9 @@ export function AgentText({
   truncated?: boolean;
   onExpand?: () => void;
   caption?: string | null;
+  /** Shown whole, with nothing to unfold; the rest of a preview is fetched
+   *  (`onExpand`) as it is drawn. */
+  open?: boolean;
   /** In a log, a message the agent wrote on its way to its reply: said
    *  quietly, as a point in a list, held to a few lines. */
   progress?: boolean;
@@ -423,6 +385,7 @@ export function AgentText({
       lines={quiet ? 4 : log ? 24 : 12}
       onExpand={onExpand}
       measure={text}
+      open={open}
     >
       <MessageText text={text} muted={quiet} reading={log && !quiet} />
     </CollapsibleText>
@@ -507,8 +470,12 @@ function CollapsibleText({
   truncated,
   lines,
   onExpand,
+  open = false,
 }: {
   children: ReactNode;
+  /** Shown whole and never folded: no control, no fade and no height of
+   *  its own to scroll in. */
+  open?: boolean;
   /** The text inside, to decide whether it needs a control at all. */
   measure: string;
   /** The stored length, larger than `shown` while only a preview is here. */
@@ -546,6 +513,12 @@ function CollapsibleText({
     observer.observe(element);
     return () => observer.disconnect();
   }, [measure, lines, expanded]);
+  // Shown whole, a preview fetches its rest as it is drawn.
+  const expand = useRef(onExpand);
+  expand.current = onExpand;
+  useEffect(() => {
+    if (open && truncated) expand.current?.();
+  }, [open, truncated]);
   const scrollable = expanded && scrolls;
   const tall = overflows ?? (measure.length > 480 || measure.split("\n").length > lines);
   const fits = !truncated && !tall;
@@ -560,6 +533,17 @@ function CollapsibleText({
     setExpanded((value) => !value);
   };
 
+  if (open)
+    return (
+      <>
+        <div className="min-w-0">{children}</div>
+        {truncated ? (
+          <p className="mt-1.5 text-xs text-tertiary">
+            Showing the first {formatCompact(shown)} of {formatCompact(length)} characters.
+          </p>
+        ) : null}
+      </>
+    );
   return (
     <>
       <div

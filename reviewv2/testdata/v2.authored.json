@@ -1,0 +1,143 @@
+{
+  "schema": "baum.review/2",
+  "review": null,
+  "summary": {
+    "title": "",
+    "text": "Failed webhook deliveries now retry with a wait that doubles each time. The delivery path hands retryable errors to the new policy instead of returning them.",
+    "change_kind": "feature",
+    "verdict": {
+      "decision": "look_first",
+      "text": "Check the retry budget before merging.",
+      "points": [
+        {"text": "Nothing caps the number of attempts, so a remote that stays down is retried forever.", "section": "sec_retry_policy"}
+      ]
+    },
+    "risk_why": "Every failed delivery now takes the retry path. A remote that stays down is retried without a cap.",
+    "risk_score": null,
+    "review_minutes": null
+  },
+  "overview": {
+    "screenshots": ["att_ab12"],
+    "diagram": "tl_retry_flow",
+    "intent": [
+      {"session": "11111111-2222-3333-4444-555555555555", "prompt": 1, "asked": "Retry failed deliveries with a doubling wait", "got": "Failed deliveries retry with a doubling wait; nothing stops them yet"}
+    ]
+  },
+  "context": {
+    "area": {"text": "The delivery package sends webhook payloads to the URLs customers register.", "files": ["internal/delivery"]},
+    "reached_by": {"text": "The worker calls the client's deliver function for every queued event.", "files": ["internal/worker/worker.go"]},
+    "contracts": {"text": "A delivery that returns an error is reported to the customer at once.", "files": ["internal/delivery/deliver.go"]},
+    "related": {"text": "", "files": []}
+  },
+  "sections": [
+    {
+      "id": "sec_retry_policy",
+      "title": "Retry policy",
+      "kind": "logical",
+      "hunks": ["h_a00000000001", "h_a00000000003"],
+      "gist": "A new policy says how long to wait before each retry.",
+      "level": 3,
+      "level_reasons": [
+        {"text": "Every failed delivery now waits on this policy.", "cites": [{"type": "hunk", "id": "h_a00000000001"}]}
+      ],
+      "body": [
+        {"type": "prose", "text": "A policy holds the number of attempts and the first wait. The wait doubles with every attempt."},
+        {"type": "points", "title": "What the policy decides", "items": [
+          {"text": "The policy keeps **how many attempts** to make and the first wait.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [6, 9]}]},
+          {"text": "Each attempt waits **twice** as long as the one before.", "more": "The doubling stops at the largest wait the policy allows.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [11, 12]}, {"type": "hunk", "id": "h_a00000000003"}]}
+        ]},
+        {"type": "tile", "tile": "tl_wait_code"},
+        {"type": "note", "kind": "unchanged", "text": "Deliveries already queued keep the wait they had."},
+        {"type": "tile", "tile": "tl_error_paths"},
+        {"type": "tile", "tile": "tl_missing"}
+      ],
+      "risks": [
+        {"id": "rsk_unbounded_retries", "tier": "medium", "category": "reliability", "text": "Nothing reads the number of attempts, so a remote that stays down is retried forever.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [6, 9]}]}
+      ]
+    },
+    {
+      "id": "sec_delivery_errors",
+      "title": "Delivery error path",
+      "kind": "logical",
+      "hunks": ["h_a00000000002"],
+      "gist": "Retryable errors go to the policy instead of the customer.",
+      "level": 2,
+      "level_reasons": [
+        {"text": "Only errors marked retryable change their path.", "cites": [{"type": "hunk", "id": "h_a00000000002"}]}
+      ],
+      "body": [
+        {"type": "prose", "text": "A retryable error now schedules a retry. Any other error is returned as before."},
+        {"type": "points", "items": [
+          {"text": "**Retryable errors wait.** A retryable error schedules the delivery again under the policy.", "tone": "new", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [40, 42]}]},
+          {"text": "**Other errors return.** Any other error is returned to the caller at once.", "tone": "muted", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [43, 44]}, {"type": "session_event", "session": "11111111-2222-3333-4444-555555555555", "event": "ev_tests"}]}
+        ]}
+      ],
+      "risks": []
+    },
+    {
+      "id": "sec_dependencies",
+      "title": "Dependency update",
+      "kind": "mechanical",
+      "hunks": ["h_a00000000004"],
+      "gist": "A dependency moves to its next minor version.",
+      "level": null,
+      "level_reasons": [],
+      "body": [{"type": "prose", "text": "The lock file records the new version of one dependency."}],
+      "risks": []
+    }
+  ],
+  "tiles": [
+    {
+      "id": "tl_retry_flow",
+      "type": "flow",
+      "owner": "overview",
+      "shows": "What happens to a failed delivery, with and without a retryable error.",
+      "title": "What happens to a failed delivery",
+      "caption": "Only retryable errors take the retry lane.",
+      "cites": [{"type": "hunk", "id": "h_a00000000002"}],
+      "data": {
+        "lanes": [
+          {"label": "Retryable", "steps": [{"title": "Deliver"}, {"title": "Remote fails", "tone": "bad"}, {"title": "Wait and retry", "note": "the wait doubles", "tone": "new"}]},
+          {"label": "Other errors", "steps": [{"title": "Deliver"}, {"title": "Remote fails", "tone": "bad"}, {"title": "Returned at once", "tone": "muted"}]}
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "tl_wait_code",
+      "type": "code",
+      "owner": "sec_retry_policy",
+      "shows": "The line that doubles the wait.",
+      "title": "How the wait doubles",
+      "caption": "The wait is the first wait shifted left once per attempt.",
+      "cites": [],
+      "data": {"hunk": "h_a00000000001", "lines": [11, 12]},
+      "state": ""
+    },
+    {
+      "id": "tl_error_paths",
+      "type": "columns",
+      "owner": "sec_delivery_errors",
+      "shows": "Which errors retry and which return.",
+      "title": "Which errors retry",
+      "caption": "",
+      "cites": [{"type": "hunk", "id": "h_a00000000002"}],
+      "data": {
+        "columns": [
+          {"label": "Retry", "tone": "new", "items": [{"title": "Errors marked retryable"}]},
+          {"label": "Return", "tone": "muted", "items": [{"title": "Every other error"}]}
+        ]
+      },
+      "state": "ready"
+    }
+  ],
+  "stats": null,
+  "index": null,
+  "generation": {
+    "map": {"status": "ran"},
+    "overview": {"status": "ran"},
+    "context": {"status": "ran"},
+    "sections": {"sec_retry_policy": {"status": "ran"}, "sec_delivery_errors": {"status": "ran"}, "sec_dependencies": {"status": "ran"}},
+    "tiles": {"tl_retry_flow": {"status": "ran"}, "tl_wait_code": {"status": "ran"}, "tl_error_paths": {"status": "ran"}}
+  }
+}

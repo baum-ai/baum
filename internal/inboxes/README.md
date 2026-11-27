@@ -20,8 +20,10 @@ later step.
 | `risk` | `any`, `3`, `4` (strings) |
 | `repositories` | `owner/name`, at most 50; empty means every repository that matches |
 | `query` | a filter query the app parses and matches, trimmed, one line of at most 500 characters; empty (or missing) for none. The app reads `what`, `owners`, `risk`, `repositories` and `no_bots` as part of it and saves them folded in, leaving those fields at their plain values |
+| `sort` | the app's sort of the inbox's queue: a comma-separated list of keys, each optionally prefixed with `-`, e.g. `opened,-risk`; trimmed, one line of at most 200 characters; the daemon never parses it; empty (or missing) for the default order |
 | `no_bots` | leave out pull requests by bot authors (`author_bot` in discovery) |
 | `badge` | show a count badge in the sidebar |
+| `auto_review` | review the pull requests it holds automatically, while automatic reviews follow the inboxes (`pull_requests` `inboxes`); a missing value reads as `true`, so older inboxes and clients that do not send it keep it on |
 
 At least one and at most 20 inboxes. The array order is the sidebar order. Owners and
 repositories are compared and de-duplicated ignoring case; the first spelling
@@ -43,7 +45,7 @@ transaction, so independent stores and concurrent clients agree:
 - A fresh installation gets one inbox named `Default`: what `any`, no owners,
   risk `any`, no repositories, query `author=@me OR assignee=@me OR review-requested=@me`
   (the pull requests the person wrote, is assigned or was asked to review; an
-  inbox with an empty query lists every open pull request), `no_bots` false, badge on, color
+  inbox with an empty query lists every open pull request), `no_bots` false, badge and `auto_review` on, color
   `blue`, with a daemon-assigned id. The revision becomes 1.
 - An upgrade with stored inboxes adds no `Default`. The app used to show only
   the Up next queue in an inbox (the person's review requests, own pull

@@ -1,0 +1,108 @@
+<style>
+  .method {
+    min-width: 3.5rem;
+    justify-content: center;
+  }
+  .marker {
+    width: 1ch;
+    text-align: center;
+  }
+</style>
+<script>
+  const MARK = { added: "+", changed: "~", removed: "−", deprecated: "~" };
+  const MARK_CLASS = { added: "kit-added", removed: "kit-removed", changed: "kit-subtle", deprecated: "kit-subtle" };
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+  function countLine(endpoints) {
+    const parts = [plural(endpoints.length, "endpoint")];
+    for (const change of ["added", "changed", "removed"]) {
+      const count = endpoints.filter((endpoint) => endpoint.change === change).length;
+      if (count) parts.push(`${count} ${change}`);
+    }
+    return parts.join(" · ");
+  }
+
+  function fields(title, rows) {
+    if (rows.length === 0) return null;
+    return baum.html`<div class="kit-scroll">
+      <table class="kit-table">
+        <thead><tr><th>${title}</th><th>Type</th><th>Required</th></tr></thead>
+        <tbody>
+          ${rows.map(
+            (row) => baum.html`<tr data-tone=${row.change === "added" ? "positive" : row.change === "removed" ? "critical" : null}>
+              <td class="kit-mono">${row.field}</td>
+              <td class="kit-mono kit-muted">${row.after ?? row.before}</td>
+              <td>${row.required ? "yes" : "no"}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  baum.tile({
+    glance({ data, size }) {
+      if (data.endpoints.length === 0) return baum.empty("No interface changes.");
+      const endpoints = [...data.endpoints].sort((a, b) => Number(b.breaking) - Number(a.breaking));
+      const breaking = endpoints.filter((endpoint) => endpoint.breaking).length;
+      return baum.html`<div class="kit-glance">
+        <div class="kit-row">
+          <span class="kit-lede">${countLine(endpoints)}</span>
+          ${breaking ? baum.html`<span class="kit-badge" data-tone="critical">${breaking} breaking</span>` : null}
+        </div>
+        <ul class="kit-list">
+          ${endpoints.slice(0, size === "half" ? 3 : 2).map(
+            (endpoint) => baum.html`<li>
+              <span class=${["marker", "kit-mono", MARK_CLASS[endpoint.change]]}>${MARK[endpoint.change]}</span>
+              <span class="kit-tag kit-mono method">${endpoint.method ?? endpoint.surface}</span>
+              <span class="kit-mono kit-truncate kit-grow">${endpoint.name}</span>
+            </li>`,
+          )}
+        </ul>
+        ${size !== "full" && endpoints.length > 3 ? baum.html`<p class="kit-foot">${plural(endpoints.length - 3, "more endpoint")}</p>` : null}
+      </div>`;
+    },
+
+    detail({ data }) {
+      if (data.endpoints.length === 0) return baum.empty("No interface changes.");
+      const endpoints = [...data.endpoints].sort((a, b) => Number(b.breaking) - Number(a.breaking));
+      return baum.html`<div class="kit-stack" data-gap="6">
+        <p>${data.summary}</p>
+        <section class="kit-section">
+          <h2 class="kit-heading">Endpoints</h2>
+          ${endpoints.map(
+            (endpoint) => baum.html`<article class="kit-card kit-stack" data-tone=${endpoint.breaking ? "critical" : null}>
+              <div class="kit-row">
+                <span class="kit-tag kit-mono method">${endpoint.method ?? endpoint.surface}</span>
+                <span class="kit-mono kit-strong kit-break kit-grow">${endpoint.name}</span>
+                ${endpoint.breaking ? baum.html`<span class="kit-badge" data-tone="critical">Breaking</span>` : null}
+                <span class="kit-badge" data-tone=${endpoint.change === "added" ? "info" : "caution"}>${endpoint.change}</span>
+              </div>
+              ${endpoint.breaking_reason ? baum.html`<div class="kit-callout" data-tone="critical">${baum.md(endpoint.breaking_reason, { inline: true })}</div>` : null}
+              <dl class="kit-facts">
+                <dt>Auth</dt><dd>${endpoint.auth ?? "None"}</dd>
+                <dt>Sources</dt><dd class="kit-row">${endpoint.cites.map((citation) => baum.cite(citation))}</dd>
+              </dl>
+              ${fields("Request", endpoint.request)}
+              ${fields("Response", endpoint.response)}
+              ${baum.diff(endpoint.cites[0], { maxLines: 6 })}
+            </article>`,
+          )}
+        </section>
+        <section class="kit-section">
+          <h2 class="kit-heading">Consumers and docs</h2>
+          <ul class="kit-list" data-divided>
+            ${data.consumers.map(
+              (consumer) => baum.html`<li>
+                <span class="kit-dot" data-tone=${consumer.updated ? "positive" : "caution"}></span>
+                <span class="kit-grow">${consumer.label}</span>
+                <span class="kit-small kit-subtle">${consumer.updated ? "updated in this pull request" : "not updated"}</span>
+                ${consumer.cites.map((citation) => baum.cite(citation))}
+              </li>`,
+            )}
+          </ul>
+        </section>
+      </div>`;
+    },
+  });
+</script>

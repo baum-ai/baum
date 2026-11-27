@@ -10,7 +10,8 @@
 //  2. selects a tmux session's pane on the client most recently used for it,
 //     and goes on with the terminal that client runs in;
 //  3. selects the terminal's tab: kitty through its remote control, iTerm2
-//     and Terminal through AppleScript, by the tab's terminal device;
+//     and Terminal through AppleScript, by the tab's terminal device, Herdr
+//     through herdr-app, by the terminal herdr-core runs the program in;
 //  4. raises the window: hyprctl on Hyprland, xdotool or wmctrl on X11, the
 //     the application's own process, else its bundle, on macOS.
 //
@@ -205,6 +206,8 @@ func (f *Focuser) Predict(agent string, t *hookevents.Terminal) string {
 			return Session
 		case f.goos() == "darwin" && t.TTY != "" && (p.Name == "Terminal" || iTermProcess(p.Name)):
 			return Session
+		case p.Name == herdrCore:
+			return Session
 		}
 	}
 	return Window
@@ -259,6 +262,9 @@ func (f *Focuser) Focus(ctx context.Context, agent, id string, t *hookevents.Ter
 		}
 	}
 	tab := f.selectTab(ctx, outer, tty, t.Env, pane)
+	if tab.window != nil {
+		outer = tab.window
+	}
 	raised, why := tab.activated, ""
 	if !raised {
 		raised, why = f.raise(ctx, outer, env)
@@ -454,7 +460,10 @@ type tabResult struct {
 	selected bool
 	// activated reports that the step also brought the terminal forward.
 	activated bool
-	hint      string
+	// window, when set, is the chain whose window shows the tab, raised in
+	// place of the session's own: a terminal that runs apart from its window.
+	window []hookevents.Process
+	hint   string
 }
 
 // selectTab selects the tab of the terminal in chain whose process is
@@ -470,9 +479,82 @@ func (f *Focuser) selectTab(ctx context.Context, chain []hookevents.Process, tty
 			return f.appleScriptTab(ctx, "iTerm2", iTermScript, tty)
 		case f.goos() == "darwin" && p.Name == "Terminal":
 			return f.appleScriptTab(ctx, "Terminal", terminalScript, tty)
+		case p.Name == herdrCore:
+			return f.herdrTab(ctx, chain, i)
 		}
 	}
 	return tabResult{}
+}
+
+// herdrCore is the process that holds Herdr's terminals, herdr-core's holder.
+// It runs apart from Herdr's window, herdr-app, which shows them.
+const herdrCore = "herdr-core"
+
+// herdrTab shows, in Herdr's window, the terminal whose program is chain[i-1],
+// the process the holder (chain[i]) started, and has herdr-app's window raised
+// in place of the holder's, which it has none of.
+func (f *Focuser) herdrTab(ctx context.Context, chain []hookevents.Process, i int) tabResult {
+	out, _ := f.run(ctx, nil, "pgrep", "-n", "-x", "herdr-app")
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if pid == 0 {
+		return tabResult{hint: "Open Herdr to bring the session forward."}
+	}
+	window := f.chain(pid)
+	address := ""
+	if i > 0 {
+		address = f.herdrTerminal(ctx, f.command(herdrCore, chain[i].PID), chain[i-1].PID)
+	}
+	if address == "" {
+		return tabResult{window: window, hint: "Could not find the session's terminal in Herdr."}
+	}
+	if _, err := f.run(ctx, nil, f.command("herdr-app", pid), "do", "agent.focus", "--terminal", address); err != nil {
+		return tabResult{window: window, hint: fmt.Sprintf("Could not show the session's terminal in Herdr: %v.", err)}
+	}
+	return tabResult{selected: true, window: window}
+}
+
+// herdrTerminal is the address of the terminal of herdr-core (hc) whose
+// program is pid, or "". Listing leaves out the program's process, which each
+// terminal's own facts have.
+func (f *Focuser) herdrTerminal(ctx context.Context, hc string, pid int) string {
+	type terminal struct {
+		Address string `json:"address"`
+		PID     int    `json:"pid"`
+	}
+	out, err := f.run(ctx, nil, hc, "ls", "--json")
+	var list struct {
+		Terminals []terminal `json:"terminals"`
+	}
+	if err != nil || json.Unmarshal(out, &list) != nil {
+		return ""
+	}
+	for _, t := range list.Terminals {
+		// Another machine's terminals (machine/t7) run elsewhere.
+		if t.Address == "" || strings.Contains(t.Address, "/") {
+			continue
+		}
+		out, err := f.run(ctx, nil, hc, "get", t.Address, "--json")
+		var got terminal
+		if err == nil && json.Unmarshal(out, &got) == nil && got.PID == pid {
+			return t.Address
+		}
+	}
+	return ""
+}
+
+// command is name from the PATH, else the executable of process pid, which
+// runs it: an application started from a desktop entry need not be on the
+// daemon's PATH.
+func (f *Focuser) command(name string, pid int) string {
+	if _, err := f.lookPath(name); err == nil {
+		return name
+	}
+	// A binary replaced by an update reads as deleted; its successor is
+	// where it was.
+	if exe := strings.TrimSuffix(f.executable(pid), " (deleted)"); exe != "" {
+		return exe
+	}
+	return name
 }
 
 // kittyTab focuses the kitty window whose program is chain[i-1], the process

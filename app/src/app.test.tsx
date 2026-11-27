@@ -6,8 +6,14 @@ import { inboxGroups } from "./inbox";
 import { App } from "./app";
 import { ReviewSettingsForm } from "./desktop/reviews";
 import { useLocation } from "./location";
-import { appBase, cost, filtered, type Entry, type Clone } from "./api";
+import { appBase, cost, filtered, type Entry, type Clone, type Job } from "./api";
+import { openExternal } from "./outside-links";
 import { forgetLastRows } from "./shortcuts";
+
+vi.mock("./outside-links", async (original) => ({
+  ...(await original<typeof import("./outside-links")>()),
+  openExternal: vi.fn(),
+}));
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -46,6 +52,7 @@ let root: Root;
 let node: HTMLDivElement;
 let fail = false;
 let entries: Entry[] = [];
+let jobs: Partial<Job>[] = [];
 let streams: string[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -54,6 +61,7 @@ beforeEach(() => {
   localStorage.clear();
   fail = false;
   entries = [];
+  jobs = [];
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
@@ -84,7 +92,7 @@ beforeEach(() => {
               : path === "/s/test-ns/api/prs?view=health"
                 ? []
                 : path === "/s/test-ns/api/jobs"
-                  ? { jobs: [] }
+                  ? { jobs }
                   : {},
       );
     }),
@@ -233,16 +241,57 @@ it.each([
   },
 );
 
+it("names the page in the window title", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  await act(async () => root.render(<App />));
+  expect(document.title).toBe("Jobs · baum");
+});
+
 it("does not call a review group missing when the groups could not be read", async () => {
   const heal = refuse("api/groups");
   history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Couldn't load the review group");
-  expect(node.textContent).not.toContain("does not exist any more");
+  expect(node.textContent).not.toContain("no longer exists");
   expect(retryButtons()).toHaveLength(1);
   heal();
   await act(async () => retryButtons()[0]!.click());
-  expect(node.textContent).toContain("does not exist any more");
+  expect(node.textContent).toContain("no longer exists");
+});
+
+it("reads again on Retry when a read under way never answers", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  const heal = refuse("api/groups");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Couldn't load the review group");
+  heal();
+  // The next read of the inbox hangs, and the read it is part of with it.
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let hang = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string, init?: RequestInit) => {
+      if (hang && path.endsWith("api/inbox")) {
+        hang = false;
+        return new Promise<Response>(() => {});
+      }
+      return original(path, init);
+    }),
+  );
+  await act(async () => listeners.get("index")!());
+  expect(node.textContent).toContain("Couldn't load the review group");
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).toContain("no longer exists");
 });
 
 it("says the sessions could not be read instead of listing none", async () => {
@@ -306,13 +355,50 @@ it("shows actionable launch authorization failure", async () => {
   expect(node.textContent).toContain("Open this page from the baum desktop app");
   expect(node.textContent).not.toContain("Generate reviews");
 });
-it("keeps generating and failed indications without old generation columns", async () => {
-  entries = [entry(1, "outdated"), entry(2, "failed"), entry(3, "current"), entry(4, "generating")];
+it("puts a dot before each title for how its saved review stands, explained in a note", async () => {
+  entries = [
+    entry(1, "outdated"),
+    { ...entry(2, "failed"), failure_reason: "interrupted" },
+    entry(3, "current"),
+    entry(4, "generating"),
+    entry(5, "no_review"),
+    entry(6, "no_review"),
+    entry(7, "failed"),
+  ];
+  // A queued review, and a running one the daemon's index hasn't marked yet.
+  jobs = [
+    { id: "j6", repository: "acme/demo", pr: 6, state: "queued" },
+    { id: "j7", repository: "acme/demo", pr: 7, state: "running" },
+  ];
   await act(async () => root.render(<App />));
   const inbox = node.querySelector(".local-inbox")!;
-  expect(inbox.textContent).toContain("Review failed");
-  expect(inbox.textContent).toContain("Generating review");
-  expect(inbox.textContent).not.toMatch(/outdated|current|Generated|Cost|v1|—/);
+  const dot = (n: number) =>
+    inbox
+      .querySelector(`input[aria-label="Select acme/demo #${n}"]`)!
+      .closest("li")!
+      .querySelector(".review-dot")!;
+  const label = (n: number) => dot(n).querySelector(".sr-only")?.textContent;
+  const note = (n: number) => dot(n).querySelector("[popover]")!.textContent;
+  expect(label(1)).toBe("Review outdated");
+  expect(label(2)).toBe("Review failed");
+  expect(label(3)).toBe("Review ready");
+  expect(label(4)).toBe("Generating review");
+  expect(label(6)).toBe("Generating review");
+  expect(label(7)).toBe("Generating review");
+  // A list row carries no buttons: the dot is not one.
+  expect(dot(3).querySelector("button")).toBeNull();
+  // No saved review: an empty slot, so the titles still line up.
+  expect(dot(5).childElementCount).toBe(0);
+  // The note says what the dot means, and why a review failed.
+  expect(note(2)).toBe("Review failed. The review could not be generated. Reason: interrupted.");
+  expect(note(1)).toBe("Review outdated. There are changes since the review was written.");
+  // The dot comes before the title.
+  const row = dot(3).closest("li")!;
+  expect(
+    dot(3).compareDocumentPosition(row.querySelector(".inbox-pr-title")!) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(inbox.textContent).not.toMatch(/Generated|Cost|v1|—/);
 });
 it("shows GitHub states that ask for something, one merge status, and nothing for normal states", async () => {
   entries = [entry(1), entry(2), entry(3), entry(4), entry(5), entry(6)];
@@ -345,15 +431,19 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
-  // A ready pull request offers Merge after Peek in its row's menu, each with
-  // its key hint.
+  // A ready pull request offers Merge after Open and Peek in its row's menu,
+  // each with its key hint.
   await act(async () =>
     rows[0]!.querySelector<HTMLButtonElement>("button.row-menu-button")!.click(),
   );
   const menuItems = Array.from(
     node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'),
   );
-  expect(menuItems.slice(0, 2).map((item) => item.textContent)).toEqual(["PeekSpace", "Merge…m"]);
+  expect(menuItems.slice(0, 3).map((item) => item.textContent)).toEqual([
+    "Open↵",
+    "PeekSpace",
+    "Merge…m",
+  ]);
   await act(async () =>
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
   );
@@ -589,6 +679,34 @@ it("opens Pull requests on Open, with Closed last, and comes back to the tab las
   expect(tabs()[1]!.getAttribute("aria-pressed")).toBe("true");
   localStorage.clear();
 });
+it("pages Pull requests after filtering and resets to the first page when the tab changes", async () => {
+  entries = Array.from({ length: 65 }, (_, i) => entry(i + 1));
+  await act(async () => root.render(<App />));
+  const rows = () => node.querySelectorAll(".inbox-pr-title");
+  const pager = () => node.querySelector('[aria-label="Pull requests pagination"]')!;
+  const move = async (label: string) =>
+    act(async () =>
+      [...pager().querySelectorAll("button")]
+        .find((button) => button.textContent === label)!
+        .click(),
+    );
+  expect(rows()).toHaveLength(30);
+  expect(pager().textContent).toContain("1–30 of 65");
+  await move("Next");
+  expect(rows()).toHaveLength(30);
+  expect(rows()[0]!.textContent).toBe("Change 31");
+  await move("Next");
+  expect(rows()).toHaveLength(5);
+  expect(pager().textContent).toContain("61–65 of 65");
+  await move("Previous");
+  expect(rows()[0]!.textContent).toBe("Change 31");
+  const tabs = node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button');
+  await act(async () => tabs[1]!.click());
+  expect(rows()).toHaveLength(0);
+  await act(async () => tabs[0]!.click());
+  expect(rows()[0]!.textContent).toBe("Change 1");
+});
+
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];
   await act(async () => root.render(<App />));
@@ -644,7 +762,7 @@ it("shows failed background refresh without hiding cached reviews", async () => 
           Response.json([
             {
               repository: "acme/demo",
-              error: "metadata_unavailable",
+              error: "discovery_unavailable",
               next_refresh: "2026-10-15T12:01:00Z",
             },
           ]),
@@ -686,6 +804,36 @@ it("folds every repository GitHub could not refresh into one notice with one act
   expect(notices[0]!.textContent).toContain("could not refresh 2 repositories from GitHub");
   expect(notices[0]!.querySelector("a")!.textContent).toBe("Open settings");
   expect(notices[0]!.querySelector("a")!.getAttribute("href")).toContain("page=settings");
+});
+
+it("leaves one pull request's failed read out of the refresh notice", async () => {
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/background"
+      ? Promise.resolve(
+          Response.json([
+            {
+              repository: "acme/demo",
+              error: "metadata_unavailable",
+              next_refresh: "2026-10-15T12:01:00Z",
+            },
+          ]),
+        )
+      : String(args[0]) === "/s/test-ns/api/github-auth"
+        ? Promise.resolve(
+            Response.json({
+              state: "connected",
+              host: "github.com",
+              saved: true,
+              login: "octocat",
+              override: false,
+            }),
+          )
+        : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).not.toContain("could not refresh");
 });
 
 const diagnosticsReport = {
@@ -927,12 +1075,17 @@ function stubAutomatic(
   vi.mocked(fetch).mockImplementation((...args) => {
     const path = String(args[0]);
     const init = args[1] as RequestInit | undefined;
+    // The session panel reports the open page 250ms after each navigation on
+    // real timers, so recording it would race the settings saves tests check.
+    if (init?.method === "PUT" && path.endsWith("api/console/page"))
+      return Promise.resolve(Response.json({}));
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
       if (
         path.endsWith("api/settings/agent-env") ||
         path.endsWith("api/settings/job-concurrency") ||
-        path.endsWith("api/settings/time-limits")
+        path.endsWith("api/settings/time-limits") ||
+        path.endsWith("api/settings/labs")
       )
         return Promise.resolve(Response.json(puts.at(-1)!.body));
       if (path.endsWith("api/settings/decisions")) {
@@ -950,6 +1103,8 @@ function stubAutomatic(
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
     if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
+    if (path === "/s/test-ns/api/settings/labs")
+      return Promise.resolve(Response.json({ tile_reviews: false }));
     if (path === "/s/test-ns/api/settings/decisions")
       return Promise.resolve(
         Response.json({ decisions: (settings as { decisions?: unknown }).decisions }),
@@ -974,8 +1129,15 @@ it("saves each review setting as it changes", async () => {
   // "auto" shows as the harness it runs first, with that harness's default model.
   expect(node.querySelector<HTMLSelectElement>("#review-agent")!.value).toBe("claude");
   expect(node.querySelector<HTMLSelectElement>("#review-model")!.value).toBe("claude-haiku-5-5");
-  const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
-  expect(global.checked).toBe(true);
+  const global = node.querySelector<HTMLSelectElement>("#review-automatic")!;
+  // A daemon that sends no `updates` reviews every push.
+  expect([...global.options].map((o) => o.textContent)).toEqual([
+    "Never",
+    "On open",
+    "On change",
+    "Always",
+  ]);
+  expect(global.value).toBe("always");
   expect(node.querySelector("#review-all-note")).toBeNull();
   await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "all");
   expect(node.querySelector("#review-all-note")).not.toBeNull();
@@ -983,6 +1145,7 @@ it("saves each review setting as it changes", async () => {
     path: "/s/test-ns/api/automatic",
     body: {
       enabled: true,
+      updates: "always",
       backend: "claude",
       model: "claude-haiku-5-5",
       effort: "",
@@ -990,7 +1153,20 @@ it("saves each review setting as it changes", async () => {
     },
   });
   expect(section().textContent).toContain("Saved");
-  await act(async () => global.click());
+  // Reviews can follow the inboxes, each with its own switch.
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "inboxes");
+  expect(puts.at(-1)!.body).toMatchObject({ pull_requests: "inboxes" });
+  expect(node.querySelector("#review-all-note")).toBeNull();
+  expect(node.querySelector("#review-inboxes-note")!.textContent).toContain(
+    "Pull requests in any inbox with Review automatically on get reviewed.",
+  );
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "all");
+  await choose(global, "on_change");
+  expect(puts.at(-1)!.body).toMatchObject({ enabled: true, updates: "on_change" });
+  expect(section().textContent).toContain("only when the change would alter it");
+  expect(node.querySelector("#review-pull-requests")).not.toBeNull();
+  // Never is what the switch off was: enabled false, nothing about pushes.
+  await choose(global, "never");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
     body: {
@@ -1051,6 +1227,25 @@ it("chooses a separate agent and model for fixes", async () => {
   });
   await choose(agent, "");
   expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
+});
+it("turns network access for fixes off and on, with or without a fix agent", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "claude",
+    model: "claude-haiku-5-5",
+    fix_backend: "",
+    fix_model: "",
+    fix_network: true,
+  });
+  await act(async () => root.render(<App />));
+  const network = node.querySelector<HTMLInputElement>("#fix-network")!;
+  expect(network.checked).toBe(true);
+  await act(async () => network.click());
+  expect(puts.at(-1)).toEqual({ path: "/s/test-ns/api/automatic", body: { fix_network: false } });
+  expect(network.checked).toBe(false);
+  await act(async () => network.click());
+  expect(puts.at(-1)!.body).toEqual({ fix_network: true });
 });
 it("chooses the Claude Code configuration directory of reviews under Advanced", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
@@ -1221,6 +1416,7 @@ it("saves one change at a time and only the newest of those made meanwhile", asy
   vi.mocked(fetch).mockImplementation((...args) => {
     const response = stubbed(...args);
     if ((args[1] as RequestInit | undefined)?.method !== "PUT") return response;
+    if (String(args[0]).endsWith("api/console/page")) return response;
     return new Promise((resolve) => held.push(() => resolve(response)));
   });
   await act(async () => root.render(<App />));
@@ -1256,9 +1452,9 @@ it("puts a control back when its save fails", async () => {
       : stubbed(...args),
   );
   await act(async () => root.render(<App />));
-  const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
-  await act(async () => global.click());
-  expect(global.checked).toBe(true);
+  const global = node.querySelector<HTMLSelectElement>("#review-automatic")!;
+  await choose(global, "never");
+  expect(global.value).toBe("always");
   expect(node.querySelector('[aria-labelledby="settings-reviews-heading"]')!.textContent).toContain(
     "registry is busy",
   );
@@ -1268,7 +1464,7 @@ it("opens on General and marks sections needing attention", async () => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic(demoClone, automaticOverview, { backend: "anthropic", model: "claude-opus-5-5" });
   await act(async () => root.render(<App />));
-  expect(node.querySelector("#preferred-theme")).not.toBeNull();
+  expect(node.querySelector("#page-modifier")).not.toBeNull();
   const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("General");
   const fixes = nav.querySelector<HTMLButtonElement>('[data-section="fixes"]')!;
@@ -1277,6 +1473,302 @@ it("opens on General and marks sections needing attention", async () => {
   expect(location.search).toBe("?page=settings&section=fixes");
   expect(node.querySelector("#fix-agent")).not.toBeNull();
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
+});
+const appearanceThemes = [
+  { id: "default-light", name: "Default light", base: "light", builtin: true, tokens: {} },
+  { id: "default-dark", name: "Default dark", base: "dark", builtin: true, tokens: {} },
+  { id: "c-1", name: "Dusk", base: "dark", tokens: { "--color-paper": "#e8eef4" } },
+];
+const appearanceHarness = (over: Record<string, unknown> = {}) => {
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  let appearance = {
+    theme: "light",
+    key_hints: true,
+    sidebar: "pinned",
+    light_theme: "default-light",
+    dark_theme: "default-dark",
+    themes: appearanceThemes,
+    ...over,
+  };
+  const sent: { method: string; path: string; body: unknown }[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const init = args[1] as RequestInit | undefined;
+    const path = String(args[0]);
+    if (path.includes("api/settings/appearance")) {
+      const method = init?.method ?? "GET";
+      if (method !== "GET") {
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        sent.push({ method, path: path.slice(path.indexOf("api/")), body });
+        if (method === "PUT") appearance = { ...appearance, ...body };
+        if (method === "PATCH")
+          appearance = {
+            ...appearance,
+            themes: appearance.themes.map((t) => (t.id === "c-1" ? { ...t, name: body.name } : t)),
+          };
+        if (method === "DELETE")
+          appearance = {
+            ...appearance,
+            dark_theme: "default-dark",
+            themes: appearance.themes.filter((t) => t.id !== "c-1"),
+          };
+      }
+      return Promise.resolve(Response.json(appearance));
+    }
+    return stubbed(...args);
+  });
+  return sent;
+};
+const radios = (group: string) => [
+  ...node.querySelectorAll<HTMLInputElement>(
+    `[role="radiogroup"][aria-label="${group}"] input[type="radio"]`,
+  ),
+];
+const radio = (group: string, name: string) =>
+  radios(group).find((input) => input.getAttribute("aria-label") === name)!;
+const row = (slot: string) => node.querySelector<HTMLElement>(`.theme-row[data-slot="${slot}"]`)!;
+const modeButton = (name: string) =>
+  [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Theme mode"] button')].find(
+    (button) => button.textContent === name,
+  )!;
+
+it("has an Appearance section after General, and General holds no theme controls", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  appearanceHarness();
+  await act(async () => root.render(<App />));
+  const sections = [
+    ...node.querySelectorAll<HTMLElement>('nav[aria-label="Settings sections"] [data-section]'),
+  ].map((item) => item.dataset.section);
+  expect(sections.slice(0, 2)).toEqual(["general", "appearance"]);
+  expect(node.querySelector("#preferred-theme, #light-theme, #dark-theme")).toBeNull();
+  expect(node.querySelector(".theme-row, [aria-label='Theme mode']")).toBeNull();
+  const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
+  await act(async () =>
+    nav.querySelector<HTMLButtonElement>('[data-section="appearance"]')!.click(),
+  );
+  expect(location.search).toBe("?page=settings&section=appearance");
+  expect(node.querySelector("[aria-label='Theme mode']")).not.toBeNull();
+  expect(node.querySelector("#page-modifier")).toBeNull();
+  expect(row("light")).not.toBeNull();
+});
+
+it("chooses a theme for each slot with swatches, any base in either, and renames and deletes custom ones", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  const sent = appearanceHarness();
+  await act(async () => root.render(<App />));
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toEqual([
+    "Default light",
+    "Default dark",
+    "Dusk",
+  ]);
+  expect(radio("Light theme", "Default light").checked).toBe(true);
+  // A dark theme in the light slot gives a dark page while the light slot is in use.
+  await act(async () => radio("Light theme", "Dusk").click());
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { light_theme: "c-1" },
+  });
+  expect(radio("Light theme", "Dusk").checked).toBe(true);
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
+  await act(async () => radio("Light theme", "Default light").click());
+  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("");
+  await act(async () => radio("Dark theme", "Dusk").click());
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { dark_theme: "c-1" },
+  });
+  await act(async () => modeButton("Dark").click());
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { theme: "dark" },
+  });
+  // The custom theme's thumbnail has a menu to rename and delete it, outside its radio's label.
+  const menuButton = node.querySelector<HTMLButtonElement>(
+    '[aria-label="Actions for Dusk in light theme"]',
+  )!;
+  expect(menuButton.closest("label")).toBeNull();
+  expect(row("light").querySelectorAll('[aria-label^="Actions for"]')).toHaveLength(1);
+  expect(row("dark").querySelectorAll('[aria-label^="Actions for"]')).toHaveLength(1);
+  expect(
+    row("light").querySelector('[aria-label="Actions for Default light in light theme"]'),
+  ).toBeNull();
+  await act(async () => menuButton.click());
+  const item = (name: string) =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((i) =>
+      i.textContent?.startsWith(name),
+    )!;
+  await act(async () => item("Rename").click());
+  const field = node.querySelector<HTMLInputElement>('input[aria-label="Name of Dusk"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      field,
+      "Midnight",
+    );
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => field.form!.requestSubmit());
+  expect(sent).toContainEqual({
+    method: "PATCH",
+    path: "api/settings/appearance/themes/c-1",
+    body: { name: "Midnight" },
+  });
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toContain("Midnight");
+  await act(async () =>
+    node
+      .querySelector<HTMLButtonElement>('[aria-label="Actions for Midnight in light theme"]')!
+      .click(),
+  );
+  await act(async () => item("Delete").click());
+  await act(async () =>
+    [...document.querySelectorAll<HTMLButtonElement>("dialog button")]
+      .find((b) => b.textContent === "Delete")!
+      .click(),
+  );
+  expect(sent).toContainEqual({
+    method: "DELETE",
+    path: "api/settings/appearance/themes/c-1",
+    body: {},
+  });
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toEqual([
+    "Default light",
+    "Default dark",
+  ]);
+});
+
+it("disables the theme mode and the thumbnails until the preferences are ready", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness();
+  const answer = vi.mocked(fetch).getMockImplementation()!;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    if (String(args[0]).includes("api/settings/appearance")) await gate;
+    return answer(...args);
+  });
+  await act(async () => root.render(<App />));
+  expect(modeButton("Light").disabled).toBe(true);
+  expect(modeButton("Dark").disabled).toBe(true);
+  expect(radios("Light theme").every((r) => r.disabled)).toBe(true);
+  await act(async () => release());
+  expect(modeButton("Light").disabled).toBe(false);
+  expect(radios("Light theme").every((r) => !r.disabled)).toBe(true);
+});
+
+it("opens a custom theme's menu with a right click and with Ctrl+. on its radio, and a built-in's with neither", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  const sent = appearanceHarness();
+  await act(async () => root.render(<App />));
+  const option = (group: string, name: string) =>
+    radio(group, name).closest<HTMLElement>(".theme-option")!;
+  const menuItems = () =>
+    [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map((i) => i.textContent);
+  const closeMenu = () =>
+    act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+  // A right click on a built-in keeps the browser's menu.
+  const builtin = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => {
+    option("Light theme", "Default dark").querySelector(".theme-mini")!.dispatchEvent(builtin);
+  });
+  expect(builtin.defaultPrevented).toBe(false);
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+
+  // On a custom one it opens the ⋯ menu's choices.
+  const custom = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => {
+    option("Light theme", "Dusk").querySelector(".theme-mini")!.dispatchEvent(custom);
+  });
+  expect(custom.defaultPrevented).toBe(true);
+  expect(menuItems()).toEqual(["Rename", "Delete"]);
+  expect(document.querySelector('[role="menu"]')!.getAttribute("aria-label")).toBe(
+    "Actions for Dusk in light theme",
+  );
+  await closeMenu();
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+
+  // Ctrl+. with the focus on the radio inside the label.
+  const ctrlDot = () =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: ".", ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+  radio("Dark theme", "Default light").focus();
+  await ctrlDot();
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  radio("Dark theme", "Dusk").focus();
+  await ctrlDot();
+  expect(menuItems()).toEqual(["Rename", "Delete"]);
+  // Choosing Delete from it asks first.
+  const choose = (name: string) =>
+    act(async () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((i) => i.textContent === name)!
+        .click(),
+    );
+  await choose("Delete");
+  expect(document.querySelector("dialog")?.textContent).toContain("Delete Dusk?");
+  expect(sent.some((request) => request.method === "DELETE")).toBe(false);
+});
+
+it("shows the ⋯ chip's own rules, and rings the thumbnail outside its theme scope", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness();
+  await act(async () => root.render(<App />));
+  const option = radio("Light theme", "Dusk").closest<HTMLElement>(".theme-option")!;
+  // The option is a row the shared ⋯ rule keys on, and the ⋯ is not in the label.
+  expect(option.hasAttribute("data-list-row")).toBe(true);
+  expect(option.querySelector(".row-menu-button")).not.toBeNull();
+  // The ring's frame is outside the thumbnail's data-theme-scope.
+  const frame = option.querySelector(".theme-mini-frame")!;
+  expect(frame.closest("[data-theme-scope]")).toBeNull();
+  expect(frame.querySelector("[data-theme-scope]")).not.toBeNull();
+});
+
+it("marks the slot in use by the theme mode and the system's mode", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("dark"),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+  const inUse = () => ["light", "dark"].filter((slot) => row(slot).textContent?.includes("in use"));
+  appearanceHarness({ theme: "system" });
+  await act(async () => root.render(<App />));
+  expect(inUse()).toEqual(["dark"]);
+  expect(row("dark").hasAttribute("data-in-use")).toBe(true);
+  await act(async () => modeButton("Light").click());
+  expect(inUse()).toEqual(["light"]);
+  expect(row("light").querySelector("h3")!.textContent).toBe("Light theme · in use");
+  expect(row("dark").querySelector("h3")!.textContent).toBe("Dark theme");
+});
+
+it("draws each theme's miniature on a scoped element with its own base and tokens", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness({ theme: "light", light_theme: "c-1" });
+  await act(async () => root.render(<App />));
+  const mini = (group: string, name: string) =>
+    radio(group, name).closest("label")!.querySelector<HTMLElement>(".theme-mini")!;
+  // Every thumbnail is aria-hidden and scoped to its theme, the chosen one too.
+  const dusk = mini("Light theme", "Dusk");
+  expect(dusk.hasAttribute("data-theme-scope")).toBe(true);
+  expect(dusk.dataset.theme).toBe("dark");
+  expect(dusk.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
+  expect(dusk.getAttribute("aria-hidden")).toBe("true");
+  expect(radio("Light theme", "Dusk").checked).toBe(true);
+  const builtin = mini("Light theme", "Default light");
+  expect(builtin.dataset.theme).toBe("light");
+  expect(builtin.style.getPropertyValue("--color-paper")).toBe("");
+  expect(mini("Dark theme", "Default dark").dataset.theme).toBe("dark");
+  expect(radio("Dark theme", "Dusk").closest("label")!.title).toBe("Dusk");
 });
 it("summarises the prompts in the section list and marks outdated ones", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=prompts");
@@ -1333,36 +1825,36 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
     });
   // Shift+J and Shift+K move through the sections.
   await key("J", true);
+  expect(location.search).toBe("?page=settings&section=appearance");
+  await key("J", true);
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
-  await key("4");
-  expect(location.search).toBe("?page=settings&section=connections");
+  await key("5");
+  expect(location.search).toBe("?page=settings&section=panel");
   await key("K", true);
   await key("ArrowUp", true);
   expect(location.search).toBe("?page=settings&section=reviews");
   // j goes into the section, where j and k step through its controls.
   await key("j");
-  const automatic = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  const automatic = node.querySelector<HTMLSelectElement>("#review-automatic")!;
   expect(document.activeElement).toBe(automatic);
-  await key("j");
-  expect(document.activeElement).toBe(node.querySelector("#review-pull-requests"));
   // In a select, letters pick an option rather than move.
-  automatic.focus();
-  // Enter changes a switch as Space does; with automatic reviews off, the
-  // next control is the agent.
-  await key("Enter");
-  expect(automatic.checked).toBe(false);
-  await key("j");
-  expect(document.activeElement).toBe(node.querySelector("#review-agent"));
-  automatic.focus();
-  // Shift+J moves the section from inside one too.
+  // With automatic reviews never, there is no choice of pull requests.
+  await choose(automatic, "never");
+  expect(node.querySelector("#review-pull-requests")).toBeNull();
+  // A select keeps letters for picking, so Shift+J moves the section from
+  // outside it.
+  automatic.blur();
+  // Shift+J moves the section.
   await key("J", true);
   expect(location.search).toBe("?page=settings&section=fixes");
   expect(document.activeElement).toBe(current());
   await key("K", true);
   // Escape goes back to the list; Enter goes in again.
-  const again = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  const again = node.querySelector<HTMLSelectElement>("#review-automatic")!;
   again.focus();
+  // A select keeps Escape to close its list, so leave it first.
+  again.blur();
   await key("Escape");
   expect(document.activeElement).toBe(current());
   expect(current().textContent).toContain("Reviews");
@@ -1423,6 +1915,29 @@ it("edits the environment agents run with and shows server errors inline", async
   await type(names()[2]!, "GIT_DIR");
   await act(async () => save().click());
   expect(section().textContent).toContain("GIT_DIR cannot be set");
+});
+it("turns tile reviews on, off by default, and puts the switch back when refused", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const toggle = () => node.querySelector<HTMLInputElement>("#review-tiles")!;
+  expect(toggle().checked).toBe(false);
+  await act(async () => toggle().click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/labs",
+    body: { tile_reviews: true },
+  });
+  expect(toggle().checked).toBe(true);
+  const accepted = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/labs")
+      ? Promise.resolve(Response.json({ message: "settings unavailable" }, { status: 500 }))
+      : accepted(...args),
+  );
+  await act(async () => toggle().click());
+  expect(toggle().checked).toBe(true);
+  expect(node.textContent).toContain("settings unavailable");
 });
 it("sets how many jobs run at once and puts it back when refused", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
@@ -1529,6 +2044,20 @@ it("shows a repository's decision capture turned off", async () => {
   await act(async () => root.render(<App />));
   const region = await openRepository();
   expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
+});
+it("keeps a repository's pinned tile types when another control saves", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic({
+    ...demoClone,
+    settings: { ...demoClone.settings, tiles: { types: ["schema_change"] } },
+  });
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  expect(region.querySelector("#repository-tile-text")).toBeNull();
+  await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
+  // The daemon keeps the stored tile settings a save leaves out.
+  expect(puts.at(-1)!.body).toEqual({ automatic: null, decisions: false });
 });
 it("shows a saved extraction model the agent ignores, and lets it be replaced", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
@@ -1776,6 +2305,27 @@ it("types a custom data extraction model", async () => {
     body: { enabled: true, backend: "", model: "gpt-6-custom", effort: "" },
   });
 });
+it("puts the saved data extraction model back when the custom field is left empty", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    decisions: { enabled: true, backend: "", model: "gpt-6-custom", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const custom = section.querySelector<HTMLInputElement>('input[aria-label="Custom model"]')!;
+  expect(custom.value).toBe("gpt-6-custom");
+  const count = puts.length;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(custom, " ");
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => custom.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(puts.length).toBe(count);
+  expect(custom.value).toBe("gpt-6-custom");
+});
 /** Opens a repository's page from its row and returns it. */
 async function openRepository(name = "acme/demo") {
   await act(async () =>
@@ -1818,7 +2368,7 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   );
   await act(async () => root.render(<App />));
   const region = await openRepository();
-  expect(region.querySelector("select")).toBeNull();
+  expect(region.querySelector("#repository-automatic")).toBeNull();
   await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
@@ -1958,6 +2508,41 @@ it("marks automatically started jobs in the jobs list", async () => {
     "job-a",
   ]);
 });
+it("shows a review that kept the saved review as a neutral outcome in the jobs list", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
+      ? Promise.resolve(
+          Response.json({
+            jobs: [
+              {
+                id: "k",
+                clone: "clone",
+                repository: "acme/demo",
+                pr: 1,
+                state: "completed",
+                phase: "finished",
+                reason: "no_significant_change",
+                summary: "Only a typo in a comment changed.\n\nMore detail.",
+                calls: 1,
+                tokens: 10,
+                repairs: 0,
+                actual_cost_usd: null,
+              },
+            ],
+          }),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const row = node.querySelector("#job-k")!;
+  expect(row.querySelector(".local-job-state")!.textContent).toBe("Review still applies");
+  expect(row.textContent).toContain("The new commits don't change what the review says");
+  expect(row.textContent).toContain("Only a typo in a comment changed.");
+  expect(row.textContent).not.toContain("More detail.");
+  expect(row.querySelector(".local-job-state.failed")).toBeNull();
+});
 it("names a feature build by its repository in the jobs list", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=jobs");
   const original = vi.mocked(fetch).getMockImplementation()!;
@@ -2033,7 +2618,7 @@ it("marks signed-out agents in desktop Settings and says how to sign in", async 
   const invoke = vi.fn(async (command: string) =>
     command === "setup_state" ? view : { ok: true, lines: [] },
   );
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
@@ -2056,7 +2641,7 @@ it("marks signed-out agents in desktop Settings and says how to sign in", async 
     await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
     expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2096,7 +2681,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
   const invoke = vi.fn(async (command: string) =>
     command === "setup_state" ? view : { ok: true, lines: ["Installed"] },
   );
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const click = async (label: string) => {
@@ -2135,7 +2720,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     expect(invoke).toHaveBeenCalledWith("install_command", {});
     expect(location.search).toBe("?page=settings&section=computer");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2170,7 +2755,7 @@ it("opens agent hooks from the Codex warning in desktop Settings", async () => {
     },
   };
   const invoke = vi.fn(async () => view);
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const open = [...node.querySelectorAll(".local-notice button")].find(
@@ -2184,7 +2769,7 @@ it("opens agent hooks from the Codex warning in desktop Settings", async () => {
     expect(node.querySelector('button[aria-label="Update Claude Code hooks"]')).toBeNull();
     expect(node.querySelector('button[aria-label="Update Codex hooks"]')).not.toBeNull();
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2224,7 +2809,7 @@ it("offers the desktop-setup command in desktop Settings for an agent that is to
     terminal_setup: command,
   };
   const invoke = vi.fn(async () => view);
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const panel = node.querySelector('[aria-labelledby="hooks-heading"]')!;
@@ -2248,7 +2833,7 @@ it("offers the desktop-setup command in desktop Settings for an agent that is to
     expect(writeText).toHaveBeenCalledWith(command);
     expect(copy.textContent).toBe("Copied");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2265,7 +2850,7 @@ it("says in desktop Settings when neither Claude Code nor Codex is installed", a
     },
     hooks: { agents: [] },
   }));
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const section = node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
@@ -2276,7 +2861,7 @@ it("says in desktop Settings when neither Claude Code nor Codex is installed", a
       [...section.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
     ).toEqual(["claude", "codex"]);
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2333,7 +2918,7 @@ it("sets the desktop window's zoom in Settings and follows the shortcuts", async
       hooks: { agents: [] },
     };
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const select = node.querySelector<HTMLSelectElement>('select[aria-label="Zoom"]')!;
@@ -2350,7 +2935,7 @@ it("sets the desktop window's zoom in Settings and follows the shortcuts", async
     });
     expect(select.value).toBe("0.9");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2368,14 +2953,14 @@ it("hides the zoom card when the desktop app does not offer zoom", async () => {
       hooks: { agents: [] },
     };
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     expect(invoke).toHaveBeenCalledWith("zoom_state", undefined);
     expect(node.querySelector('select[aria-label="Zoom"]')).toBeNull();
     expect(node.textContent).not.toContain("zoom_state not allowed");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2432,7 +3017,7 @@ it("tells about an app update once in a toast that opens This computer", async (
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const toast = () => node.querySelector(".local-toast");
@@ -2451,7 +3036,7 @@ it("tells about an app update once in a toast that opens This computer", async (
     await act(async () => root.render(<App />));
     expect(toast()).toBeNull();
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2472,7 +3057,7 @@ it("records a closed app update toast and skips it on This computer", async () =
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const toast = () => node.querySelector(".local-toast");
@@ -2493,7 +3078,7 @@ it("records a closed app update toast and skips it on This computer", async () =
     expect(toast()).toBeNull();
     expect(invoke).toHaveBeenCalledWith("dismiss_update_notice", { version: "0.2.0" });
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2518,7 +3103,7 @@ it("counts a ready app update on Settings and installs it from This computer", a
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const settings = node.querySelector<HTMLAnchorElement>('.local-rail a[href*="page=settings"]')!;
@@ -2542,7 +3127,7 @@ it("counts a ready app update on Settings and installs it from This computer", a
     expect(invoke).toHaveBeenCalledWith("cancel_update", undefined);
     expect(card().textContent).toContain("baum 0.2.0 is ready");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2558,7 +3143,7 @@ it("checks for app updates on request and links a copy that cannot update itself
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const settings = node.querySelector('.local-rail a[href*="page=settings"]')!;
@@ -2575,7 +3160,7 @@ it("checks for app updates on request and links a copy that cannot update itself
     expect(card().textContent).toContain("Checking for updates…");
     expect(check.disabled).toBe(true);
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2592,7 +3177,7 @@ it("counts and links an app update that this copy cannot install", async () => {
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     const settings = node.querySelector('.local-rail a[href*="page=settings"]')!;
@@ -2604,7 +3189,7 @@ it("counts and links an app update that this copy cannot install", async () => {
     expect(download.textContent).toBe("Download 0.2.0");
     expect(download.href).toBe("https://github.com/baum-ai/baum/releases/tag/v0.2.0");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2615,14 +3200,14 @@ it("hides the app update card when the desktop app offers no updater", async () 
     if (command === "zoom_state") return { level: 1, levels: [1] };
     return setupView;
   });
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   try {
     await act(async () => root.render(<App />));
     expect(invoke).toHaveBeenCalledWith("update_state", undefined);
     expect(node.querySelector('section[aria-labelledby="updates-heading"]')).toBeNull();
     expect(node.textContent).not.toContain("update_state not allowed");
   } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "baumDesktop");
   }
 });
 
@@ -2785,6 +3370,62 @@ it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
 });
+it("opens the shortcuts sheet from Go to", async () => {
+  entries = [entry(1)];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  await act(async () => root.render(<App />));
+  await press("k", { ctrlKey: true });
+  const option = Array.from(
+    node.querySelectorAll<HTMLElement>('[data-go-to] [role="option"]'),
+  ).find((one) => one.textContent?.startsWith("Keyboard shortcuts"))!;
+  expect(option.textContent).toBe("Keyboard shortcuts?Action");
+  await act(async () => option.click());
+  expect(node.querySelector("[data-go-to]")).toBeNull();
+  expect(node.querySelector("[data-shortcuts-sheet]")?.textContent).toContain(
+    "Refresh from GitHub",
+  );
+});
+it("folds the sidebar opened under the mouse when the pointer or focus leaves the window", async () => {
+  entries = [entry(1)];
+  // A narrow window always folds the sidebar.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(width < 64rem)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  await act(async () => root.render(<App />));
+  const lane = node.querySelector<HTMLElement>(".local-rail-lane")!;
+  const rail = () => lane.getAttribute("data-rail");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const hover = async () => {
+      const event = new MouseEvent("pointermove", { bubbles: true });
+      Object.defineProperty(event, "pointerType", { value: "mouse" });
+      await act(async () => {
+        lane.dispatchEvent(event);
+        vi.advanceTimersByTime(200);
+      });
+    };
+    await hover();
+    expect(rail()).toBe("open");
+    // Off the left edge of the window: no leave reaches the sidebar itself.
+    await act(async () =>
+      document.dispatchEvent(new MouseEvent("mouseout", { relatedTarget: null })),
+    );
+    expect(rail()).toBe("folded");
+    await hover();
+    expect(rail()).toBe("open");
+    await act(async () => window.dispatchEvent(new FocusEvent("blur")));
+    expect(rail()).toBe("folded");
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("offers the shortcuts, a problem report and the docs from Help beside the baum title", async () => {
   entries = [entry(1)];
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -2793,8 +3434,8 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
       this.open = true;
     },
   });
-  const open = vi.fn();
-  vi.stubGlobal("open", open);
+  const open = vi.mocked(openExternal);
+  open.mockClear();
   await act(async () => root.render(<App />));
   const help = () => node.querySelector<HTMLButtonElement>('button[aria-label="Help"]')!;
   const choose = async (label: string) => {
@@ -2804,6 +3445,7 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
     expect(items.map((item) => item.textContent)).toEqual([
       "Show shortcuts",
       "Report a problem",
+      "Take the tour",
       "Open the docs",
     ]);
     await act(async () => items.find((item) => item.textContent?.startsWith(label))!.click());
@@ -2812,9 +3454,28 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   await choose("Open the docs");
-  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
+  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/");
   await choose("Report a problem");
   expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
+});
+it("keeps the page's keys off the page behind the shortcuts sheet", async () => {
+  entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  history.replaceState(null, "", "/s/test-ns/?repository=acme%2Fdemo&pr=42");
+  await act(async () => root.render(<App />));
+  await press("?");
+  await act(async () => (document.activeElement as HTMLElement).click());
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
+  // With the focus outside the sheet, as after a click on its padding.
+  (document.activeElement as HTMLElement | null)?.blur();
+  await press("u");
+  expect(location.search).toContain("pr=42");
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
 });
 it("goes back to the inbox from a pull request page with u or Escape, keeping the filter", async () => {
   entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];

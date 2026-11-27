@@ -29,6 +29,7 @@ const inbox = (overrides: Partial<Inbox> = {}): Inbox => ({
   query: "",
   no_bots: false,
   badge: true,
+  auto_review: true,
   ...overrides,
 });
 
@@ -165,6 +166,14 @@ it("reads the daemon's list, and nothing from an older daemon", () => {
   expect(parseInboxes(null)).toBeNull();
 });
 
+it("reads a missing auto_review as on", () => {
+  const { auto_review: _, ...older } = inbox();
+  expect(parseInboxes({ inboxes: [older] })!.inboxes[0]!.auto_review).toBe(true);
+  expect(
+    parseInboxes({ inboxes: [{ ...older, auto_review: false }] })!.inboxes[0]!.auto_review,
+  ).toBe(false);
+});
+
 const saver = () => {
   const puts: {
     revision: number;
@@ -292,6 +301,7 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       query: "",
       no_bots: false,
       badge: true,
+      auto_review: true,
     },
     {
       id: "b",
@@ -304,6 +314,7 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       query: "waiting=merge org=acme",
       no_bots: false,
       badge: false,
+      auto_review: true,
     },
   ]);
   // Matching copes with what it returns.

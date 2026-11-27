@@ -1,7 +1,18 @@
 import type { IndexedHunk, IndexedHunkLine } from "./review-document";
-import type { CodeDiffHunk, CodeDiffLine } from "./components/review-tiles/code-diff";
+import type { CodeDiffHunk, CodeDiffLine } from "./components/code-diff";
 
 const hunkHeader = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+/** An indexed hunk's diff as `CodeDiff` draws it. */
+export const codeDiffHunk = (diff: NonNullable<IndexedHunk["diff"]>): CodeDiffHunk => ({
+  header: diff.header,
+  lines: diff.lines.map((line) => ({
+    kind: line.kind,
+    text: line.text,
+    oldLine: line.kind !== "add" ? line.old_line : undefined,
+    newLine: line.kind !== "remove" ? line.new_line : undefined,
+  })),
+});
 
 const parsedPatches = new Map<string, CodeDiffHunk[]>();
 

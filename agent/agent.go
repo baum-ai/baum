@@ -54,6 +54,26 @@ func concurrentCalls(backend Backend) bool {
 	return ok && caller.ConcurrentCalls()
 }
 
+// ConcurrentCalls reports whether a backend says it may run calls over one
+// run directory at once (ConcurrentCaller).
+func ConcurrentCalls(backend Backend) bool { return concurrentCalls(backend) }
+
+// SessionKeeper is a Backend that reports whether its review and task calls
+// may keep their session (Request.PersistSession) and resume one
+// (Request.ResumeSession). A Backend that does not implement it, or reports
+// false, is never asked to: a host that wants to continue a call writes a
+// fresh one instead.
+type SessionKeeper interface {
+	KeepsSessions() bool
+}
+
+// KeepsSessions reports whether a backend says its calls may keep and resume
+// sessions (SessionKeeper).
+func KeepsSessions(backend Backend) bool {
+	keeper, ok := backend.(SessionKeeper)
+	return ok && keeper.KeepsSessions()
+}
+
 // Endpoint is a complete provider base URL and the key or token that
 // authenticates to it.
 type Endpoint struct {
@@ -95,9 +115,16 @@ type Request struct {
 	// the backend frames it without pull request review wording.
 	Task bool
 	// Scratch, for a Fixer, is a private directory the agent's commands may
-	// write to besides Directory: their TMPDIR. Empty leaves the backend's
-	// own temporary directory.
+	// write to besides Directory: their TMPDIR (Codex) and their package and
+	// build caches (FixEnvironment). Empty leaves the backend's own temporary
+	// directory.
 	Scratch string
+	// GitDir, for a Fixer, is the agent's own git repository outside
+	// Directory, which its commands may write to as well.
+	GitDir string
+	// Network, for a Fixer, lets the agent's commands reach the network; off,
+	// the sandbox allows no connection.
+	Network bool
 	// Transcript, when set, receives each step of the run as the person
 	// watching sees it (see TranscriptEntry); nil when none is kept.
 	Transcript func(TranscriptEntry)
@@ -124,15 +151,31 @@ type Request struct {
 	// resumed Claude Code session keeps the system prompt it recorded, so put
 	// per-turn framing in the user prompt.
 	ResumeSession string
-	// ForkSession, with ResumeSession, continues in a new session and leaves
-	// the original untouched; Result.SessionID is then the new one. Without
-	// ResumeSession it is an error.
-	ForkSession bool
+	// Shell, for a review or task, lets the agent run commands that read:
+	// Claude Code gets its Bash tool inside its sandbox, which allows no
+	// write outside the working directory and no network, where the
+	// platform can enforce it (claude.SandboxAvailable), and ignores it
+	// elsewhere; Codex runs commands in its read-only sandbox anyway.
+	Shell bool
+	// ReadDirs are more directories a review or task may read besides
+	// Directory, such as the shared Git directory of a worktree the run
+	// works in.
+	ReadDirs []string
 	// MCP, when set, gives the run exactly one MCP server: baum's own, the
 	// daemon's /api/mcp route, which the agent CLI reaches over HTTP. Nil
 	// leaves the run with none, as every run has been. Only a local (User or
 	// Local profile) run supports it.
 	MCP *MCPServer
+	// SessionStarted, when set, is called with the session (Claude Code) or
+	// thread (Codex) id as soon as the CLI reports it, before the run ends,
+	// and again only if the CLI reports another one. It is called on the
+	// run's goroutine.
+	SessionStarted func(id string)
+	// TextDelta, when set, receives the agent's answer as it streams, one
+	// piece at a time, from a backend that streams it (Claude Code). The
+	// pieces of one message add up to the text its "message" transcript
+	// entry then carries. It is called on the run's goroutine.
+	TextDelta func(text string)
 }
 
 // MCPTokenEnv names the environment variable that carries an MCPServer's
@@ -173,24 +216,16 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// WantsSession reports whether the request uses any session option.
-func (r Request) WantsSession() bool {
-	return r.PersistSession || r.ResumeSession != "" || r.ForkSession
-}
-
-// KeepsSession reports whether the CLI must keep its session: a persisted,
-// resumed or forked run.
+// KeepsSession reports whether the request uses a session option, so the CLI
+// must keep its session: a persisted or resumed run.
 func (r Request) KeepsSession() bool {
 	return r.PersistSession || r.ResumeSession != ""
 }
 
 var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// ValidateSession rejects an inconsistent combination of session options.
+// ValidateSession rejects a session to resume that is not a session id.
 func (r Request) ValidateSession() error {
-	if r.ForkSession && r.ResumeSession == "" {
-		return errors.New("fork needs a session to resume")
-	}
 	if r.ResumeSession != "" && !sessionID.MatchString(r.ResumeSession) {
 		return errors.New("the session to resume must be a UUID")
 	}
@@ -247,8 +282,7 @@ type Result struct {
 	// describes the document's shape, not repository content.
 	LastRejection string
 	// SessionID is the session (Claude Code) or thread (Codex) id the CLI
-	// reported for this call; with Request.ForkSession, the new session's id.
-	// Empty when the CLI reported none.
+	// reported for this call. Empty when the CLI reported none.
 	SessionID string
 }
 

@@ -17,7 +17,6 @@ import (
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/internal/viewserver"
 )
 
 func (a LocalAPI) logger() *slog.Logger {
@@ -37,7 +36,7 @@ type LinkedSessions = func(ctx context.Context, repository string, number int) (
 // computation), and when the review was generated. A pull request without a
 // saved review links none; one whose sessions cannot be linked links none and
 // is logged.
-func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
+func (a LocalAPI) linkedSessions(cache *documentCache, maxDocumentBytes int) LinkedSessions {
 	return func(ctx context.Context, repository string, number int) ([]locallink.Session, time.Time, error) {
 		clones, err := a.Registry.List(ctx)
 		if err != nil {
@@ -72,7 +71,7 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 				a.logger().Warn("decisions: the saved review's sessions were not linked", append([]any{"repository", repository, "pr", number, "reason", reason}, args...)...)
 				return nil, generated(), nil
 			}
-			if len(version.Document) > viewserver.MaxDocumentBytes {
+			if len(version.Document) > maxDocumentBytes {
 				return unlinked("document too large")
 			}
 			if !acquire(ctx, cache.requests) {

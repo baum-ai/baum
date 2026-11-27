@@ -197,7 +197,7 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
                 <>
                   {" · "}
                   <span className="plan-rail-left" style={{ color: tone(left) }}>
-                    {left}%
+                    {left}% left
                   </span>
                 </>
               )}
@@ -268,7 +268,8 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
       ))}
       <span
         className="plan-rail-compact"
-        aria-hidden="true"
+        title={lowest === null ? undefined : `Lowest plan window: ${lowest}% left`}
+        aria-label={lowest === null ? undefined : `Lowest plan window: ${lowest}% left`}
         style={lowest === null ? undefined : { color: tone(lowest) }}
       >
         {lowest === null ? "–" : `${lowest}%`}

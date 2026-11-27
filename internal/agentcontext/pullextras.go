@@ -14,20 +14,20 @@ import (
 // The tools of the pull request and group pages beyond the ones that list
 // what a page shows: a file at the review's head, one commit and its patches,
 // the decisions captured for the pull request, what the app offers about the
-// branch and the checks, the person's own draft review and walkthrough place,
-// and a group's patches and files. Each is repository-scoped and bound to
-// the action's repository in actionRoutes; the two kept-state tools are bound
-// to the action's own pull request.
+// branch and the checks, the person's own draft review, and a group's
+// patches and files. Each is repository-scoped and bound to the action's
+// repository in actionRoutes; the kept-state tool is bound to the action's
+// own pull request.
 
 func (s *Server) pullExtraTools() []Tool {
 	return []Tool{{
 		Name: "file",
-		Description: "A file of the repository at the head of the pull request's saved review, as the app's file view opens it from a context chip: the text (at most 512 KiB, cut with truncated set), or no content for a directory, a binary file or a path the head lacks. " +
-			"Only a file the review cites can be read, and only a pull request with a saved review has one.",
-		InputSchema: targetSchema(`"path":{"type":"string","minLength":1,"maxLength":1000,"description":"The file's path in the repository, as the review cites it."}`, "path"),
+		Description: "A file of the repository: the text (at most 512 KiB, cut with truncated set), or no content for a directory, a binary file or a path the commit lacks. " +
+			"A file the pull request's saved review cites is read at the review's head, as the app's file view opens it from a context chip; any other file, or one asked for at a rev, is read from the clone at the pull request's head (default), its merge base (rev base) or a commit id.",
+		InputSchema: fileSchema,
 		Scope:       ScopeRepository,
-		Reads:       []string{"/api/index", "/api/file"},
-		Call:        callFile,
+		Reads:       []string{"/api/index", "/api/file", "/api/document", "/api/facts", "/api/clone/file"},
+		Call:        callFileAnyRev,
 	}, {
 		Name:        "commit",
 		Description: "One of the pull request's commits as the app's commit view shows it: the message body and the files it changed (path, old path, status, lines added and deleted). Read from the saved review when there is one, else the facts. The commit must be one commits lists.",
@@ -80,14 +80,6 @@ func (s *Server) pullExtraTools() []Tool {
 		Scope:       ScopeRepository,
 		Reads:       []string{"/api/ui-state/review"},
 		Call:        callPendingReview,
-	}, {
-		Name: "walkthrough_position",
-		Description: "Where the person is in the walkthrough of the pull request's saved review: the stops they have seen, what they said looks off at each, and their overall comment. " +
-			"Defaults to the latest review version.",
-		InputSchema: targetSchema(`"version":{"type":"integer","minimum":1,"description":"The review version. Default: the latest."}`),
-		Scope:       ScopeRepository,
-		Reads:       []string{"/api/index", "/api/ui-state/walkthrough"},
-		Call:        callWalkthrough,
 	}, {
 		Name:        "group_patch",
 		Description: "The patch of a file a group's combined review cites, from the member whose comparison changes it, as the group page shows it; hunk names the cited hunk when several members change the file. The path must be one the review cites. Defaults to the latest version.",
@@ -326,27 +318,10 @@ func reviewKey(repository string, number int) string {
 	return strings.ToLower(repository) + "#" + strconv.Itoa(number)
 }
 
-// walkthroughKey is the key of a review version's walkthrough progress
-// (progressKey in the app).
-func walkthroughKey(repository string, number, version int) string {
-	return reviewKey(repository, number) + "@v" + strconv.Itoa(version)
-}
-
 // ownReviewKey reports whether key is the draft review of the action's own
 // pull request: nothing else is.
 func ownReviewKey(key, repository string, pull int) bool {
 	return key == reviewKey(repository, pull)
-}
-
-// ownWalkthroughKey reports whether key is a walkthrough progress key of the
-// action's own pull request, at any version.
-func ownWalkthroughKey(key, repository string, pull int) bool {
-	rest, ok := strings.CutPrefix(key, reviewKey(repository, pull)+"@v")
-	if !ok || rest == "" {
-		return false
-	}
-	n, err := strconv.Atoi(rest)
-	return err == nil && n > 0 && strconv.Itoa(n) == rest
 }
 
 // savedState reads the value of a kept UI state, null for none.
@@ -432,55 +407,6 @@ func callPendingReview(ctx context.Context, c CallContext, args json.RawMessage)
 		out.Sent = append(out.Sent, sent{r.URL, r.Event, r.At, r.Head, r.Note, r.Comments})
 	}
 	return compactJSON(out)
-}
-
-func callWalkthrough(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-	var a struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return "", err
-	}
-	repository, number, err := c.pullTarget(args)
-	if err != nil {
-		return "", err
-	}
-	version := a.Version
-	if version == 0 {
-		e, err := c.entry(ctx, repository, number)
-		if err != nil {
-			return "", err
-		}
-		var latest struct {
-			Version int `json:"version"`
-		}
-		_ = json.Unmarshal(e.raw["latest"], &latest)
-		if version = latest.Version; version == 0 {
-			return "", errors.New("the pull request has no saved review, so no walkthrough")
-		}
-	}
-	value, err := c.savedState(ctx, "walkthrough", walkthroughKey(repository, number, version))
-	if err != nil {
-		return "", err
-	}
-	progress := struct {
-		Seen  []string          `json:"seen"`
-		Notes map[string]string `json:"notes"`
-		Note  string            `json:"note"`
-	}{Seen: []string{}, Notes: map[string]string{}}
-	if len(value) > 0 && string(value) != "null" {
-		if err := json.Unmarshal(value, &progress); err != nil {
-			return "", errors.New("the walkthrough's progress is not readable")
-		}
-	}
-	return compactJSON(struct {
-		Repository string            `json:"repository"`
-		Number     int               `json:"number"`
-		Version    int               `json:"version"`
-		Seen       []string          `json:"seen"`
-		Notes      map[string]string `json:"notes"`
-		Note       string            `json:"note"`
-	}{repository, number, version, emptyList(progress.Seen), progress.Notes, progress.Note})
 }
 
 func emptyList[T any](list []T) []T {

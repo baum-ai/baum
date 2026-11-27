@@ -2,7 +2,7 @@
 
 `@baum/viewer` is the React package that renders a `baum.review/1` document
 and its earlier versions: the summary, the sections and their blocks, risks,
-tiles, hunk evidence, description images, checks, the details and activity
+hunk evidence, description images, checks, the details and activity
 panes, and the version menu with comparison. It also holds the pure
 derivations behind them (review order, risk triage, anchor resolution, version
 changes) and the design tokens and primitives the components are built from.
@@ -77,37 +77,48 @@ so a host that sets the variable never fetches them.
 
 ### Custom color themes
 
-Edit `src/themes/custom.css` to customize the desktop app. It is loaded by the
-main app, setup, connecting and tray screens. Outside this repository, import
-`@baum/viewer/theme.css` for the same theme entry point without Tailwind.
+A custom theme is a base, `light` or `dark`, and overrides of palette tokens.
+The desktop app keeps the person's themes and puts the active one on the
+document root: `data-theme` and `color-scheme` follow the theme's base, and its
+tokens are set as inline custom properties, which win over both cascade layers
+and the app's stylesheet. The app has a light slot and a dark slot, each holding
+any theme, and the `theme` setting (system, light or dark) picks the slot in
+use; a dark-base theme in the light slot gives `data-theme="dark"`. Outside the
+app, import `@baum/viewer/theme.css` for the same palette without Tailwind and
+set the same properties on the root yourself. Host CSS scoped by
+`:root[data-color-theme="…"]` in `custom.css` still works: the app never
+touches that attribute.
 
-There are two levels of customization. Set a base color to recalculate its
-dependent shades, or set any derived token to replace just that result:
+Each theme has one base, so it overrides one mode: a theme meant for both modes
+is two themes, one in each slot. Set a seed to recalculate its dependent shades,
+or set a role token to replace just that result. The tokens a theme may set are
+the seeds below and the roles listed after them; the app refuses any other name
+and any value that is not a plain colour (`#rrggbb`, `rgb()`, `hsl()` or
+`oklch()`):
 
 ```css
-/* In src/themes/custom.css; this file is already in the baum-theme layer. */
+/* What the app sets for a light theme, as inline declarations on :root. */
 :root {
   --brand-green-600: #2574a9;
   --brand-sand-100: #dbe8f4;
-
-  /* Direct exceptions to the default recipes. */
-  --surface-selected: color-mix(in srgb, var(--brand-green-600) 12%, var(--surface-page));
-  --border-focus: var(--brand-green-600);
-}
-
-:root[data-theme="dark"] {
-  --surface-page: #14202a;
-  --surface-card: var(--surface-page);
-  --text-secondary: #bdd0dd;
+  --border-focus: #2574a9;
 }
 ```
 
-`theme.css` orders the layers as `baum-palette`, then `baum-theme`. A custom
-declaration therefore wins over the defaults even when the default selector is
-more specific, such as the dark-mode selector. No `!important` is needed.
-Unlayered host styles intentionally take precedence over both layers. Keep
-component CSS from redeclaring palette tokens locally; consume the appropriate
-role, such as `--nav-hover`, instead.
+`theme.css` orders the layers as `baum-palette`, then `baum-theme`, and inline
+declarations beat both. Unlayered host styles beat the layers but not inline
+declarations. Keep component CSS from redeclaring palette tokens locally;
+consume the appropriate role, such as `--nav-hover`, instead.
+
+The recipes also apply to any element marked `data-theme-scope`: the light
+recipes to `:root, [data-theme-scope]` and the dark ones to
+`:root[data-theme="dark"], [data-theme-scope][data-theme="dark"]`, in the same
+layer. Such an element recomputes the whole palette from the seeds and tokens
+set on it, so a preview can show a theme whatever the page's mode is: set
+`data-theme="light"` or `"dark"` on it and the theme's tokens inline (the
+local app's Settings › Appearance does, for its theme thumbnails). A light
+scope inside a dark page gets the light recipes because it matches only the
+first block. The hosted UI and the viewer have no such elements.
 
 Put overrides on the document root. CSS variables resolve where they are
 defined: changing only a base on a child element does not recalculate recipes
@@ -116,11 +127,12 @@ direct role overrides affect that role and aliases depending on it. For example,
 `--surface-page` and `--surface-card` are independent roles, so set both when
 they should share a custom fill. Changing `--paper-0` changes both defaults.
 
-Common roles are `--surface-page`, `--surface-card`, `--surface-canvas`,
-`--surface-popup`, `--text-primary`, `--text-secondary`, `--border-default`,
-`--border-focus`, `--action-primary`, `--action-primary-hover`, `--nav-hover`,
-`--nav-selected`, `--status-positive`, `--status-caution` and `--status-critical`.
-The full default file is the reference for derived roles and base dependencies.
+Roles a theme may set are `--surface-page`, `--surface-card`, `--surface-canvas`,
+`--surface-popup`, `--text-primary`, `--text-secondary`, `--text-inverse`,
+`--border-default`, `--border-focus`, `--action-primary`, `--action-primary-hover`,
+`--nav-hover`, `--nav-selected`, `--status-positive`, `--status-caution` and
+`--status-critical`. The full default file is the reference for derived roles
+and base dependencies.
 
 | Base tokens | What they control |
 | --- | --- |
@@ -131,17 +143,14 @@ The full default file is the reference for derived roles and base dependencies.
 | `--series-caramel`, `--series-sage`, `--series-espresso` | The local Analytics charts' warm series |
 
 Dark mode uses different mixing recipes, so a seed can affect the two modes
-differently. Use mode-specific role overrides when the default recipe is not
-suitable for a custom theme.
+differently: on a dark base the text comes from `--color-paper` and the surfaces
+from `--color-shadow`. Use role overrides when the default recipe is not
+suitable for a theme.
 
-For multiple named themes, scope declarations to
-`:root[data-color-theme="ocean"]` and mode-specific exceptions to
-`:root[data-color-theme="ocean"][data-theme="dark"]`. Select the theme with
-`document.documentElement.dataset.colorTheme = "ocean"`. `data-theme` remains
-the light/dark mode managed by appearance preferences; it does not overwrite
-the separate theme identity. This CSS interface does not add a theme picker or
-persist custom theme selection. Stumpy, native artwork and vendor identities retain their fixed
-colors independently of the UI theme.
+`src/themes/custom.css` is a build-time hook, empty by default, for overrides a
+build wants to ship in the `baum-theme` layer; the person's themes override it.
+Stumpy, native artwork and vendor identities retain their fixed colors
+independently of the UI theme.
 
 ## Host seams
 
@@ -158,6 +167,7 @@ A host connects it through props and context:
 | repository file opener | no | `openRepositoryFile({ path, symbol })` on `ReviewViewer`, carried with the source opener in `ReviewSourcesProvider` (`useReviewSources().openRepositoryFile`): called when a Summary context chip for a file is clicked, whether or not the pull request changes it; return true when handled, false to open GitHub instead. Given, those chips are buttons without the leaving mark. Without it, a changed file opens the review's file view; a directory keeps its GitHub link. The viewer never reads the file; the host does |
 | source opener | no | `openSource(anchor, resolved)` on `ReviewViewer`: called when a source chip for the pull request's description (`pr_body`) or another pull request (`pr`) is clicked; return true when handled and the viewer cancels the link to GitHub. Those chips then read as in-app links without the leaving mark. The viewer never fetches the description or builds a route; the host does. A commit chip needs no hook: when the commit is in the Commits group (matched by full sha or prefix) it selects it there, otherwise it links to GitHub. Comment, thread and check chips keep going to GitHub |
 | row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
+| host places | no | `places` on `ReviewViewer` (`ReviewPlaces`): the host's own rail rows, stepping, panes and reference-chip targets for the Summary, Changes, risk and section places, and a `tile` place of its own. Absent, the viewer draws all of them itself (see [Host places](#host-places)) |
 | side pane, header slots and other features | no | the `ReviewViewer` slots below |
 | decision log links and sessions | for the decision log components | `pullRequestHref` and `openSession` props (see [Decision log](#decision-log)) |
 | decision log page | for `TimelinePage` | its lists, the reads of details and authors, and the host's filter bar and wording (see [Decision log](#decision-log)), under the `UrlStateProvider` |
@@ -225,8 +235,8 @@ left out rather than shown empty or failed:
 | `renderSectionLabels` | labels at the end of a section's badges, in its pane and in the Changes overview, on whichever version is read, such as the pull requests a stack review's section covers |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
 | `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
-| `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
-| `decisions` | one rail row above Sessions, **Decisions** with an optional `count`, opening the host's pane (`ReviewPaneSlot`, `?pane=decisions`); absent, the row is not drawn and a link to it reads as the Summary |
+| `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below). |
+| `decisions` | one rail row above Sessions, **Decisions** with an optional `count`, opening the host's pane (`ReviewPaneSlot`, `?pane=decisions`, with `&decision=<id>` handing `renderPane` the decision to open); absent, the row is not drawn and a link to it reads as the Summary. |
 | `comments` | the side pane's last tab, **Comments**, dotted (caution) while `count` is above 0: the reader's own review comments, which the host draws (given the same context as `conversation`) and keeps. It stays mounted while another tab shows, so a comment being written survives switching tabs. Each change of `reveal` opens the tab, unfolding the side pane, and focuses what in it carries `data-autofocus` |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `detailsChecks` | the Checks part for the document the side pane describes, in place of the document's own checks, and whether it shows a failure (which flags the tab that holds it); null content leaves the part out. The part leads the Activity tab, or the Details tab when `hideActivity` is set. For checks gathered from elsewhere, such as a stack review's members |
@@ -236,7 +246,54 @@ left out rather than shown empty or failed:
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
 | `onRetryDetails` | a Retry beside "Details unavailable" on a section of the current version whose `details` is `failed` (below), called with the section's ID; the button reads "Retrying…" and is disabled from the click until a returned promise settles |
+| `places` | the host's own Summary, Changes and detail places and a `tile` selection (`?pane=tile&tile=<id>&tile_item=<id>`): rail rows, stepping, panes, chip targets and how the rail starts (see [Host places](#host-places)). Absent, a `tile` selection reads as the Summary |
 | `contextPending` | the current document is a draft whose context the host is still writing: while it has no `summary.context`, the Summary's Context part says "Writing context…" in its place |
+
+### Host places
+
+`places` (`ReviewPlaces`) lets a host replace the review's own places, the
+Summary, the Changes overview, the Risks overview, one section and one risk,
+and add a `tile` place of its own (`{ kind: "tile", id, item? }`, kept in the
+URL as `?pane=tile&tile=<id>&tile_item=<id>`). Everything else stays the viewer's:
+the head, the version menu and compare, the side pane and the Files,
+Decisions, Sessions and Commits groups. Without `places` nothing changes, and
+a `tile` selection in the URL reads as the Summary. The host supplies:
+
+| Member | What it does |
+| --- | --- |
+| `renderRail(context)` | the rail's rows that stand in for the Summary row, the Changes group and its obsolete toggle; `checks.notice` follows them. Each row is a button with `aria-pressed` on the row of the current place and `aria-controls` containing `review-section`: where the panes stack the rail is a sheet, and its focus lands on the pressed row that controls the pane. The viewer calls it as a function, so put hooks in a component element it returns |
+| `railRows(context)` | the same rows as keyed steps (`ReviewRailRow`), in the order the rail shows them, so the host's keys step through the rail with the viewer's own rows after them. |
+| `steps(selection, context)` | for the summary, changes, risks, section, risk and tile selections: the label and icon the navigator bar and the pane use, the position ("2 of 6"), the previous and next place, the key of the rail row it sits on, optionally the section it is about and its read mark, a group toggle, and `item`: the previous and next step of the item keys (j and k, ↓ and ↑), which replace marking the next block of the pane (`[data-review-block]`) for a place whose items are the host's own list; a null side does nothing, so the keys stop at the ends. The host answers for every kind it owns: null leaves the navigator bar, the pane's foot and the stepping keys without a previous or next for that selection |
+| `renderPane(snapshot, historical, context)` | the pane for those selections. The viewer calls it inside the version history, once for the current version and again for an earlier version read alone or compared, so both keep working for the host's panes. Return a component element, not content that calls hooks: the viewer calls this function during its own render. `context.builtInPane(snapshot, historical, { kind: "summary" } or { kind: "section", id }, files?)` returns the viewer's own Summary or section page for a snapshot, for a version the host's places do not draw (`files` is the selection the Summary's Files link opens) |
+| `jump(section, item)` | where a reference chip in prose to a section, or to a risk, evidence or decision of one, goes; a selection redirects it, null leaves it to the viewer |
+| `railFolded(selection)` | whether the rail starts folded to a strip beside the pane for that selection, once the page is wide. The answer applies whenever it changes, as the reader moves between places. The reader can unfold the rail, or fold it again, with the button on it (focus moves to the other button), and that choice holds until the answer changes. Where the panes stack the rail is a sheet and does not fold. Without `places` the rail has no fold |
+| `sidePaneFolded(selection)` | whether the side pane starts folded to its strip for that selection, once the page is wide, as `railFolded` does for the rail: the answer applies whenever it changes, and the reader's unfold or fold (the strip's button, `]`, a tab opened from elsewhere) holds until then. Where it answers false, or is absent, the side pane is as the reader last chose it. Without `places` nothing changes |
+| `quietHistory` | when true, an earlier version read alone opens without the viewer's "Historical · Review vN" line, which stays for assistive technology, for a host whose version bar already says which version is read. Two compared versions keep their labels |
+| `flatRail` | when true, the rail's **Sessions** and **Commits** rows are plain rows, as Decisions is: no disclosure (no `aria-expanded`) and no items nested under them, each with its count, a busy spinner and its live or waiting dot, opening its pane, which lists the items (`renderPane(null, …)`). A session or commit opened from there leaves its group's row current, the keys step over the group's row alone, and Space toggles no group. Absent, they fold open as the full review's do |
+| `ownFiles` | when true, the host draws the **Files changed** row itself, in `renderRail` and `railRows` (its files are a place of its own, as the app's Code place), so the viewer leaves out its own Files row, its file tree and the file rows in the keys |
+
+`ReviewPlaceContext` is passed to each of them, and keeps its identity across
+renders that change nothing it carries: the `selection` and a `select`
+function that writes the URL; `openFile(id, line?)`, which opens a changed
+file in the Files pane; the `document` being read, the `historicalDocument` and
+whether the reader is `historical` or `comparing`; `version`, the earlier
+version read alone (absent on the current version and while comparing, when
+`historicalDocument` is the other one); `versions` and
+`loadVersion`; `hunkPatches` (null while comparing, for a
+`HunkPatchProvider` around cited code); `onRetryDetails`; `contextPending`;
+`generation`, the document's generation state as the head shows it; and
+`files`, the viewer's `files` slot with how many files it lists (`count`,
+null while it loads), or null without one. The places are drawn while
+`document` is null too (a review not yet written): the rail, the steps and
+the navigator bar are the host's, and the pane shows `placeholder`, or the
+viewer's Files pane on a `files` selection. A pane
+offers a retry and says a context is being written only for the current
+version. The seam's types, including `ReviewStep` and `IconProps`, are all
+exported from `components/review-viewer`. Moving between items of one tile
+(`tile_item`), or between a host's views of a section (`{ kind: "section", id,
+view }`, kept as `section_view`), keeps the pane, its scroll and its state. `RecommendationPart` and `RiskScorePart`, exported from
+`components/review-summary`, draw the recommendation and the risk score for a
+host that composes its own strip from them.
 
 CI uses the optional `review.checks_head`, falling back to `review.head` for
 older documents. Refreshing the current document can show latest-head checks
@@ -379,7 +436,9 @@ the method and confidence of each. Both open each other through
 `ReviewListSlot` the `sessions` and `commits` props take, with the rail's
 labels. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
 puts the host's own content under a session opened alone, such as its
-transcript. The pane is then headed by the session's title, with its agent,
+transcript. Its `open` option (the slot's `open`) takes a session the host
+opens somewhere of its own instead, with the prompt a link named, whenever one
+is selected; returning false leaves it to the pane. The pane is then headed by the session's title, with its agent,
 branch, start, duration and files edited on one line (the rail leads back to
 the list) and its linked commits as links under it, and draws no
 card for it. `SessionCard`'s `headless` draws a session open with no header of
@@ -479,8 +538,19 @@ helpers the card uses) and what the host adds:
   print, and runs of tool calls start folded. The desktop app's transcript
   page uses it.
 
+A long session renders its last 30 turns first, and its earlier turns only
+as the reader comes within 3,000 px of the first one rendered, 100 at a time,
+as a React transition, so turns nobody scrolls up to cost nothing. A "Show
+earlier turns" button above the list does the same for keyboards and screen
+readers. The browser's find does not reach turns still to come. The turns the
+reader is among stay where they are as earlier ones come in above (the
+transcript moves its scroller by their height when the list is in view or
+above it, since WebKit does not anchor the scroll). A transcript given a
+`focusTurn`, a server render, and a browser without `IntersectionObserver`
+have every turn at once.
+
 A prompt can carry `images`, each a `src` the host serves and an `alt`: they
-show under its text as thumbnails that open full size in a dialog. Agent
+show under its text as thumbnails that open in the image viewer. Agent
 messages are marked `data-agent-text` (`progress` for the folded ones), for a
 host's keys that move a message at a time.
 
@@ -766,26 +836,21 @@ text and code blocks stay as written, and without the provider nothing
 changes. The pass runs after sanitising, so a
 comment's own markup cannot create these links.
 
-## Schema and tile types
+A host can put its own row under a hunk of a `CodeDiff` file with `afterHunk`
+(the app's overview tabs pin the notes that cite each hunk there): a row
+across the table, in the page's own font, drawn only for a hunk it returns
+something for. A line marked `focus` carries a bar at its edge and bold line
+numbers (and says "Highlighted line" to a screen reader), and the hunk's
+other lines are dimmed (the app's code tile marks the lines its model
+highlights). `foldable={false}` drops a file's fold chevron, for a host that
+folds the lines itself. `codeDiffHunk` (`patch.ts`) turns an indexed
+hunk's diff into a `CodeDiff` hunk.
+
+## Schema
 
 The document types in `src/review-document.ts` mirror
 [`../schema/review-1.json`](../schema/review-1.json) by hand; the schema is
-canonical. Tiles are validated against it at runtime, and
-[`../schema/legacy-review-tiles.json`](../schema/legacy-review-tiles.json)
-keeps the definitions of kinds the schema has retired, so stored tiles of
-those kinds still render; the Go `review` package reads the same file, so
-stored-document validation accepts them too. The type and validator generators
-both load this combined tile contract through `scripts/review-tile-schema.mjs`.
-`pnpm generate` writes
-the tile types to `generated/review-tile-types.d.ts` from both files, which is
-not committed. `pnpm generate:validators` writes the validators to
-`src/precompiled/review-tile-validators.js` with Ajv's standalone code
-generation, and that file is committed. They are precompiled because Ajv
-otherwise compiles with `new Function`, which a page under a strict
-Content-Security-Policy (as the reference viewer host serves) cannot run. No other script
-rewrites the file, so a unit test fails when it is out of date: run
-`pnpm generate:validators` after changing either schema file, then rebuild the
-standalone app; `just viewer-build` from the module root does both.
+canonical.
 
 ## Standalone app
 
@@ -838,9 +903,8 @@ the commit a `v*` tag points at, carries it, so `go install` of a tagged
 version needs nothing but Go (see `scripts/release-commit.sh`). Elsewhere, run
 `just viewer-build` from the module root before building a binary whose
 viewer works; one built without it answers each page with a note saying so.
-`just viewer-build` runs `pnpm generate:validators` and `pnpm build:app`, and
-`just viewer-fresh` also fails when the committed validators, or on a release
-commit the built app, differ from a fresh build, as CI does. The build writes
+`just viewer-build` runs `pnpm build:app`, and `just viewer-fresh` fails when,
+on a release commit, the built app differs from a fresh build, as CI does. The build writes
 no sourcemaps, and two builds of the same source are byte-identical.
 
 ## Development
@@ -872,59 +936,6 @@ compare. `app/app.test.tsx` renders the standalone app against a mocked `fetch` 
 `EventSource`. `src/typography.test.ts` fails on a font size outside the type scale
 in `viewer.css`, and `src/dependencies.test.ts` on a shipped module importing
 a package that is not a peer dependency.
-
-### Tile gallery
-
-`gallery/` is a dev-only page for working on a review tile against real
-payloads, with no model call. It renders every tile it finds with the same
-`ReviewTiles` the review page uses, each beside the viewer's own verdict on it
-(the compiled tile validators, then the code-source checks that need the
-document), where it came from, and a filter by kind and source. It is served
-by Vite's dev server, with hot module replacement, from its own config
-(`vite.gallery.config.ts`): the standalone app's build roots at `app/` and
-never sees it, so it is not in `just viewer-build` output.
-
-```sh
-just viewer::gallery                  # http://127.0.0.1:5180, GALLERY_PORT=... to move it
-just viewer::gallery-export           # copy tiles of stored dev reviews into gallery-data/stored
-```
-
-The recipe runs the server in the `ui-test` container with the port published
-on `127.0.0.1`, prints the URL and stops with Ctrl+C. It reads three sources,
-listed afresh every moment, so a new run, export or saved fixture appears
-without a reload:
-
-| Source | Where it reads | Shown against |
-| --- | --- | --- |
-| Prompt-eval runs | `attempts/*.json` under `tools/prompt-eval/runs/` (mounted read-only), each attempt's `document` | that document; the `tools/prompt-eval/prompt-eval view <attempt>` command for the whole review sits beside it |
-| Stored reviews | `gallery-data/stored/*.json`, written by `just viewer::gallery-export` from the dev database (`--repository`, `--kinds`, `--limit`) | the stored document |
-| Fixtures | `gallery-data/fixtures/*.json`: one tile, an array of tiles, or `{ "document", "tiles" }` | the schema's example document, adjusted so the tiles' code sources can pass (or your `document`) |
-
-`gallery-data/` is ignored by git, since runs and stored reviews hold
-repository content. [`gallery/example-database-schema.json`](gallery/example-database-schema.json)
-is a valid `database-schema` tile to copy into `gallery-data/fixtures/` and
-edit. A fixture that is not valid is drawn as the viewer draws it (Tile
-unavailable) under the list of what the validator rejected, so a payload can be
-broken and repaired in place. The export needs the shared dev database
-(`just shared-up`) and writes nothing when no stored review has tiles, which is
-the case until one is generated with a tile allow-list.
-
-Editing a tile component, or anything it imports, replaces the modules in
-place and draws the page again without a reload; the kind and source filters
-live in the URL, so the page keeps its view. Set `GALLERY_POLLING=1` if file
-changes do not reach the container. The loop end to end:
-
-```sh
-just prompt_eval::cases migrations --limit 2     # pick PRs whose review has migration hunks
-tools/prompt-eval/prompt-eval \
-  -manifest "$PWD/tools/prompt-eval/experiments/migrations/manifest.json" \
-  -output "$PWD/tools/prompt-eval/runs/migrations-01"   # database-schema allowed; calls the model
-just viewer::gallery                             # open the URL, filter on database-schema
-$EDITOR oss/viewer/src/components/review-tiles/contract-schema-diff.tsx   # the page updates on save
-```
-
-See [`tools/prompt-eval`](../../tools/prompt-eval/README.md#tiles) for the
-manifest's `tile_kinds` and `tile_catalogue`.
 
 ### Browser tests
 
@@ -966,6 +977,25 @@ blocks cite an attachment ID. Old description-image records remain valid.
 Identical image bytes can retain both PR-description URLs and several session
 origins while sharing one stored image.
 
+Description images and prompt images open in one viewer
+(`components/image-viewer`). It opens as large as the screen allows, enlarging
+an image past its own pixels, and keeps the image's proportions. Any edge or
+corner of the image drags to scale it, up to that fit; the corners carry a
+visible bracket so people find it. The dialog stays centred as it resizes.
+Until a drag, and again after "Fit to screen", it refits when the window
+changes size. The size dragged
+to is remembered in `localStorage` as a share of that fit, and later images,
+of any shape, open at the same share. Its "Fit to screen" control returns to
+the full fit and forgets the share. A click on the backdrop, the close control
+or Escape closes it.
+
+An indexed attachment whose `content_type` is `video/…` (local desktop reviews
+only) draws as a muted `<video>` with native controls that loads only its
+metadata and plays when clicked, sized by its `width` and `height`, with no
+full-size dialog. A clip with neither a caption nor alt text is labelled by
+the description heading above it. A clip that fails to load is marked
+unavailable and can be retried like an image.
+
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and
 `local-transcript` parsers for the local server’s redacted answers.
@@ -985,11 +1015,16 @@ GitHub carries the leaving mark.
 
 On review pages, `]` toggles the right-hand Details/Activity pane: its saved
 fold on wide screens, or its sheet on narrow screens. Text fields and open
-dialogs keep the key. A host’s forced fold remains in force. Opening the pane
+dialogs keep the key. A host that keeps `]` for itself passes `sidePaneKey="Control+]"`, and the pane then takes Ctrl+] instead (the desktop app does). A host’s forced fold remains in force. Opening the pane
 with `]` focuses the pane itself, drawn without a ring, so it has the keys
 (as a click in it gives them): while it does, `h` and `l` step through its tabs
 (wrapping, as the arrows do on the strip), and from a focused tab move the focus with them, and Esc blurs the focus, giving the keys
 back to the review. Text fields and menus in the pane keep them.
+
+`[` folds or unfolds the rail of sections on the left on wide screens (only
+where a host's `places` let the rail fold), or opens and closes its sheet on
+narrow screens, leaving the focus where it is. Text fields and open dialogs
+keep the key.
 
 Continuation summaries and standalone system-reminder turns are collapsed by
 default to a labelled disclosure with their turn number and time. Expanding

@@ -43,8 +43,7 @@ func runReview(t *testing.T, registry *repos.Registry, repository string, staged
 	backend := &generatetest.Backend{Version: "9.9.9", RunFunc: generatetest.StagedReplies(nil)}
 	o := reviewOptions(t, backend)
 	o.Staged, o.Budgets.MaxCalls = staged, 16
-	local := &Local{Registry: registry, ReviewRuns: filepath.Join(t.TempDir(), "review-runs")}
-	t.Cleanup(func() { chmodTree(local.ReviewRuns) })
+	local := &Local{Registry: registry}
 	if err := local.applyPrompts(ctx, repository, &o); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +52,7 @@ func runReview(t *testing.T, registry *repos.Registry, repository string, staged
 		t.Fatal(err)
 	}
 	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
-	result, err := local.publish(ctx, versions, versions, key, backend.Name(), o, nil)
+	result, err := generate.Publish(ctx, versions, key, o, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,35 +39,42 @@ func TestResolveCheckpointMembershipNeedsIndependentEvidence(t *testing.T) {
 			t.Fatalf("checkpoint candidates = %v", first.CheckpointSessions)
 		}
 		got := linkedTo(first)
-		if len(got) != 2 || !slices.Equal(got["commit_ref"], []string{linktest.SessionID}) ||
-			!slices.Equal(got["files_overlap"], linktest.CheckpointSessions[:1]) {
-			t.Fatalf("links = %+v; want independent creator and checkpoint editor only", first.Links)
-		}
-		for _, link := range first.Links {
-			if link.Method == "entire_checkpoint" || link.Confidence == 1 {
-				t.Fatalf("checkpoint membership became proof: %+v", link)
-			}
+		if len(got) != 1 || !slices.Equal(got["commit_ref"], []string{linktest.SessionID}) {
+			t.Fatalf("links = %+v; want the independent creator only, not the checkpoint's editor", first.Links)
 		}
 		for _, session := range result.Sessions {
-			if session.ID == linktest.CheckpointSessions[1] {
-				t.Fatal("unrelated checkpoint session was listed as linked")
+			if slices.Contains(linktest.CheckpointSessions, session.ID) {
+				t.Fatalf("checkpoint session %s was listed as linked", session.ID)
 			}
 		}
-		if _, ok := result.Graphs[linktest.CheckpointSessions[1]]; ok {
-			t.Fatal("unrelated checkpoint session transcript was exposed as linked")
+		for _, id := range linktest.CheckpointSessions {
+			if _, ok := result.Graphs[id]; ok {
+				t.Fatalf("checkpoint session %s transcript was exposed as linked", id)
+			}
 		}
 	}
 }
 
-func TestResolveReadOnlyCheckpointDoesNotSuppressOutsideEditor(t *testing.T) {
-	const editor = "bbbbbbbb-0000-4000-8000-00000000000b"
+// A checkpoint session that created the commit links like any other creator.
+func TestResolveLinksACheckpointSessionThatCreatedTheCommit(t *testing.T) {
 	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer).NoSession(t)
-	f.AddCheckpoint(t)
-	f.AddEditor(t, editor, "10", "b.txt")
+	f.AddCheckpointCommitting(t, f.Commits[0])
 	result := resolve(t, request(f))
 	got := linkedTo(result.Commits[0])
-	if len(got) != 1 || !slices.Equal(got["files_overlap"], []string{editor}) {
-		t.Fatalf("links = %+v; want the outside editor", result.Commits[0].Links)
+	if len(got) != 1 || !slices.Equal(got["commit_ref"], linktest.CheckpointSessions[:1]) {
+		t.Fatalf("links = %+v; want the checkpoint session that ran git commit", result.Commits[0].Links)
+	}
+}
+
+func TestResolveReadOnlyCheckpointDoesNotSuppressOutsideCreator(t *testing.T) {
+	const creator = "bbbbbbbb-0000-4000-8000-00000000000b"
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer).NoSession(t)
+	f.AddCheckpoint(t)
+	f.AddSession(t, creator, f.Repo, "add the feature")
+	result := resolve(t, request(f))
+	got := linkedTo(result.Commits[0])
+	if len(got) != 1 || !slices.Equal(got["commit_ref"], []string{creator}) {
+		t.Fatalf("links = %+v; want the outside creator", result.Commits[0].Links)
 	}
 }
 

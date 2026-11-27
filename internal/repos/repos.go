@@ -2,6 +2,7 @@
 package repos
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +26,8 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/themes"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 )
 
 // ErrNotFound reports a clone or picked repository the registry does not hold.
@@ -46,6 +50,21 @@ type Settings struct {
 	// the global switches (see DecisionsEnabled): nil and true follow them,
 	// false turns the repository off.
 	Decisions *bool `json:"decisions,omitempty"`
+	// Tiles are the repository's standing preferences for the tile pages of
+	// its reviews (TileSettings); nil is none.
+	Tiles *TileSettings `json:"tiles,omitempty"`
+}
+
+// ErrTooManyPins reports a repository that already pins MaxTileTypes
+// tile types.
+var ErrTooManyPins = fmt.Errorf("%w: a repository pins at most %d tile types", ErrInvalidSettings, MaxTileTypes)
+
+// PinnedTileTypes is the tile types the settings pin, never nil.
+func (s Settings) PinnedTileTypes() []string {
+	if s.Tiles == nil || s.Tiles.Types == nil {
+		return []string{}
+	}
+	return slices.Clone(s.Tiles.Types)
 }
 
 // AutomaticEnabled reports whether the daemon generates reviews of this
@@ -97,6 +116,62 @@ type AppearancePreferences struct {
 	// ("pinned") or folds to its glyphs and opens over the page under the
 	// pointer ("folded"); empty is pinned.
 	Sidebar string `json:"sidebar,omitempty"`
+	// ReviewPage is the page a review opens on: "full" (the review's
+	// sections) or "tiles" (its tile document); empty is full.
+	ReviewPage string `json:"review_page,omitempty"`
+	// LightTheme and DarkTheme are the ids of the themes used when Theme
+	// (system, light or dark) selects the light or the dark slot; empty is
+	// a built-in: default-light or default-dark. Any theme may sit in
+	// either slot. An id no longer in Themes counts as empty.
+	LightTheme string `json:"light_theme,omitempty"`
+	DarkTheme  string `json:"dark_theme,omitempty"`
+	// Themes are the custom colour themes, at most themes.MaxThemes.
+	Themes []CustomTheme `json:"themes,omitempty"`
+}
+
+// CustomTheme is a colour theme the person made: a base ("light" or "dark")
+// and colour overrides for the palette tokens themes.Tokens allows.
+type CustomTheme struct {
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Base   string            `json:"base"`
+	Tokens map[string]string `json:"tokens,omitempty"`
+}
+
+// validateThemes checks the custom themes a save adds or changes against
+// prev's: an id that is empty, long, repeated or a built-in's, and what
+// themes.Validate refuses. A theme saved before and unchanged is not checked,
+// so one that no longer validates never blocks saving something else, and the
+// count cap refuses growth past themes.MaxThemes only.
+func validateThemes(prev, list []CustomTheme) error {
+	if len(list) > themes.MaxThemes && len(list) > len(prev) {
+		return fmt.Errorf("at most %d custom themes", themes.MaxThemes)
+	}
+	stored := map[string]CustomTheme{}
+	for _, t := range prev {
+		stored[t.ID] = t
+	}
+	seen := map[string]bool{}
+	for _, b := range themes.Builtins {
+		seen[b.ID] = true
+	}
+	for _, t := range list {
+		repeated := seen[t.ID]
+		seen[t.ID] = true
+		if old, ok := stored[t.ID]; ok && !repeated && t.Name == old.Name && t.Base == old.Base && maps.Equal(t.Tokens, old.Tokens) {
+			continue
+		}
+		if t.ID == "" || len(t.ID) > 64 {
+			return errors.New("a theme id must be 1 to 64 bytes")
+		}
+		if repeated {
+			return fmt.Errorf("theme id %q is taken", t.ID)
+		}
+		if err := themes.Validate(themes.Theme{ID: t.ID, Name: t.Name, Base: t.Base, Tokens: t.Tokens}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan
@@ -127,6 +202,11 @@ type Preferences struct {
 	FixBackend *config.Backend `json:"fix_backend,omitempty"`
 	FixModel   *string         `json:"fix_model,omitempty"`
 	FixEffort  *string         `json:"fix_effort,omitempty"`
+	// FixNetwork says whether the fix agent's commands get network access
+	// (installing dependencies, fetching what builds and tests need). Nil
+	// means on. Unlike FixModel and FixEffort it applies with or without a
+	// FixBackend.
+	FixNetwork *bool `json:"fix_network,omitempty"`
 	// ClaudeConfigDir and FixClaudeConfigDir are the Claude Code
 	// configuration directories reviews (with data extraction) and fixes run
 	// Claude Code with (config.Config.ClaudeConfigDir), absolute paths; nil
@@ -141,9 +221,13 @@ type Preferences struct {
 	CodexHome    *string `json:"codex_home,omitempty"`
 	FixCodexHome *string `json:"fix_codex_home,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
-	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
-	// for both authored and requested.
+	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll,
+	// PullRequestsInboxes, or empty for both authored and requested.
 	PullRequests string `json:"pull_requests,omitempty"`
+	// Updates is how automatic reviews follow a pull request after its first
+	// review: UpdatesOnOpen, UpdatesOnChange, or empty (UpdatesAlways) for a
+	// new review of every new head. Off is Automatic.
+	Updates string `json:"updates,omitempty"`
 	// AgentEnv, when it sets any variable, replaces the config file's
 	// agent_env (config.Config.AgentEnv).
 	AgentEnv map[string]string `json:"agent_env,omitempty"`
@@ -161,6 +245,88 @@ type Preferences struct {
 	// review, and any other agent run, may take.
 	ReviewTimeLimit int `json:"review_time_limit_minutes,omitempty"`
 	RunTimeLimit    int `json:"run_time_limit_minutes,omitempty"`
+	// Panel is what the session panel opens a conversation with
+	// (ResolvePanel).
+	Panel PanelPreferences `json:"panel,omitzero"`
+	// Labs are experimental features, each off until turned on.
+	Labs LabsPreferences `json:"labs,omitzero"`
+}
+
+// LabsPreferences turn experimental features on. Each is off by default.
+type LabsPreferences struct {
+	// TileReviews arranges each new review of a single pull request as tiles
+	// after it is written (generate.Options.Tiles): one more model call,
+	// without tools, chooses which tiles lead and their sizes, and the
+	// layout is stored with the version.
+	TileReviews *bool `json:"tile_reviews,omitempty"`
+}
+
+// TileReviewsOn reports whether reviews are arranged as tiles.
+func (l LabsPreferences) TileReviewsOn() bool { return l.TileReviews != nil && *l.TileReviews }
+
+// PanelPreferences are the session panel's defaults. An empty Agent follows
+// the fix agent, model included; a nil Model is the fix agent's model when
+// Agent is that agent, else the agent's own default. An empty Mode is
+// PanelModeAuto and an empty Position PanelBottom.
+type PanelPreferences struct {
+	Agent    string  `json:"agent,omitempty"`
+	Model    *string `json:"model,omitempty"`
+	Mode     string  `json:"mode,omitempty"`
+	Position string  `json:"position,omitempty"`
+}
+
+// The values of PanelPreferences: the agents a panel conversation runs, as
+// live sessions name them, its access, and where the panel opens.
+const (
+	PanelAgentClaudeCode = "claude-code"
+	PanelAgentCodex      = "codex"
+	PanelModeAuto        = "auto"
+	PanelModeFull        = "full"
+	PanelModeWorkspace   = "workspace"
+	PanelBottom          = "bottom"
+	PanelTop             = "top"
+	PanelLeft            = "left"
+	PanelRight           = "right"
+)
+
+// Panel is the session panel's defaults in force; AgentSource and
+// ModelSource say whether each is the person's choice ("panel") or follows
+// the fix agent ("fix").
+type Panel struct {
+	Agent       string `json:"agent"`
+	Model       string `json:"model"`
+	Mode        string `json:"mode"`
+	Position    string `json:"position"`
+	AgentSource string `json:"agent_source"`
+	ModelSource string `json:"model_source"`
+}
+
+// ResolvePanel gives the session panel's defaults from the preferences and
+// review, the config already resolved for reviews. The fix agent
+// (ResolveFix) is Codex when its backend is codex and Claude Code otherwise;
+// its model counts only for Claude Code or Codex, since another backend's
+// model names nothing these agents run.
+func (p Preferences) ResolvePanel(review config.Config) Panel {
+	fix := p.ResolveFix(review)
+	fixAgent, fixModel := PanelAgentClaudeCode, ""
+	switch fix.Backend {
+	case config.BackendCodex:
+		fixAgent, fixModel = PanelAgentCodex, fix.Model
+	case config.BackendClaude:
+		fixModel = fix.Model
+	}
+	out := Panel{Agent: fixAgent, Model: fixModel, Mode: cmp.Or(p.Panel.Mode, PanelModeAuto), Position: cmp.Or(p.Panel.Position, PanelBottom),
+		AgentSource: "fix", ModelSource: "fix"}
+	if p.Panel.Agent != "" {
+		out.Agent, out.AgentSource = p.Panel.Agent, "panel"
+		if out.Agent != fixAgent {
+			out.Model, out.ModelSource = "", "panel"
+		}
+	}
+	if p.Panel.Model != nil {
+		out.Model, out.ModelSource = *p.Panel.Model, "panel"
+	}
+	return out
 }
 
 // MaxTimeLimit is the longest time limit, in minutes, the app sets.
@@ -187,10 +353,39 @@ const (
 	PullRequestsRequested = "requested"
 	// PullRequestsAll covers every open pull request in the repository.
 	PullRequestsAll = "all"
+	// PullRequestsInboxes covers the pull requests held by a saved inbox
+	// with automatic reviews on (internal/inboxes). Covers cannot tell:
+	// the automatic scheduler matches the inboxes itself.
+	PullRequestsInboxes = "inboxes"
 )
 
+// The Updates choices.
+const (
+	// UpdatesAlways reviews every new head; it is stored as empty.
+	UpdatesAlways = "always"
+	// UpdatesOnOpen reviews a pull request once, automatically: a pull
+	// request with a saved review gets no automatic review of a new head.
+	UpdatesOnOpen = "on_open"
+	// UpdatesOnChange reviews a pull request once, then has the review agent
+	// read what each new head changed since the saved review and write a new
+	// review only when the change would make a difference to it.
+	UpdatesOnChange = "on_change"
+)
+
+// ReviewUpdates is Updates with the default spelled out: UpdatesAlways,
+// UpdatesOnOpen or UpdatesOnChange. An unknown value an older or newer baum
+// stored is UpdatesAlways.
+func (p Preferences) ReviewUpdates() string {
+	switch p.Updates {
+	case UpdatesOnOpen, UpdatesOnChange:
+		return p.Updates
+	}
+	return UpdatesAlways
+}
+
 // Covers reports whether automatic reviews cover a pull request the viewer
-// authored or was asked to review, as PullRequests chooses.
+// authored or was asked to review, as PullRequests chooses. It is false for
+// PullRequestsInboxes, where the saved inboxes decide.
 func (p Preferences) Covers(authored, requested bool) bool {
 	switch p.PullRequests {
 	case PullRequestsAuthored:
@@ -199,6 +394,8 @@ func (p Preferences) Covers(authored, requested bool) bool {
 		return requested
 	case PullRequestsAll:
 		return true
+	case PullRequestsInboxes:
+		return false
 	}
 	return authored || requested
 }
@@ -210,6 +407,9 @@ func (p Preferences) Covers(authored, requested bool) bool {
 // refuses the jobs that use it.
 func (p Preferences) ValidateChange(prev Preferences) error {
 	if err := p.Validate(); err != nil {
+		return err
+	}
+	if err := validateThemes(prev.Appearance.Themes, p.Appearance.Themes); err != nil {
 		return err
 	}
 	if p.Backend != nil && !p.Backend.Desktop() && (prev.Backend == nil || *prev.Backend != *p.Backend) {
@@ -275,11 +475,16 @@ func (p Preferences) Validate() error {
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
 	}
+	switch p.Updates {
+	case "", UpdatesOnOpen, UpdatesOnChange:
+	default:
+		return fmt.Errorf("unknown review updates choice %q; use %s, %s or leave it empty for %s", p.Updates, UpdatesOnOpen, UpdatesOnChange, UpdatesAlways)
+	}
 	switch p.PullRequests {
-	case "", PullRequestsAuthored, PullRequestsRequested, PullRequestsAll:
+	case "", PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, PullRequestsInboxes:
 		return nil
 	}
-	return fmt.Errorf("unknown pull requests choice %q; use %s, %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested, PullRequestsAll)
+	return fmt.Errorf("unknown pull requests choice %q; use %s, %s, %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, PullRequestsInboxes)
 }
 
 // ValidateTimeLimit accepts zero (the config file's) or 1 to MaxTimeLimit
@@ -346,6 +551,12 @@ func (p Preferences) ResolveExtraction(cfg config.Config) config.Config {
 		}
 	}
 	return cfg
+}
+
+// FixNetworkAllowed reports whether the fix agent's commands get network
+// access: true unless FixNetwork is set to false.
+func (p Preferences) FixNetworkAllowed() bool {
+	return p.FixNetwork == nil || *p.FixNetwork
 }
 
 // ResolveFix gives the config a fix runs with, from review, the config
@@ -1076,21 +1287,18 @@ func cloneStamp(clone Clone) (string, bool) {
 	return b.String(), true
 }
 
-// Update replaces shared repository settings without needing an available clone.
-func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
-	data, e := json.Marshal(s)
+// UpdateIf is UpdateRepositoryIf for the repository of a registered clone,
+// named by the clone's id: it needs no available clone.
+func (r *Registry) UpdateIf(ctx context.Context, id string, edit func(Settings) (Settings, error)) (Settings, error) {
+	var repository string
+	e := r.db.QueryRowContext(ctx, `SELECT repository FROM clones WHERE id=?`, id).Scan(&repository)
+	if errors.Is(e, sql.ErrNoRows) {
+		return Settings{}, ErrNotFound
+	}
 	if e != nil {
-		return e
+		return Settings{}, e
 	}
-	res, e := r.db.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=(SELECT repository FROM clones WHERE id=?)`, string(data), id)
-	if e != nil {
-		return e
-	}
-	n, e := res.RowsAffected()
-	if e == nil && n == 0 {
-		return ErrNotFound
-	}
-	return e
+	return r.UpdateRepositoryIf(ctx, repository, edit)
 }
 
 // RepositorySettings reads one repository's shared settings without probing
@@ -1378,14 +1586,109 @@ func (r *Registry) UpdateRepositoryIf(ctx context.Context, repository string, ed
 	if e != nil {
 		return Settings{}, e
 	}
+	if next, e = next.Checked(); e != nil {
+		return Settings{}, e
+	}
 	if _, e = tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), identity); e != nil {
 		return Settings{}, e
 	}
 	return next, tx.Commit()
 }
 
+// SetTileTypePins pins the saved tile type name to exactly the picked
+// repositories listed and unpins it from every other one, in one
+// transaction. A listed repository that is not picked is ErrNotFound, and
+// one that already pins MaxTileTypes other types is ErrTooManyPins
+// (wrapped with its name); either writes nothing. A repository's other
+// settings, and its other pins in their order, are kept.
+func (r *Registry) SetTileTypePins(ctx context.Context, name string, repositories []string) error {
+	if !tilelibrary.ValidName(name) {
+		return errors.New("a pinned tile type is named by its name")
+	}
+	want := map[string]bool{}
+	for _, repository := range repositories {
+		want[strings.ToLower(repository)] = true
+	}
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, e := tx.QueryContext(ctx, `SELECT r.identity, r.settings FROM repositories r WHERE `+r.pickedSQL())
+	if e != nil {
+		return e
+	}
+	type picked struct {
+		identity string
+		settings Settings
+	}
+	var all []picked
+	for rows.Next() {
+		var p picked
+		var raw string
+		if e := rows.Scan(&p.identity, &raw); e != nil {
+			_ = rows.Close()
+			return e
+		}
+		if e := json.Unmarshal([]byte(raw), &p.settings); e != nil {
+			_ = rows.Close()
+			return e
+		}
+		all = append(all, p)
+	}
+	if e := errors.Join(rows.Err(), rows.Close()); e != nil {
+		return e
+	}
+	found := 0
+	for _, p := range all {
+		types := p.settings.PinnedTileTypes()
+		has := slices.Contains(types, name)
+		switch {
+		case want[p.identity] && !has:
+			if len(types) >= MaxTileTypes {
+				return fmt.Errorf("%s: %w", p.identity, ErrTooManyPins)
+			}
+			types = append(types, name)
+		case !want[p.identity] && has:
+			types = slices.DeleteFunc(types, func(t string) bool { return t == name })
+		default:
+			if want[p.identity] {
+				found++
+			}
+			continue
+		}
+		if want[p.identity] {
+			found++
+		}
+		next := p.settings
+		tiles := TileSettings{}
+		if p.settings.Tiles != nil {
+			tiles = *p.settings.Tiles
+		}
+		tiles.Types = nil
+		if len(types) > 0 {
+			tiles.Types = types
+		}
+		next.Tiles = &tiles
+		if len(tiles.Types) == 0 {
+			next.Tiles = nil
+		}
+		if _, e := tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), p.identity); e != nil {
+			return e
+		}
+	}
+	if found != len(want) {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
 // UpdateRepository replaces a picked repository's shared settings by identity.
 func (r *Registry) UpdateRepository(ctx context.Context, repository string, s Settings) error {
+	s, e := s.Checked()
+	if e != nil {
+		return e
+	}
 	res, e := r.db.ExecContext(ctx, `UPDATE repositories AS r SET settings=? WHERE r.identity=? AND (`+r.pickedSQL()+`)`, mustJSON(s), strings.ToLower(repository))
 	if e != nil {
 		return e

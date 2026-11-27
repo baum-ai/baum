@@ -283,6 +283,94 @@ func TestKittyTabOverRemoteControl(t *testing.T) {
 	}
 }
 
+// herdrShell is a Claude Code session in Herdr terminal t2, whose program is
+// zsh 101, started by herdr-core's holder 60. Herdr's window is herdr-app 70's.
+func herdrShell() (*machine, *hookevents.Terminal) {
+	m := &machine{
+		procs: map[int]proc{
+			100: {"claude", "a", 101}, 101: {"zsh", "b", 60}, 60: {"herdr-core", "c", 1},
+			70: {"herdr-app", "d", 1},
+		},
+		// An update replaced the holder's binary; herdr-app is not on the PATH.
+		exes:  map[int]string{60: "/opt/herdr/bin/herdr-core (deleted)", 70: "/opt/herdr/app/herdr-app"},
+		paths: map[string]bool{"xdotool": true},
+		answers: map[string]answer{
+			"pgrep -n -x herdr-app":                   {out: "70\n"},
+			"/opt/herdr/bin/herdr-core ls --json":     {out: `{"terminals":[{"address":"t1"},{"address":"vps/t1"},{"address":"t2"}]}`},
+			"/opt/herdr/bin/herdr-core get t1 --json": {out: `{"address":"t1","pid":555}`},
+			"/opt/herdr/bin/herdr-core get t2 --json": {out: `{"address":"t2","pid":101}`},
+			"xdotool search --onlyvisible --pid 70":   {out: "58720257\n"},
+		},
+	}
+	return m, &hookevents.Terminal{TTY: "/dev/pts/4", Processes: m.recorded(100)}
+}
+
+var x11Env = map[string]string{"DISPLAY": ":0"}
+
+// The holder that runs a Herdr terminal has no window: Herdr shows the
+// terminal in its own window, which is raised.
+func TestHerdrTerminal(t *testing.T) {
+	m, terminal := herdrShell()
+	f := m.focuser("linux", x11Env)
+	if got := f.Predict("claude-code", terminal); got != Session {
+		t.Fatalf("predict: %q", got)
+	}
+	result := f.Focus(context.Background(), "claude-code", "s1", terminal)
+	want := []string{
+		"pgrep -n -x herdr-app",
+		"/opt/herdr/bin/herdr-core ls --json",
+		"/opt/herdr/bin/herdr-core get t1 --json",
+		"/opt/herdr/bin/herdr-core get t2 --json",
+		"/opt/herdr/app/herdr-app do agent.focus --terminal t2",
+		"xdotool search --onlyvisible --pid 70",
+		"xdotool windowactivate 58720257",
+	}
+	if result != (Result{Precision: Session}) || !reflect.DeepEqual(m.calls, want) {
+		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
+	}
+}
+
+// A tmux client in a Herdr terminal: the pane is selected, then the client's
+// terminal shown in Herdr.
+func TestTmuxInHerdr(t *testing.T) {
+	m, _ := herdrShell()
+	m.procs[50] = proc{"tmux: server", "e", 1}
+	m.procs[101] = proc{"zsh", "b", 50}
+	m.procs[200] = proc{"tmux: client", "f", 60}
+	m.answers["/opt/herdr/bin/herdr-core get t2 --json"] = answer{out: `{"address":"t2","pid":200}`}
+	m.answers["tmux -S /tmp/tmux-1000/default display-message"] = answer{out: "$1\t/dev/pts/12\n"}
+	m.answers["tmux -S /tmp/tmux-1000/default list-clients"] = answer{out: "200\t/dev/pts/4\t$1\t500\n"}
+	terminal := &hookevents.Terminal{
+		Env:       map[string]string{"TMUX": "/tmp/tmux-1000/default,50,0", "TMUX_PANE": "%7"},
+		TTY:       "/dev/pts/12",
+		Processes: m.recorded(100),
+	}
+	result := m.focuser("linux", x11Env).Focus(context.Background(), "claude-code", "s1", terminal)
+	if result != (Result{Precision: Session}) ||
+		!slices.Contains(m.calls, "tmux -S /tmp/tmux-1000/default select-pane -t %7") ||
+		!slices.Contains(m.calls, "/opt/herdr/app/herdr-app do agent.focus --terminal t2") ||
+		m.calls[len(m.calls)-1] != "xdotool windowactivate 58720257" {
+		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
+	}
+}
+
+// Herdr's window still comes forward when its terminal is not found; with
+// Herdr closed there is nothing to bring forward.
+func TestHerdrWithoutItsTerminalOrWindow(t *testing.T) {
+	m, terminal := herdrShell()
+	m.answers["/opt/herdr/bin/herdr-core ls --json"] = answer{out: `{"terminals":[]}`}
+	result := m.focuser("linux", x11Env).Focus(context.Background(), "claude-code", "s1", terminal)
+	if result.Precision != Window || !strings.Contains(result.Message, "terminal in Herdr") {
+		t.Fatalf("no terminal: %+v", result)
+	}
+	m, terminal = herdrShell()
+	delete(m.answers, "pgrep -n -x herdr-app")
+	result = m.focuser("linux", x11Env).Focus(context.Background(), "claude-code", "s1", terminal)
+	if result.Precision != "" || !strings.Contains(result.Message, "Open Herdr") {
+		t.Fatalf("closed: %+v", result)
+	}
+}
+
 // On Hyprland the window's workspace is shown first, unless a monitor shows
 // it already; a special workspace is left to focuswindow.
 func TestHyprlandShowsTheWindowsWorkspace(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -13,7 +14,9 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/fixdir"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
 func gitIn(t *testing.T, dir string, args ...string) string {
@@ -104,7 +107,7 @@ func options(t *testing.T, r Repositories, a agent.Fixer) Options {
 // refs behind.
 func checkCleanedUp(t *testing.T, r Repositories, o Options) {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(o.Directory, o.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cloneFixes(t, r, o), o.ID)); !os.IsNotExist(err) {
 		t.Errorf("the fix directory remains: %v", err)
 	}
 	if list := gitIn(t, r.Clone, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
@@ -174,16 +177,14 @@ func TestFixRefusals(t *testing.T) {
 		{"agent runs out of budget", false, func(context.Context, string) error {
 			return errors.New(agent.GenerationBudgetExceededReason("tokens"))
 		}, ReasonBudget},
-		{"agent rewrites history", false, func(_ context.Context, dir string) error {
-			// The agent's sandbox would refuse this; the check after it must
-			// refuse it too.
-			cmd := exec.Command("git", "reset", "-q", "--hard", "HEAD~1")
+		{"agent leaves its own merge unresolved", false, func(_ context.Context, dir string) error {
+			cmd := exec.Command("git", "merge", "origin/main")
 			cmd.Dir = dir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return errors.New(string(out))
+			if out, err := cmd.CombinedOutput(); err == nil {
+				return errors.New("the merge did not conflict: " + string(out))
 			}
-			return os.WriteFile(filepath.Join(dir, "b.txt"), []byte("rewritten\n"), 0o644)
-		}, ReasonHistoryRewritten},
+			return nil
+		}, ReasonConflictsRemain},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r := NewRepositories(t)
@@ -203,6 +204,79 @@ func TestFixRefusals(t *testing.T) {
 
 // A failed agent's job detail says which limit ran out, never the provider's
 // words; the log has the provider's error.
+// runIn runs git in the agent's checkout, as the agent would.
+func runIn(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return nil
+}
+
+// A failure only on CI's merge with the base: the agent merges origin/main
+// itself, fixes the result and commits; baum pushes its own merge commit of
+// the head and the base with the agent's files.
+func TestChecksFixPushesTheAgentsMergeOfTheBase(t *testing.T) {
+	r := NewRepositories(t)
+	fake := &fakeAgent{fix: func(_ context.Context, dir string) error {
+		if err := runIn(dir, "merge", "origin/main"); err == nil {
+			return errors.New("expected a conflict")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("feature and main\n"), 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, "vet.txt"), []byte("fixed for main\n"), 0o644); err != nil {
+			return err
+		}
+		return runIn(dir, "commit", "-qam", "agent's own merge")
+	}}
+	o := options(t, r, fake)
+	o.Checks, o.Network = true, true
+	out, err := Run(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parents := gitIn(t, r.Remote, "rev-list", "--parents", "-n", "1", out.Commit); parents != out.Commit+" "+r.Head+" "+r.Base {
+		t.Fatalf("not baum's merge of the head and the base: %s", parents)
+	}
+	if message := gitIn(t, r.Remote, "log", "-1", "--format=%B", out.Commit); !strings.HasPrefix(message, "Merge branch 'main' into feature") || !strings.Contains(message, "Base branch merged and failing checks fixed") {
+		t.Fatalf("commit message %q", message)
+	}
+	if got := gitIn(t, r.Remote, "show", out.Commit+":vet.txt"); got != "fixed for main" {
+		t.Fatalf("vet.txt %q", got)
+	}
+	if fake.request.GitDir == "" || !fake.request.Network || !strings.Contains(fake.request.Prompt, "Commands can reach the network") || !strings.Contains(fake.request.Prompt, "pull_request") {
+		t.Fatalf("request %+v", fake.request)
+	}
+	checkCleanedUp(t, r, o)
+}
+
+// Whatever the agent does to its branch, baum's commit sits on the head:
+// the branch's history is never rewritten, and the agent's commits are not
+// pushed.
+func TestFixNeverPushesTheAgentsHistory(t *testing.T) {
+	r := NewRepositories(t)
+	fake := &fakeAgent{fix: func(_ context.Context, dir string) error {
+		if err := runIn(dir, "reset", "-q", "--hard", "HEAD~1"); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, "b.txt"), []byte("rewritten\n"), 0o644)
+	}}
+	o := options(t, r, fake)
+	o.Checks = true
+	out, err := Run(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parents := gitIn(t, r.Remote, "rev-list", "--parents", "-n", "1", out.Commit); parents != out.Commit+" "+r.Head {
+		t.Fatalf("not one commit on the head: %s", parents)
+	}
+	if strings.Contains(fake.request.Prompt, "Commands can reach the network") || !strings.Contains(fake.request.Prompt, "The network is off") {
+		t.Fatal("a fix without network access was told it has it")
+	}
+}
+
 func TestFixAgentFailuresSayWhyAndAreLogged(t *testing.T) {
 	for _, test := range []struct {
 		name, reason, detail string
@@ -236,6 +310,74 @@ func TestFixAgentFailuresSayWhyAndAreLogged(t *testing.T) {
 				t.Errorf("the log lacks the provider's error:\n%s", log.String())
 			}
 		})
+	}
+}
+
+// cloneFixes is the directory holding r's clone's fixes (fixdir.ForClone).
+func cloneFixes(t *testing.T, r Repositories, o Options) string {
+	t.Helper()
+	common, err := gitlocal.CommonDir(context.Background(), r.Clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fixdir.ForClone(o.Directory, common)
+}
+
+// The agent works in a checkout inside its clone's directory of fixes and
+// keeps its session, so the commit baum makes of its work can be linked to
+// the session after the checkout is gone.
+func TestFixChecksOutInItsClonesDirectoryAndKeepsTheSession(t *testing.T) {
+	r := NewRepositories(t)
+	a := &fakeAgent{fix: func(_ context.Context, dir string) error {
+		return os.WriteFile(filepath.Join(dir, "a.txt"), []byte("fixed\n"), 0o644)
+	}}
+	o := options(t, r, a)
+	o.Checks = true
+	if _, err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if !a.request.PersistSession {
+		t.Error("the agent's session is discarded")
+	}
+	if want := filepath.Join(cloneFixes(t, r, o), o.ID); !strings.HasPrefix(a.request.Directory, want+string(filepath.Separator)) {
+		t.Errorf("checkout %s, want one in %s", a.request.Directory, want)
+	}
+	checkCleanedUp(t, r, o)
+}
+
+// Fix directories left behind for more than a day are removed, in a clone's
+// directory and from before those, in the root; a clone's directory and a
+// recent fix's stay.
+func TestSweepRemovesStaleFixDirectories(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-2 * staleAfter)
+	dirs := map[string]bool{
+		"legacy":           false,
+		"legacy-recent":    true,
+		"clone/stale":      false,
+		"clone/recent":     true,
+		"idle-clone/stale": false,
+	}
+	for dir := range dirs {
+		if err := os.MkdirAll(filepath.Join(root, dir, "git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"legacy", "clone/stale", "idle-clone/stale", "idle-clone"} {
+		if err := os.Chtimes(filepath.Join(root, dir), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweep(root)
+	for dir, kept := range dirs {
+		if _, err := os.Stat(filepath.Join(root, dir)); (err == nil) != kept {
+			t.Errorf("%s: kept %v, want %v", dir, err == nil, kept)
+		}
+	}
+	for _, clone := range []string{"clone", "idle-clone"} {
+		if _, err := os.Stat(filepath.Join(root, clone)); err != nil {
+			t.Errorf("clone directory %s removed: %v", clone, err)
+		}
 	}
 }
 
@@ -395,5 +537,41 @@ func TestPromptKeepsDataDelimited(t *testing.T) {
 	}
 	if !strings.Contains(text, "## Failing checks") || strings.Contains(text, "## Merge conflicts") {
 		t.Fatalf("sections:\n%s", text)
+	}
+}
+
+// GitHub's refusal of a workflow change from a git credential without the
+// workflow scope fails the fix with its own reason, saying what to do.
+func TestFixReportsAPushRefusedForWorkflowScope(t *testing.T) {
+	r := NewRepositories(t)
+	hook := filepath.Join(r.Remote, "hooks", "pre-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'refusing to allow a Personal Access Token to create or update workflow `.github/workflows/ci.yml` without `workflow` scope' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o := options(t, r, &fakeAgent{fix: func(_ context.Context, dir string) error {
+		return writeIn(dir, ".github/workflows/ci.yml", "on: push\n")
+	}})
+	o.Checks = true
+	_, err := Run(context.Background(), o)
+	if reasonOf(err) != ReasonWorkflowScope || !strings.Contains(err.Error(), "gh auth refresh -s workflow") {
+		t.Fatalf("err %v (reason %q)", err, reasonOf(err))
+	}
+}
+
+// A conflicts fix whose agent abandons the merge pushes nothing.
+func TestConflictFixRefusesAnAbandonedMerge(t *testing.T) {
+	r := NewRepositories(t)
+	o := options(t, r, &fakeAgent{fix: func(_ context.Context, dir string) error {
+		if err := runIn(dir, "merge", "--abort"); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, "b.txt"), []byte("other\n"), 0o644)
+	}})
+	o.Conflicts = true
+	if _, err := Run(context.Background(), o); reasonOf(err) != ReasonConflictsRemain {
+		t.Fatalf("err %v (reason %q), want conflicts_remain", err, reasonOf(err))
+	}
+	if got := gitIn(t, r.Remote, "rev-parse", "refs/heads/feature"); got != r.Head {
+		t.Fatal("an abandoned merge was pushed")
 	}
 }

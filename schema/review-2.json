@@ -1,0 +1,460 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static.usebaum.com/schemas/review/2.json",
+  "title": "baum.review/2",
+  "description": "The desktop app's review of a pull request, shaped like its page: an overview, the sections with their bodies, risks and tiles, and where the change fits. The model writes only judgement (explanations, groupings, risks, diagrams and choices); the host writes the header, index, stats, risk score, reading time and each section's state across versions. The review header, stats, index, risk score, section derived facts and anchors are baum.review/1's (review-1.json), merged into $defs. This schema is the document's shape; the limits on each text are the model-facing checks of the host (oss/reviewv2), since baum.review/1 versions converted to this shape carry longer text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "review", "summary", "overview", "context", "sections", "tiles", "stats", "index"],
+  "properties": {
+    "schema": { "const": "baum.review/2" },
+    "review": { "$ref": "#/$defs/reviewHeader" },
+    "summary": { "$ref": "#/$defs/v2Summary" },
+    "overview": { "$ref": "#/$defs/v2Overview" },
+    "context": {
+      "description": "Where this fits: null when the review has none (the context call failed, or a converted baum.review/1 version had none).",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/v2Context" }]
+    },
+    "sections": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/v2Section" }
+    },
+    "tiles": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/v2Tile" }
+    },
+    "stats": { "$ref": "#/$defs/reviewStats" },
+    "index": { "$ref": "#/$defs/reviewIndex" },
+    "generation": { "$ref": "#/$defs/v2Generation" }
+  },
+  "$defs": {
+    "v2SchemaRevision": {
+      "const": "2026-11-24.2",
+      "description": "Date-based revision of this schema file, bumped on every additive edit. A document records it in review.generator.schema_revision."
+    },
+    "v2Summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "text", "change_kind", "verdict", "risk_why", "risk_score", "review_minutes"],
+      "properties": {
+        "title": { "type": "string", "description": "The pull request's title. Host." },
+        "text": { "type": "string", "description": "The overview's lede, two or three plain sentences. Top level, overview call." },
+        "change_kind": {
+          "description": "The kind of change, as baum.review/1's summary.change_kind; empty while the map is being written.",
+          "anyOf": [{ "$ref": "#/$defs/reviewChangeKind" }, { "const": "" }]
+        },
+        "verdict": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["decision", "text", "points"],
+              "properties": {
+                "decision": { "enum": ["approve", "look_first", "request_changes"] },
+                "text": { "type": "string" },
+                "points": {
+                  "type": "array",
+                  "maxItems": 3,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["text"],
+                    "properties": {
+                      "text": { "type": "string", "minLength": 1 },
+                      "section": { "$ref": "#/$defs/sectionId" }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "risk_why": { "type": "string" },
+        "risk_score": {
+          "description": "Host: rubric risk-v1 over the sections' levels and the risks' tiers, as baum.review/1's summary.risk_score; null before it is computed.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/reviewRiskScore" }]
+        },
+        "review_minutes": { "type": ["integer", "null"], "minimum": 1, "maximum": 240 }
+      }
+    },
+    "v2Overview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["screenshots", "diagram", "intent"],
+      "properties": {
+        "screenshots": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/attachmentId" }
+        },
+        "videos": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/attachmentId" }
+        },
+        "diagram": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/v2TileId" }] },
+        "intent": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session", "prompt", "asked", "got"],
+            "properties": {
+              "session": { "type": "string", "minLength": 1 },
+              "prompt": { "type": "integer", "minimum": 1 },
+              "asked": { "type": "string", "minLength": 1 },
+              "got": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "v2Context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["area", "reached_by", "contracts", "related"],
+      "properties": {
+        "area": { "$ref": "#/$defs/v2ContextPart" },
+        "reached_by": { "$ref": "#/$defs/v2ContextPart" },
+        "contracts": { "$ref": "#/$defs/v2ContextPart" },
+        "related": { "$ref": "#/$defs/v2ContextPart" }
+      }
+    },
+    "v2ContextPart": {
+      "type": "object",
+      "description": "One or two plain sentences and the repository files they rest on; empty text when the part has nothing to say.",
+      "additionalProperties": false,
+      "required": ["text", "files"],
+      "properties": {
+        "text": { "type": "string" },
+        "files": { "type": "array", "maxItems": 8, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "v2Section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "kind", "hunks", "gist", "level", "level_reasons", "body", "risks"],
+      "properties": {
+        "id": { "$ref": "#/$defs/sectionId" },
+        "title": { "type": "string" },
+        "kind": { "enum": ["logical", "mechanical"] },
+        "hunks": { "type": "array", "items": { "$ref": "#/$defs/hunkId" } },
+        "gist": { "type": "string" },
+        "scope": { "type": "string" },
+        "level": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/riskScore" }] },
+        "level_reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "cites"],
+            "properties": {
+              "text": { "type": "string" },
+              "cites": { "type": "array", "items": { "$ref": "#/$defs/anchor" } }
+            }
+          }
+        },
+        "body": {
+          "type": "array",
+          "maxItems": 24,
+          "description": "The blocks the page draws between the section's gist and its risks, in order: the section agent composes them (prose, points, note), and a tile block places one of the document's tiles that the section owns. The host leaves every section with one, and a tile the section owns but the body does not place is placed at the end.",
+          "items": { "$ref": "#/$defs/v2Block" }
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "tier", "category", "text", "cites"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^rsk_[a-z0-9_]+$", "maxLength": 128 },
+              "tier": { "$ref": "#/$defs/tier" },
+              "category": { "type": "string", "pattern": "^[a-z0-9_]*$", "maxLength": 128 },
+              "text": { "type": "string" },
+              "cites": { "type": "array", "items": { "$ref": "#/$defs/anchor" } },
+              "state": { "enum": ["active", "mitigated"] },
+              "introduced_version": { "type": "integer", "minimum": 1 },
+              "mitigated_version": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "details": { "enum": ["pending", "failed"] },
+        "derived": { "$ref": "#/$defs/reviewDerived" }
+      }
+    },
+    "v2Block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["prose", "points", "note", "tile"] },
+        "title": { "type": "string", "maxLength": 160, "description": "An optional label above the block, at most 60 characters written; a tile block's title is the tile's own." },
+        "kind": { "enum": ["caveat", "decision", "unchanged", "follow_up"], "description": "A note's kind, drawn with its own icon: a caveat (an exception or limit to watch), a decision (a choice made on purpose), what stays unchanged, or a follow-up (work left for later). A note without one is a plain aside; other blocks have none." },
+        "text": { "type": "string", "maxLength": 1500, "description": "Prose (at most 450 characters written) and note (240): inline markdown, bold and code only." },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "description": "A points block's lines, at most 8 written.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "cites"],
+            "properties": {
+              "text": { "type": "string", "minLength": 1, "maxLength": 600, "description": "One line, at most 180 characters written, inline markdown." },
+              "more": { "type": "string", "maxLength": 1500, "description": "The detail the page shows when the line is opened, at most 450 characters written." },
+              "tone": { "enum": ["new", "good", "bad", "muted", "missing"], "description": "How the line reads, drawn as its marker: one of v2Tone but plain, which is a line without one." },
+              "cites": { "type": "array", "items": { "$ref": "#/$defs/anchor" } }
+            }
+          }
+        },
+        "tile": { "$ref": "#/$defs/v2TileId", "description": "A tile block's tile, by ID: a tile of the document that the section owns." }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "tile" } } }, "then": { "required": ["tile"] } },
+        { "if": { "properties": { "type": { "const": "points" } } }, "then": { "required": ["items"] } },
+        { "if": { "properties": { "type": { "enum": ["prose", "note"] } } }, "then": { "required": ["text"] } }
+      ]
+    },
+    "v2TileId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,127}$",
+      "description": "A tile's ID: tl_ and a slug for a generated tile; a converted baum.review/1 tile and a tile the person added keep the ID they had."
+    },
+    "v2Tile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "owner", "shows", "title", "cites", "state"],
+      "properties": {
+        "id": { "$ref": "#/$defs/v2TileId" },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "description": "A native type (flow, columns, sequence, table, code), drawn by the app with the data shape of $defs/v2TileData_<type>; a converted baum.review/1 exhibit (v1_table, v1_code, v1_prose) with the data of tiles-1.json's table, code and prose tiles; or a library, saved or dedicated type, whose data is its own definition's and which is drawn in a sandboxed frame from definition."
+        },
+        "owner": { "type": "string", "pattern": "^(overview|context|sec_[a-z0-9_]+)$" },
+        "shows": { "type": "string" },
+        "title": { "type": "string" },
+        "caption": { "type": "string" },
+        "cites": { "type": "array", "items": { "$ref": "#/$defs/anchor" } },
+        "data": { "type": "object" },
+        "state": { "enum": ["pending", "ready", "failed", "unavailable"] },
+        "definition": { "type": "object" },
+        "problems": { "type": "array", "items": { "type": "string" } },
+        "added": { "type": "boolean", "description": "A tile the person added to the pull request (served only), which they can remove." },
+        "from": { "type": "integer", "minimum": 1, "description": "The earlier version an added tile's data was written for (served only)." },
+        "filling": { "type": "boolean", "description": "An added tile being filled for this version (served only)." }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "flow" } }, "required": ["data"] }, "then": { "properties": { "data": { "$ref": "#/$defs/v2TileData_flow" } } } },
+        { "if": { "properties": { "type": { "const": "columns" } }, "required": ["data"] }, "then": { "properties": { "data": { "$ref": "#/$defs/v2TileData_columns" } } } },
+        { "if": { "properties": { "type": { "const": "sequence" } }, "required": ["data"] }, "then": { "properties": { "data": { "$ref": "#/$defs/v2TileData_sequence" } } } },
+        { "if": { "properties": { "type": { "const": "table" } }, "required": ["data"] }, "then": { "properties": { "data": { "$ref": "#/$defs/v2TileData_table" } } } },
+        { "if": { "properties": { "type": { "const": "code" } }, "required": ["data"] }, "then": { "properties": { "data": { "$ref": "#/$defs/v2TileData_code" } } } }
+      ]
+    },
+    "v2Tone": { "enum": ["plain", "new", "good", "bad", "muted", "missing"] },
+    "v2TileData_flow": {
+      "type": "object",
+      "description": "Lanes of steps joined by arrows; one lane without a label is a plain flow.",
+      "additionalProperties": false,
+      "required": ["lanes"],
+      "properties": {
+        "lanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["steps"],
+            "properties": {
+              "label": { "type": "string", "maxLength": 24 },
+              "from": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6,
+                "description": "On a lane after the first: the step of the first lane (from 1) it branches off."
+              },
+              "steps": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 6,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["title"],
+                  "properties": {
+                    "title": { "type": "string", "minLength": 1, "maxLength": 60 },
+                    "note": { "type": "string", "maxLength": 80 },
+                    "more": { "type": "string", "maxLength": 300, "description": "The detail the page shows when the step is opened." },
+                    "tone": { "$ref": "#/$defs/v2Tone" },
+                    "join": { "enum": ["arrow", "both", "none"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "v2TileData_columns": {
+      "type": "object",
+      "description": "Two or three labelled lists side by side, or, with rows, two or three states of one thing compared item by item.",
+      "additionalProperties": false,
+      "required": ["columns"],
+      "properties": {
+        "columns": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label"],
+            "properties": {
+              "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+              "tone": { "$ref": "#/$defs/v2Tone" },
+              "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["title"],
+                  "properties": {
+                    "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+                    "note": { "type": "string", "maxLength": 80 }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "description": "One item per column, null where that column has none. With rows, the columns have no items.",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["title"],
+                  "properties": {
+                    "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+                    "note": { "type": "string", "maxLength": 80 }
+                  }
+                },
+                { "type": "null" }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "v2TileData_sequence": {
+      "type": "object",
+      "description": "Actors and the messages between them, in order; from and to index actors, and from equal to to is a note on that actor.",
+      "additionalProperties": false,
+      "required": ["actors", "steps"],
+      "properties": {
+        "actors": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "type": "string", "minLength": 1, "maxLength": 24 } },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to", "text"],
+            "properties": {
+              "from": { "type": "integer", "minimum": 0, "maximum": 3 },
+              "to": { "type": "integer", "minimum": 0, "maximum": 3 },
+              "text": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "tone": { "$ref": "#/$defs/v2Tone" },
+              "reply": { "type": "boolean", "description": "An answer to an earlier message, drawn dashed." },
+              "change": { "enum": ["added", "changed"], "description": "What the pull request does to this message." },
+              "was": { "type": "string", "minLength": 1, "maxLength": 80, "description": "A changed message's text before the change." }
+            }
+          }
+        }
+      }
+    },
+    "v2TileData_table": {
+      "type": "object",
+      "description": "A table; every row is as long as columns.",
+      "additionalProperties": false,
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": { "type": "array", "minItems": 2, "maxItems": 5, "items": { "type": "string", "minLength": 1, "maxLength": 40 } },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "type": "array", "minItems": 2, "maxItems": 5, "items": {
+              "description": "A table cell: its text, or the text and what the value was before the change.",
+              "oneOf": [
+                { "type": "string", "maxLength": 120 },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["text"],
+                  "properties": {
+                    "text": { "type": "string", "maxLength": 120 },
+                    "was": { "type": "string", "maxLength": 120 }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "v2TileData_code": {
+      "type": "object",
+      "description": "An excerpt of a hunk: the model names the hunk and, optionally, the first and last lines on the new side and the few of them that matter; the host fills the text from the diff, and the lines when the model gave none.",
+      "additionalProperties": false,
+      "required": ["hunk"],
+      "properties": {
+        "hunk": { "$ref": "#/$defs/hunkId" },
+        "lines": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 1 } },
+        "focus": { "type": "array", "minItems": 1, "description": "The new-side lines within lines that carry the point, which the page highlights while it dims the rest.", "items": { "type": "integer", "minimum": 1 } },
+        "text": { "type": "string", "description": "The new side's lines, filled by the host from the diff." }
+      }
+    },
+    "v2CallRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["", "pending", "running", "ran", "failed", "skipped", "reused"] },
+        "reason": { "type": "string" }
+      }
+    },
+    "v2Generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["map", "overview", "context"],
+      "properties": {
+        "map": { "$ref": "#/$defs/v2CallRecord" },
+        "overview": { "$ref": "#/$defs/v2CallRecord" },
+        "context": { "$ref": "#/$defs/v2CallRecord" },
+        "sections": { "type": "object", "additionalProperties": { "$ref": "#/$defs/v2CallRecord" } },
+        "tiles": { "type": "object", "additionalProperties": { "$ref": "#/$defs/v2CallRecord" } }
+      }
+    }
+  }
+}

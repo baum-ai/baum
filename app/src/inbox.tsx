@@ -52,9 +52,11 @@ import {
 } from "./api";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
+import { ListPagination, useListPage } from "./list-pagination";
 import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { canMerge, MergeDialog } from "./merge";
+import { canMerge, MergeDialog, readyToMerge } from "./merge";
+import { groupDotState, ReviewDot, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
   inboxAction,
@@ -68,11 +70,16 @@ import {
 } from "./shortcuts";
 import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
 import { SMALL } from "./action-classes";
+import { sortBy, type SortKey } from "./pr-sort";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
 /** A review group as one inbox row, with those of its members the inbox shows. */
 export type GroupEntry = { group: ReviewGroup; members: Entry[] };
+/** A bucket's line: a review group, or a pull request not shown under one. */
+type Line = { group: GroupEntry; entry?: undefined } | { entry: Entry; group?: undefined };
+const lineId = (line: Line) =>
+  line.group ? `group:${line.group.group.id}` : `pr:${rowKey(line.entry)}`;
 type Group = {
   id: string;
   heading: string;
@@ -81,13 +88,22 @@ type Group = {
   /** The loose rows: pull requests not shown under a review group. */
   rows: Entry[];
   groups: GroupEntry[];
+  /** Both, in the order drawn: the groups first, or with a sort, each where
+   *  its first-ranked member falls among the rows. */
+  lines: Line[];
 };
 /** Groups by who acts next. Discovery flags place requested, authored and
  *  other pull requests; the person's own split by GitHub's state into what
  *  needs their changes, what GitHub would merge now and the rest. A review group with a shown member is one row in the bucket of its
- *  highest-priority shown member, and its shown members leave the loose rows. */
-export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Group[] {
-  const groups: Group[] = [
+ *  highest-priority shown member, and its shown members leave the loose rows.
+ *  A sort (`sort`) orders each bucket's lines, a group by its first-ranked
+ *  member, the bucket's own order settling any tie. */
+export function inboxGroups(
+  rows: Entry[],
+  reviewGroups: ReviewGroup[] = [],
+  sort: SortKey[] = [],
+): Group[] {
+  const groups: Omit<Group, "lines">[] = [
     {
       id: "requested",
       heading: "Review requested",
@@ -140,7 +156,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
   const own = (row: Entry) =>
     row.review === "changes_requested" || row.checks === "failing" || row.merge === "conflict"
       ? 1
-      : row.merge === "ready"
+      : readyToMerge(row)
         ? 2
         : 3;
   const bucket = (row: Entry) =>
@@ -169,10 +185,29 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
   // generation time goes last.
   const reviewed = (row: Entry) => Date.parse(row.latest?.generated_at ?? "") || 0;
   groups[5]!.rows.sort((a, b) => reviewed(b) - reviewed(a));
-  return groups.filter((group) => group.rows.length + group.groups.length > 0);
+  const firstRanked = ({ members }: GroupEntry) => sortBy(members, sort, (entry) => entry)[0]!;
+  return groups
+    .filter((group) => group.rows.length + group.groups.length > 0)
+    .map((group) => {
+      const lines = sortBy(
+        [
+          ...group.groups.map((one): Line => ({ group: one })),
+          ...group.rows.map((entry): Line => ({ entry })),
+        ],
+        sort,
+        (line) => line.entry ?? firstRanked(line.group!),
+      );
+      return {
+        ...group,
+        lines,
+        rows: lines.flatMap((line) => (line.entry ? [line.entry] : [])),
+        groups: lines.flatMap((line) => (line.group ? [line.group] : [])),
+      };
+    });
 }
 export function Inbox({
   rows,
+  pageScope = "",
   cloneFor,
   selection,
   setSelection,
@@ -186,8 +221,12 @@ export function Inbox({
   generate,
   refresh,
   bulk,
+  sort = [],
 }: {
   rows: Entry[];
+  /** The order within each bucket (`pr-sort.ts`); none keeps the buckets' own. */
+  sort?: SortKey[];
+  pageScope?: string;
   cloneFor: (entry: Entry) => string;
   selection: Set<string>;
   setSelection: Dispatch<SetStateAction<Set<string>>>;
@@ -223,7 +262,28 @@ export function Inbox({
   const changedRows = useChangedRows(rows);
   // Review groups start collapsed.
   const [expanded, setExpanded] = useState(new Set<string>());
-  const groups = inboxGroups(rows, reviewGroups);
+  // Kept for when the list is drawn again, back from a row's review.
+  const [focusedId, setFocusedId] = useLastRow("pulls", section);
+  const allGroups = inboxGroups(rows, reviewGroups, sort);
+  const rowIDs = allGroups.flatMap((group) => group.lines.map(lineId));
+  const pagination = useListPage(pageScope, rowIDs.length, rowIDs.indexOf(focusedId ?? ""));
+  let offset = 0;
+  const groups = allGroups.flatMap((group) => {
+    const lines = pagination.slice(group.lines, offset);
+    const count = group.lines.length;
+    offset += count;
+    return lines.length
+      ? [
+          {
+            ...group,
+            count,
+            lines,
+            groups: lines.flatMap((line) => (line.group ? [line.group] : [])),
+            rows: lines.flatMap((line) => (line.entry ? [line.entry] : [])),
+          },
+        ]
+      : [];
+  });
   const visible = groups
     .flatMap((group) =>
       collapsed.has(group.id)
@@ -238,18 +298,17 @@ export function Inbox({
   const items: Item[] = groups.flatMap((group) =>
     collapsed.has(group.id)
       ? []
-      : [
-          ...group.groups.flatMap(({ group: reviewGroup, members }) => [
-            { id: `group:${reviewGroup.id}`, group: reviewGroup },
-            ...(expanded.has(reviewGroup.id)
-              ? members.map((entry) => ({ id: `pr:${rowKey(entry)}`, entry }))
-              : []),
-          ]),
-          ...group.rows.map((entry) => ({ id: `pr:${rowKey(entry)}`, entry })),
-        ],
+      : group.lines.flatMap((line): Item[] =>
+          line.group
+            ? [
+                { id: lineId(line), group: line.group.group },
+                ...(expanded.has(line.group.group.id)
+                  ? line.group.members.map((entry) => ({ id: `pr:${rowKey(entry)}`, entry }))
+                  : []),
+              ]
+            : [{ id: lineId(line), entry: line.entry }],
+        ),
   );
-  // Kept for when the list is drawn again, back from a row's review.
-  const [focusedId, setFocusedId] = useLastRow("pulls", section);
   // A row that left the list (collapsed, filtered out) is no longer focused.
   const focused = items.find((item) => item.id === focusedId);
   const focusedKey = focused?.id ?? null;
@@ -259,7 +318,7 @@ export function Inbox({
       ?.querySelector<HTMLElement>(".inbox-pr-title");
   // Focus goes to the row's own link, so a screen reader reads the row as it
   // moves, and the row scrolls into view.
-  useFocusRow(focusedKey, rowLink);
+  useFocusRow(focusedKey, rowLink, focusedKey !== null && focusedKey === items[0]?.id);
   useGitHubKey(focused?.entry?.pull_request.url || undefined);
   useShortcuts((event) => {
     if (event.key === "Escape") {
@@ -281,12 +340,14 @@ export function Inbox({
     switch (action) {
       case "next":
       case "previous":
+      case "first":
+      case "last":
         event.preventDefault();
         setFocusedId(
           moveFocus(
             items.map((item) => item.id),
             focusedKey,
-            action === "next" ? 1 : -1,
+            action === "next" ? 1 : action === "previous" ? -1 : action,
           ),
         );
         return;
@@ -324,8 +385,7 @@ export function Inbox({
         setMerging(entry);
         return;
       case "fix":
-        // Merge takes the row's action when both could apply.
-        if (!entry || canMerge(entry) || !fixLabel(entry) || !fix || !cloneFor(entry)) return;
+        if (!entry || !fixLabel(entry) || !fix || !cloneFor(entry)) return;
         if (isActiveJob(fixJob(entry, jobs)) || fixStarting?.(entry)) return;
         event.preventDefault();
         fix(entry);
@@ -370,12 +430,13 @@ export function Inbox({
     const pr = entry.pull_request;
     const clone = cloneFor(entry);
     const items: MenuItem[] = [
+      { label: "Open", hint: "↵", onSelect: () => rowLink(`pr:${key}`)?.click() },
       { label: peeked.has(key) ? "Close peek" : "Peek", hint: "Space", onSelect: () => peek(key) },
     ];
     const label = fixLabel(entry);
     if (canMerge(entry))
       items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
-    else if (label && fix && clone && !fixing(entry))
+    if (label && fix && clone && !fixing(entry))
       items.push({ label, hint: "f", onSelect: () => fix(entry) });
     const run = watchableFix(entry, jobs);
     if (run)
@@ -493,7 +554,7 @@ export function Inbox({
           title={group.heading}
           hint={group.hint}
           tone={group.tone}
-          count={group.rows.length + group.groups.length}
+          count={group.count}
           collapsed={collapsed.has(group.id)}
           toggle={() =>
             setCollapsed((previous) => {
@@ -504,22 +565,33 @@ export function Inbox({
             })
           }
         >
-          {group.groups.map(({ group: reviewGroup, members }) => (
-            <GroupRow
-              key={reviewGroup.id}
-              group={reviewGroup}
-              focused={focusedKey === `group:${reviewGroup.id}`}
-              job={groupJob(reviewGroup, jobs)}
-              expanded={expanded.has(reviewGroup.id)}
-              onToggle={() => toggleGroup(reviewGroup.id)}
-              Link={Link}
-            >
-              {members.map((entry) => renderRow(entry, true))}
-            </GroupRow>
-          ))}
-          {group.rows.map((entry) => renderRow(entry, false))}
+          {group.lines.map((line) =>
+            line.group ? (
+              <GroupRow
+                key={line.group.group.id}
+                group={line.group.group}
+                focused={focusedKey === lineId(line)}
+                job={groupJob(line.group.group, jobs)}
+                expanded={expanded.has(line.group.group.id)}
+                onToggle={() => toggleGroup(line.group.group.id)}
+                Link={Link}
+              >
+                {line.group.members.map((entry) => renderRow(entry, true))}
+              </GroupRow>
+            ) : (
+              renderRow(line.entry, false)
+            ),
+          )}
         </ListSection>
       ))}
+      <ListPagination
+        label="Pull requests pagination"
+        pagination={pagination}
+        onMove={() => {
+          setFocusedId(null);
+          section.current?.scrollIntoView?.({ block: "start" });
+        }}
+      />
       {merging ? (
         <MergeDialog
           key={rowKey(merging)}
@@ -596,32 +668,14 @@ export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
     </span>
   );
 }
-/** The baum review's state, only when it asks for something: a review being
- *  generated, or one that failed. A current or outdated review needs nothing
- *  from the reader here; its risk is in the first column. */
+/** A review waits for a local clone; how a saved review stands is the dot
+ *  before the title (ReviewDot). */
 function ReviewActivity({ entry }: { entry: Entry }) {
   if (entry.needs_clone)
     return (
       <span className="inbox-activity text-status-caution">
         <WarningIcon size={12} className="flex-none" />
         Needs a local clone
-      </span>
-    );
-  if (entry.status === "generating")
-    return (
-      <span className="inbox-activity text-secondary">
-        <NineDots size={14} />
-        Generating review
-      </span>
-    );
-  if (entry.status === "failed")
-    return (
-      <span
-        className="inbox-activity text-status-critical"
-        title={entry.failure_reason ?? entry.store_error}
-      >
-        <WarningIcon size={14} className="flex-none" />
-        Review failed
       </span>
     );
   return null;
@@ -945,6 +999,7 @@ function GroupRow({
         <RiskCell risk={group.risk_score} />
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-2">
+            <ReviewDot state={groupDotState(group, job?.state)} />
             {group.stack ? (
               // The hosted pull request list's mark for a stack.
               <span
@@ -968,14 +1023,7 @@ function GroupRow({
           <p title={metadata} className="inbox-meta text-xs text-tertiary">
             {metadata}
           </p>
-          {isActiveJob(job) ? (
-            <span className="inbox-activity text-secondary">
-              <NineDots size={14} />
-              Generating group review
-            </span>
-          ) : group.outdated ? (
-            <span className="inbox-activity">Group review outdated</span>
-          ) : group.version_count === 0 ? (
+          {!group.stack && !isActiveJob(job) && group.version_count === 0 ? (
             <span className="inbox-activity">No group review yet</span>
           ) : null}
         </div>
@@ -1051,6 +1099,7 @@ function InboxRow({
       <RiskCell risk={entry.risk_score} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
+          <ReviewDot state={reviewDotState(entry.status)} detail={entry.failure_reason} />
           <Link
             href={href}
             title={pr.title}

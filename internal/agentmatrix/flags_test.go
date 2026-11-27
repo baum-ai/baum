@@ -146,7 +146,7 @@ func refusal(output string) string {
 }
 
 // checkFlags has baum's Claude Code and Codex backends build the arguments of
-// every kind of job (review, review keeping its session, resume, fork, fix and
+// every kind of job (review, review keeping its session, resume, fix and
 // the one-shot completion) for this release, then runs that exact argument
 // list on the real executable, with no login and no network, and reports
 // whether its argument parser accepts it. A release below the floor must be
@@ -168,8 +168,6 @@ func (m *matrix) checkFlags() {
 	session.PersistSession = true
 	resume := base
 	resume.ResumeSession = sessionUUID
-	fork := resume
-	fork.ForkSession = true
 	fix := base
 	fix.Schema, fix.Scratch = nil, scratch
 
@@ -194,7 +192,6 @@ func (m *matrix) checkFlags() {
 		{"review", func() error { _, err := backend.Run(ctx, base); return err }},
 		{"review-keep-session", func() error { _, err := backend.Run(ctx, session); return err }},
 		{"resume", func() error { _, err := backend.Run(ctx, resume); return err }},
-		{"fork", func() error { _, err := backend.Run(ctx, fork); return err }},
 		{"fix", func() error { _, err := backend.Fix(ctx, fix); return err }},
 		{"complete", func() error {
 			_, err := backend.Complete(ctx, agent.CompleteRequest{System: "sys", User: "usr", Schema: []byte(reviewSchema)})

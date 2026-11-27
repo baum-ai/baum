@@ -3,6 +3,8 @@
 #
 #   scripts/updater-manifest.sh write VERSION DIR
 #   scripts/updater-manifest.sh verify DIR
+#   scripts/updater-manifest.sh signed VERSION FILE...
+#   scripts/updater-manifest.sh electron DIR
 #
 # write reads the signed updater bundles in DIR (each FILE with its FILE.sig
 # from scripts/updater-sign.sh), writes DIR/latest.json and verifies it. The
@@ -19,9 +21,24 @@
 #     redirects to the same file on the GitHub release
 #     (https://github.com/baum-ai/baum/releases/download/vVERSION/...);
 #   - that bundle is in DIR, and its signature was made by the release key in
-#     tauri.conf.json (minisign);
+#     updater-key.pub (minisign);
 #   - the signature's trusted comment names the version the manifest
 #     announces.
+# signed checks that each FILE has a FILE.sig made by the release key for
+# VERSION: the release runs it on every file electron-updater's latest*.yml
+# files list (scripts/update-yml.mjs), which the app verifies the same way.
+#
+# electron checks that installed Tauri copies can read DIR/latest.json and
+# that every bundle it lists is the Electron app, so they move onto it (the
+# bridge release; see "Bridge release" in README.md): the version is a
+# semantic version and pub_date an RFC 3339 time, as tauri-plugin-updater
+# parses them; the macOS archive holds a single baum.app at its root, as the
+# Tauri updater expects (it drops each entry's first path component and puts
+# the rest in place of the installed app), with Electron's
+# Contents/Resources/app.asar and an executable baum; the AppImage
+# holds resources/app.asar. The Windows installer is not released and is
+# not checked.
+#
 # So a tampered bundle, a swapped signature, a signature from another key, a
 # bundle served for the wrong platform or an announced version the bundles
 # were not signed for is never published.
@@ -31,7 +48,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: scripts/updater-manifest.sh write VERSION DIR | verify DIR" >&2
+  echo "usage: scripts/updater-manifest.sh write VERSION DIR | verify DIR | signed VERSION FILE... | electron DIR" >&2
   exit 2
 }
 
@@ -52,10 +69,13 @@ if [ "${BAUM_RELEASE_SIGNING:-}" = 1 ]; then
   fi
 fi
 minisign=${MINISIGN:-minisign}
-pubkey=${UPDATER_PUBKEY:-$(jq -ej '.plugins.updater.pubkey' "$here/tauri.conf.json")}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-printf '%s' "$pubkey" | base64 --decode >"$work/key.pub"
+if [ -n "${UPDATER_PUBKEY:-}" ]; then
+  printf '%s' "$UPDATER_PUBKEY" | base64 --decode >"$work/key.pub"
+else
+  cp "$here/updater-key.pub" "$work/key.pub"
+fi
 
 # Update downloads go through downloads.usebaum.com so they are counted; it
 # redirects /update/vVERSION/FILE to that file on the GitHub release.
@@ -171,7 +191,94 @@ write() {
   verify "$dir"
 }
 
+electron() {
+  local dir=$1 status=0 platform url file name entry
+  local platforms
+  # What tauri-plugin-updater's RemoteRelease parses, or the update is
+  # dropped: a semantic version (a leading v allowed) and an RFC 3339
+  # pub_date.
+  if ! jq -e '.version | strings | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$")' \
+    "$dir/latest.json" >/dev/null; then
+    echo "FAIL latest.json's version is not a semantic version" >&2
+    status=1
+  fi
+  if ! jq -e '.pub_date | strings | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")' \
+    "$dir/latest.json" >/dev/null; then
+    echo "FAIL latest.json's pub_date is not an RFC 3339 time" >&2
+    status=1
+  fi
+  platforms=$(jq -ej '.platforms | keys | join(" ")' "$dir/latest.json")
+  for platform in $platforms; do
+    url=$(jq -ej --arg p "$platform" '.platforms[$p].url | strings' "$dir/latest.json")
+    name=$(basename "$url")
+    file=$(cd "$dir" && pwd)/$name
+    case "$name" in
+      *.app.tar.gz)
+        if ! tar -tzf "$file" >"$work/entries" 2>"$work/error"; then
+          echo "FAIL $platform: $name is not a gzipped tar: $(cat "$work/error")" >&2
+          status=1
+          continue
+        fi
+        while IFS= read -r entry; do
+          if [ "${entry%%/*}" != baum.app ]; then
+            echo "FAIL $platform: $name holds $entry, outside a top-level baum.app" >&2
+            status=1
+            continue 2
+          fi
+        done <"$work/entries"
+        for entry in baum.app/Contents/Resources/app.asar baum.app/Contents/MacOS/baum; do
+          if ! grep -qxF "$entry" "$work/entries"; then
+            echo "FAIL $platform: $name has no $entry; it is not the Electron app" >&2
+            status=1
+            continue 2
+          fi
+        done
+        # The Tauri updater keeps the modes the archive gives.
+        if ! tar -tvzf "$file" baum.app/Contents/MacOS/baum 2>/dev/null | grep -q '^-..x'; then
+          echo "FAIL $platform: $name's baum.app/Contents/MacOS/baum is not executable" >&2
+          status=1
+          continue
+        fi
+        ;;
+      *.AppImage)
+        # The AppImage lists its own files (its runtime extracts them), so
+        # only one built for this machine's architecture can be checked; the
+        # other is built from the same commit and configuration.
+        local machine
+        machine=$(od -An -tx1 -j18 -N2 "$file" | tr -d ' \n')
+        case "$machine-$(uname -m)" in
+          3e00-x86_64 | b700-aarch64 | b700-arm64) ;;
+          *)
+            echo "skip $platform: $name is not built for $(uname -m)"
+            continue
+            ;;
+        esac
+        rm -rf "$work/appimage"
+        mkdir "$work/appimage"
+        cp "$file" "$work/appimage.bin"
+        chmod 0700 "$work/appimage.bin"
+        if ! (cd "$work/appimage" && "$work/appimage.bin" --appimage-extract resources/app.asar >/dev/null 2>&1) ||
+          [ ! -f "$work/appimage/squashfs-root/resources/app.asar" ]; then
+          echo "FAIL $platform: $name has no resources/app.asar; it is not the Electron app" >&2
+          status=1
+          continue
+        fi
+        ;;
+      *)
+        echo "skip $platform: $name"
+        continue
+        ;;
+    esac
+    echo "ok   $platform: $name is the Electron app"
+  done
+  return "$status"
+}
+
 case "${1:-}" in
+  electron)
+    [ "$#" -eq 2 ] || usage
+    electron "$2"
+    ;;
   write)
     [ "$#" -eq 3 ] || usage
     write "$2" "$3"
@@ -179,6 +286,21 @@ case "${1:-}" in
   verify)
     [ "$#" -eq 2 ] || usage
     verify "$2"
+    ;;
+  signed)
+    [ "$#" -ge 3 ] || usage
+    version=$2
+    shift 2
+    status=0
+    for file in "$@"; do
+      if [ ! -s "$file.sig" ]; then
+        echo "FAIL $(basename "$file") has no updater signature" >&2
+        status=1
+        continue
+      fi
+      check "$file" "$(cat "$file.sig")" "$version" || status=1
+    done
+    exit "$status"
     ;;
   *) usage ;;
 esac

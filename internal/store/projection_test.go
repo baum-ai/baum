@@ -361,7 +361,7 @@ func TestStaleSummaryFallsBackToExtraction(t *testing.T) {
 	// touches summaries.
 	err = dropTriggers(db)
 	if err == nil {
-		_, err = db.Exec(`INSERT INTO versions VALUES ('a/b',1,2,'{"version":2}',?)`, docFor(k1, 2, `,"pr_state":"merged"`, `"title":"newer","review_minutes":99`))
+		_, err = db.Exec(`INSERT INTO versions(repository,pr,version,metadata,document) VALUES ('a/b',1,2,'{"version":2}',?)`, docFor(k1, 2, `,"pr_state":"merged"`, `"title":"newer","review_minutes":99`))
 	}
 	if err == nil {
 		_, err = db.Exec(`UPDATE versions SET document=? WHERE repository='a/b' AND pr=2`, docFor(k2, 1, `,"pr_state":"closed"`, `"title":"rewritten, longer","review_minutes":77`))

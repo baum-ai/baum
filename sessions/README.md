@@ -17,6 +17,11 @@ type does not fail the whole session. A malformed line of a known type still
 fails it. An Entire checkpoint whose embedded Codex transcript has an unknown
 record falls back to its compact transcript instead.
 
+Codex can start a turn after a daemon restart with a recovery instruction
+instead of a new human prompt. A recovery message tagged for that turn is a
+system input and owns the resumed activity, including tool calls and their
+nested sessions.
+
 ## Mapping cache
 
 `sessions.Map` keeps the graphs it mapped in a process-wide cache. Every

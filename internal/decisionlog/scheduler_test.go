@@ -328,6 +328,10 @@ func TestCovered(t *testing.T) {
 		{Session{Fingerprint: "f", Coverage: CoverageSkipped, SkipReason: ReasonOverTokenCap, UpdatedAt: day.Add(-time.Hour)}, true},
 		{Session{Fingerprint: "f", Coverage: CoverageSkipped, SkipReason: ReasonUnavailable, UpdatedAt: day.Add(time.Hour)}, true},
 		{Session{Fingerprint: "f", Coverage: CoverageSkipped, SkipReason: ReasonUnavailable, UpdatedAt: day.Add(-time.Hour)}, false},
+		{Session{Agent: "codex", Fingerprint: "f", Coverage: CoverageExtracted}, true},
+		{Session{Agent: "codex", Fingerprint: "f", Coverage: CoverageSkipped, SkipReason: ReasonUnreadable}, false},
+		{Session{Agent: "codex", Fingerprint: captureFingerprint("codex", ReasonUnreadable, "f"), Coverage: CoverageSkipped, SkipReason: ReasonUnreadable}, true},
+		{Session{Agent: "claude-code", Fingerprint: "f", Coverage: CoverageSkipped, SkipReason: ReasonUnreadable}, true},
 	}
 	for i, tc := range cases {
 		if got := covered(tc.row, "f", day); got != tc.want {

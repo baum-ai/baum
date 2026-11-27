@@ -16,6 +16,24 @@ const maxSourceContextBytes = 96 << 10
 
 var sourceDeclaration = regexp.MustCompile(`^(func |type |class |export |def |CREATE |-- name:)`)
 
+type checkoutTree struct{ label, sub string }
+
+// hasRunTrees reports whether dir is a run directory with head/ and
+// merge-base/ trees, rather than a worktree checked out at the head.
+func hasRunTrees(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "head"))
+	return err == nil && info.IsDir()
+}
+
+// checkoutTrees are the trees to read excerpts from: head/ and merge-base/ of
+// a run directory, or the worktree root itself as the head.
+func checkoutTrees(dir string) []checkoutTree {
+	if hasRunTrees(dir) {
+		return []checkoutTree{{"head", "head"}, {"merge-base", "merge-base"}}
+	}
+	return []checkoutTree{{"head", ""}}
+}
+
 // sourceContext selects numbered excerpts of the changed files from the
 // checkout in dir (its head and merge-base trees). It budgets each path equally
 // before selecting lines, so large files cannot hide later changes. Numbered
@@ -30,14 +48,16 @@ func sourceContext(dir string, b *bundle.Bundle) string {
 		names = append(names, path)
 	}
 	sort.Strings(names)
+	trees := checkoutTrees(dir)
 	var result strings.Builder
 	for _, path := range names {
 		if !filepath.IsLocal(path) || strings.Contains(path, "\\") {
 			continue
 		}
 		allowance := maxSourceContextBytes / max(len(names), 1)
-		for _, root := range []string{"head", "merge-base"} {
-			body, err := os.ReadFile(filepath.Join(dir, root, path))
+		for _, tree := range trees {
+			root := tree.label
+			body, err := os.ReadFile(filepath.Join(dir, tree.sub, path))
 			if err != nil || bytes.IndexByte(body, 0) >= 0 {
 				continue
 			}

@@ -28,7 +28,7 @@ Each open pull request is one item with a kind, which is also what an inbox's
 - `review`, or `clone` when it needs a clone: the user's review is requested,
   or it is assigned to them and they did not write it;
 - for their own: `fix` (changes requested, a conflict, failing checks or
-  unresolved threads), `merge` (ready, not a draft, checks not running, and not
+  unresolved threads), `merge` (ready, with no known read-only permission, not a draft, checks not running, and not
   stacked on an open member of its stack) or `update` (behind a base they can
   push to);
 - `fix` with `fixing` set: their own that an agent is fixing now, which is not
@@ -56,6 +56,18 @@ older parts (what, owners, risk, repositories, bots) are folded into it as the
 app folds them. A query that does not read narrows nothing; an empty one holds
 every open pull request. Items whose kind is `""` match `waiting=` with no
 kind, so `waiting=` never holds them.
+
+## Automatic reviews
+
+`Service.AutoReview` gives the automatic scheduler, while automatic reviews
+follow the inboxes, a test of whether a saved inbox with `auto_review` on
+holds a pull request discovery read. It matches as above, with discovery's
+pull request and its review, checks, merge and thread state (copied onto the
+entry as the index copies them), and for an indexed pull request the index
+entry's saved review and risk; at the head the index has seen it takes the
+item's kind, otherwise it works the kind out from discovery alone. A risk filter therefore holds a
+pull request only once a review has scored it. An index that does not read
+leaves discovery's fields; saved inboxes that do not read are an error.
 
 ## API
 

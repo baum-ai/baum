@@ -34,7 +34,7 @@ func TestLenientContractRelaxesUnionsOptionalsAndIdentifiers(t *testing.T) {
 	var lenient map[string]any
 	checkNoError(t, json.Unmarshal(v.Schema, &lenient))
 	defs := lenient["$defs"].(map[string]any)
-	for _, name := range []string{"anchor", "block", "tile", "tileCodeLine"} {
+	for _, name := range []string{"anchor", "block"} {
 		def := defs[name].(map[string]any)
 		if _, still := def["oneOf"]; still {
 			t.Fatalf("%s keeps oneOf", name)
@@ -103,14 +103,6 @@ func TestLenientContractRelaxesUnionsOptionalsAndIdentifiers(t *testing.T) {
 	if containsString(stringSlice(summaryAnchors["required"]), "anchors") {
 		t.Fatal("summary anchors stay required although the platform defaults them")
 	}
-	file := defs["tileCodeFile"].(map[string]any)
-	if containsString(stringSlice(file["required"]), "review_version") {
-		t.Fatal("review_version stays required")
-	}
-	hunk := file["properties"].(map[string]any)["diff"].(map[string]any)["properties"].(map[string]any)["hunks"].(map[string]any)["items"].(map[string]any)
-	if containsString(stringSlice(hunk["required"]), "lines") {
-		t.Fatal("excerpt lines stay required")
-	}
 	summaryText := section["properties"].(map[string]any)["summary"].(map[string]any)["properties"].(map[string]any)["text"].(map[string]any)
 	if _, capped := summaryText["maxLength"]; capped {
 		t.Fatal("summary text keeps its length cap")
@@ -128,9 +120,8 @@ func lenientFixture() []byte {
 	// Everything the lenient contract tolerates and the strict one rejects:
 	// no schema constant, nulls for optionals, missing empty collections,
 	// unprefixed and oddly spelled identifiers, a repeated identifier, a
-	// duplicated and an unknown hunk, unanchored items, an oddly spelled
-	// attention reference, a revision named by role, no review_version and an
-	// excerpt named by header only.
+	// duplicated and an unknown hunk, unanchored items and an oddly spelled
+	// attention reference.
 	return []byte(`{
 	  "summary": {"text": "Changes parser behavior.", "context": {"area": {"text": "The parser turns source text into a syntax tree."}}, "review_exchange": {"summary": "No reviews."}, "change_kind": "feature", "release_note": null, "attention": null, "recommendation": null, "authorship": {"declared": "unknown", "declared_tools": null}, "review_minutes": 4},
 	  "sections": [{
@@ -146,8 +137,6 @@ func lenientFixture() []byte {
 	      {"kind": "behavior", "steps": [{"id": "Step One", "text": "Parses input.", "anchors": [{"type": "hunk", "id": "h_0123456789ab"}], "evidence": ["Unit Test"]}]},
 	      {"kind": "code", "language": "go", "content": "code", "caption": null}
 	    ],
-	    "tiles": [{"id": "Bug Fix", "kind": "bug-fix", "data": {"bug": "Invalid input aborts parsing.", "fix": "Reject invalid input before parsing."},
-	      "code": [{"path": "main.go", "revision": "head", "why": "Parser implementation", "diff": {"hunks": [{"header": "@@ -1,2 +1,2 @@"}]}}]}],
 	    "evidence": [{"id": "Unit Test", "kind": "test", "claim": "Covered by tests.", "status": "asserted", "source": "model", "anchors": [{"type": "hunk", "id": "h_0123456789ab"}], "detail": null}]
 	  }]
 	}`)
@@ -183,11 +172,11 @@ func TestNormalizationMapsLenientDocumentOntoStrictContract(t *testing.T) {
 		t.Fatalf("breaking_change = %v", summary["breaking_change"])
 	}
 	// A null in place of a required array becomes the canonical empty array.
-	assertSameDocumentJSON(t, []byte(`[]`), tileJSON(t, summary["authorship"].(map[string]any)["declared_tools"]))
+	assertSameDocumentJSON(t, []byte(`[]`), encodeJSON(t, summary["authorship"].(map[string]any)["declared_tools"]))
 	section := doc["sections"].([]any)[0].(map[string]any)
 	checkEqual(t, "sec_parser_core", section["id"])
-	assertSameDocumentJSON(t, []byte(`["h_0123456789ab"]`), tileJSON(t, section["hunks"]))
-	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), tileJSON(t, section["summary"].(map[string]any)["anchors"]))
+	assertSameDocumentJSON(t, []byte(`["h_0123456789ab"]`), encodeJSON(t, section["hunks"]))
+	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), encodeJSON(t, section["summary"].(map[string]any)["anchors"]))
 	risks := section["risks"].([]any)
 	first, second := risks[0].(map[string]any), risks[1].(map[string]any)
 	checkEqual(t, "rsk_bad_input", first["id"])
@@ -196,28 +185,20 @@ func TestNormalizationMapsLenientDocumentOntoStrictContract(t *testing.T) {
 	if finding, present := first["finding"]; present && finding != nil {
 		t.Fatalf("finding = %v", finding)
 	}
-	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), tileJSON(t, first["anchors"]))
-	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"},{"type":"file","path":"main.go"}]`), tileJSON(t, second["anchors"]))
-	assertSameDocumentJSON(t, []byte(`{"text":"Check the risk.","refs":["rsk_bad_input"]}`), tileJSON(t, section["attention"]))
+	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), encodeJSON(t, first["anchors"]))
+	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"},{"type":"file","path":"main.go"}]`), encodeJSON(t, second["anchors"]))
+	assertSameDocumentJSON(t, []byte(`{"text":"Check the risk.","refs":["rsk_bad_input"]}`), encodeJSON(t, section["attention"]))
 	blocks := section["blocks"].([]any)
 	step := blocks[0].(map[string]any)["steps"].([]any)[0].(map[string]any)
 	checkEqual(t, "beh_step_one", step["id"])
-	assertSameDocumentJSON(t, []byte(`["ev_unit_test"]`), tileJSON(t, step["evidence"]))
-	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), tileJSON(t, step["anchors"]))
+	assertSameDocumentJSON(t, []byte(`["ev_unit_test"]`), encodeJSON(t, step["evidence"]))
+	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), encodeJSON(t, step["anchors"]))
 	code := blocks[1].(map[string]any)
-	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), tileJSON(t, code["source"]))
+	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), encodeJSON(t, code["source"]))
 	if _, present := code["caption"]; present {
 		t.Fatal("null caption was kept")
 	}
 	checkEqual(t, "ev_unit_test", section["evidence"].([]any)[0].(map[string]any)["id"])
-	tile := section["tiles"].([]any)[0].(map[string]any)
-	checkEqual(t, "tile_bug_fix", tile["id"])
-	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), tileJSON(t, tile["anchors"]))
-	source := tile["code"].([]any)[0].(map[string]any)
-	checkEqual(t, head, source["revision"])
-	checkEqual(t, float64(1), source["review_version"])
-	// The header asked for new lines 1-2, so the third added line stays out.
-	assertSameDocumentJSON(t, []byte(`{"hunks":[{"header":"@@ -1,2 +1,2 @@","lines":[{"kind":"context","text":"before","old_line":1,"new_line":1},{"kind":"remove","text":"old","old_line":2},{"kind":"add","text":"new","new_line":2}]}]}`), tileJSON(t, source["diff"]))
 
 	var strictDocument any
 	checkNoError(t, json.Unmarshal(prepared, &strictDocument))
@@ -255,7 +236,7 @@ func TestNormalizationRepairsHunkAnchorLineRanges(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			document := documentWithLines(tc.lines)
-			prepared, findings := v.Prepare(tileJSON(t, document), bundle, t.TempDir())
+			prepared, findings := v.Prepare(encodeJSON(t, document), bundle, t.TempDir())
 			checkEqual(t, "", findings)
 			var normalized map[string]any
 			checkNoError(t, json.Unmarshal(prepared, &normalized))
@@ -266,7 +247,7 @@ func TestNormalizationRepairsHunkAnchorLineRanges(t *testing.T) {
 				}
 				return
 			}
-			assertSameDocumentJSON(t, []byte(tc.want), tileJSON(t, got["lines"]))
+			assertSameDocumentJSON(t, []byte(tc.want), encodeJSON(t, got["lines"]))
 		})
 	}
 
@@ -274,7 +255,7 @@ func TestNormalizationRepairsHunkAnchorLineRanges(t *testing.T) {
 		deletion := *bundle
 		deletion.Diff = []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", StartLine: 10}}
 		document := documentWithLines([]any{10, 10})
-		prepared, findings := v.Prepare(tileJSON(t, document), &deletion, t.TempDir())
+		prepared, findings := v.Prepare(encodeJSON(t, document), &deletion, t.TempDir())
 		checkEqual(t, "", findings)
 		var normalized map[string]any
 		checkNoError(t, json.Unmarshal(prepared, &normalized))
@@ -283,57 +264,6 @@ func TestNormalizationRepairsHunkAnchorLineRanges(t *testing.T) {
 			t.Fatalf("deletion-only range was retained: %v", anchor["lines"])
 		}
 	})
-}
-
-func TestExcerptDerivationNarrowsHeadersAndReportsUnusableOnes(t *testing.T) {
-	head := strings.Repeat("a", 40)
-	bundle := &bundlepkg.Bundle{PullRequest: bundlepkg.PullRequest{HeadSHA: head, MergeBaseSHA: strings.Repeat("b", 40)}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Patch: "@@ -1,2 +1,2 @@\n a\n-b\n+B\n@@ -10,2 +10,2 @@\n c\n-d\n+D\n"}}}
-	directory := t.TempDir()
-	checkNoError(t, os.Mkdir(filepath.Join(directory, "head"), 0700))
-	checkNoError(t, os.WriteFile(filepath.Join(directory, "head", "main.go"), []byte("source"), 0600))
-	for _, tc := range []struct {
-		name, header, want, finding string
-	}{
-		{"exact", "@@ -10,2 +10,2 @@", "@@ -10,2 +10,2 @@", ""},
-		{"wider than the patch hunk", "@@ -8,6 +8,6 @@", "@@ -10,2 +10,2 @@", ""},
-		{"single line", "@@ -2 +2 @@", "@@ -2,1 +2,1 @@", ""},
-		{"outside", "@@ -30,2 +30,2 @@", "", "selects no line"},
-		{"across two patch hunks", "@@ -1,11 +1,11 @@", "", "more than one patch hunk"},
-		// Removals placed by old numbers in one hunk and additions by new numbers in another.
-		{"spliced from two patch hunks", "@@ -2,1 +11,1 @@", "", "more than one patch hunk"},
-		{"malformed", "lines 1-2", "", "is not of the form"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			n := &authoredNormalizer{bundle: bundle, version: 1}
-			source := map[string]any{"path": "main.go", "diff": map[string]any{"hunks": []any{map[string]any{"header": tc.header}}}}
-			n.deriveExcerpt("tile", source, "main.go", "head")
-			if tc.finding != "" {
-				if len(n.findings) != 1 || !strings.Contains(n.findings[0], tc.finding) || source["diff"] != nil {
-					t.Fatalf("findings=%v diff=%v", n.findings, source["diff"])
-				}
-				return
-			}
-			hunk := source["diff"].(map[string]any)["hunks"].([]any)[0].(map[string]any)
-			if len(n.findings) != 0 || hunk["header"] != tc.want {
-				t.Fatalf("findings=%v header=%v", n.findings, hunk["header"])
-			}
-			var derived tileCode
-			checkNoError(t, json.Unmarshal(tileJSON(t, map[string]any{"path": "main.go", "revision": head, "review_version": 1, "diff": source["diff"]}), &derived))
-			checkEqual(t, "", validateTileSource(derived, bundle, directory, 1, nil))
-		})
-	}
-}
-
-func TestExcerptDerivationRejectsHolesInsideOnePatchHunk(t *testing.T) {
-	bundle := &bundlepkg.Bundle{PullRequest: bundlepkg.PullRequest{HeadSHA: strings.Repeat("a", 40)}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Patch: "@@ -1,4 +1,4 @@\n a\n-b\n c\n-d\n+D\n"}}}
-	n := &authoredNormalizer{bundle: bundle, version: 1}
-	// Old line 2 (the removal of b) and new line 3 (the addition of D) are
-	// separated by the context line c and the removal of d.
-	source := map[string]any{"path": "main.go", "diff": map[string]any{"hunks": []any{map[string]any{"header": "@@ -2,1 +3,1 @@"}}}}
-	n.deriveExcerpt("tile", source, "main.go", "head")
-	if len(n.findings) != 1 || !strings.Contains(n.findings[0], "not adjacent") || source["diff"] != nil {
-		t.Fatalf("findings=%v diff=%v", n.findings, source["diff"])
-	}
 }
 
 // A provider that cannot enforce the model schema, such as Cursor, may still
@@ -348,12 +278,12 @@ func TestNormalizationResolvesUnprefixedAttentionReferences(t *testing.T) {
 	section := doc["sections"].([]any)[0].(map[string]any)
 	section["risks"] = []any{map[string]any{"id": "rsk_bad_input", "tier": "medium", "category": "robustness", "source": "model", "text": "Malformed input aborts.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}}
 	section["attention"] = map[string]any{"text": "Check the risk.", "refs": []any{"Bad Input"}}
-	prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+	prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 	checkEqual(t, "", findings)
 	var stored map[string]any
 	checkNoError(t, json.Unmarshal(prepared, &stored))
 	attention := stored["sections"].([]any)[0].(map[string]any)["attention"]
-	assertSameDocumentJSON(t, []byte(`{"text":"Check the risk.","refs":["rsk_bad_input"]}`), tileJSON(t, attention))
+	assertSameDocumentJSON(t, []byte(`{"text":"Check the risk.","refs":["rsk_bad_input"]}`), encodeJSON(t, attention))
 }
 
 // What normalization must leave for the model: a risk without anchors, a
@@ -382,7 +312,7 @@ func TestNormalizationLeavesRejectionsForRiskAnchorsReferencesAndEmptySections(t
 		}},
 		{"new section without hunks", "section sec_empty has no hunks", func(doc map[string]any) {
 			first := doc["sections"].([]any)[0].(map[string]any)
-			second, err := decodeObject(tileJSON(t, first), "section")
+			second, err := decodeObject(encodeJSON(t, first), "section")
 			checkNoError(t, err)
 			second["id"], second["hunks"] = "sec_empty", []any{}
 			doc["sections"] = []any{first, second}
@@ -392,7 +322,7 @@ func TestNormalizationLeavesRejectionsForRiskAnchorsReferencesAndEmptySections(t
 			doc, err := decodeObject(authoredFixture(), "candidate")
 			checkNoError(t, err)
 			tc.mutate(doc)
-			prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+			prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 			if !strings.Contains(findings, tc.finding) {
 				t.Fatalf("missing %q in findings:\n%s", tc.finding, findings)
 			}
@@ -442,7 +372,7 @@ func TestNormalizationAssertsEvidenceItsAnchorsCannotCarry(t *testing.T) {
 			checkNoError(t, err)
 			section := doc["sections"].([]any)[0].(map[string]any)
 			section["evidence"] = []any{map[string]any{"id": "ev_one", "kind": tc.kind, "claim": "Claimed.", "status": tc.status, "source": tc.source, "anchors": tc.anchors}}
-			prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+			prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 			checkEqual(t, "", findings)
 			var out map[string]any
 			checkNoError(t, json.Unmarshal(prepared, &out))
@@ -485,7 +415,7 @@ func TestSchemaFindingsNameTheFailingItemAndRule(t *testing.T) {
 			doc, err := decodeObject(authoredFixture(), "candidate")
 			checkNoError(t, err)
 			tc.mutate(doc["sections"].([]any)[0].(map[string]any))
-			prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+			prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 			if !strings.Contains(findings, tc.finding) {
 				t.Fatalf("missing %q in findings:\n%s", tc.finding, findings)
 			}
@@ -499,17 +429,8 @@ func TestSchemaFindingsNameTheFailingItemAndRule(t *testing.T) {
 	}
 }
 
-func TestNormalizationLeavesInheritedSourcesAndUnknownShapesAlone(t *testing.T) {
-	head := strings.Repeat("c", 40)
-	bundle := &bundlepkg.Bundle{PullRequest: bundlepkg.PullRequest{HeadSHA: head, MergeBaseSHA: strings.Repeat("b", 40)}, Previous: &bundlepkg.PreviousVersion{Version: 1}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Patch: "@@ -1 +1 @@\n-x\n+y\n"}}}
-	inherited := map[string]any{"path": "main.go", "revision": strings.Repeat("a", 40), "review_version": float64(1), "why": "Old", "diff": map[string]any{"hunks": []any{map[string]any{"header": "@@ -1 +1 @@", "lines": []any{map[string]any{"kind": "add", "new_line": float64(1), "text": "kept"}}}}}}
-	tile := map[string]any{"id": "tile_old", "kind": "bug-fix", "anchors": []any{}, "code": []any{inherited}, "data": map[string]any{}}
-	n := &authoredNormalizer{bundle: bundle, version: 2, hunks: map[string]bundlepkg.Hunk{testHunk: bundle.Diff[0]}}
-	n.tiles("section", []any{tile}, hunkAnchors([]any{testHunk}))
-	assertSameDocumentJSON(t, []byte(`{"path":"main.go","revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","review_version":1,"why":"Old","diff":{"hunks":[{"header":"@@ -1 +1 @@","lines":[{"kind":"add","new_line":1,"text":"kept"}]}]}}`), tileJSON(t, inherited))
-	if len(n.findings) != 0 {
-		t.Fatalf("findings for an inherited source: %v", n.findings)
-	}
+func TestNormalizationLeavesUnknownShapesForValidation(t *testing.T) {
+	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Patch: "@@ -1 +1 @@\n-x\n+y\n"}}}
 	v, err := sharedValidator()
 	checkNoError(t, err)
 	for _, document := range []string{`[]`, `{"sections": "none"}`, `{"sections": [{"hunks": "h"}]}`} {
@@ -528,7 +449,7 @@ func TestHunksMayBeSharedOrLeftUnassigned(t *testing.T) {
 	doc, err := decodeObject(authoredFixture(), "candidate")
 	checkNoError(t, err)
 	first := doc["sections"].([]any)[0].(map[string]any)
-	second, err := decodeObject(tileJSON(t, first), "section")
+	second, err := decodeObject(encodeJSON(t, first), "section")
 	checkNoError(t, err)
 	second["id"] = "sec_second"
 	doc["sections"] = []any{first, second}
@@ -536,7 +457,7 @@ func TestHunksMayBeSharedOrLeftUnassigned(t *testing.T) {
 		Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: "code", Change: "modified", Additions: 3, Deletions: 1},
 			{ID: "h_bbbbbbbbbbbb", Path: "notes.md", Role: "docs", Change: "modified", Additions: 2}},
 		Sources: bundlepkg.Sources{"diff": true}}
-	completed, findings := v.Complete(tileJSON(t, doc), bundle, "", "fixture-model", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	completed, findings := v.Complete(encodeJSON(t, doc), bundle, "", "fixture-model", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	if findings != "" {
 		t.Fatal(findings)
 	}
@@ -585,19 +506,19 @@ func TestNormalizationFillsOnlyMissingAnchorsFromTheSectionsHunks(t *testing.T) 
 		map[string]any{"id": "dec_unanchored", "text": "Chose a parser.", "anchors": []any{}},
 		map[string]any{"id": "dec_anchored", "text": "Kept the file.", "anchors": []any{map[string]any{"type": "file", "path": "main.go"}}},
 	}}}
-	empty, err := decodeObject(tileJSON(t, first), "section")
+	empty, err := decodeObject(encodeJSON(t, first), "section")
 	checkNoError(t, err)
 	empty["id"], empty["hunks"], empty["blocks"] = "sec_empty", []any{}, []any{}
 	empty["summary"] = map[string]any{"text": "Nothing left.", "anchors": []any{}}
 	doc["sections"] = []any{first, empty}
-	prepared, _ := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+	prepared, _ := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 	var result map[string]any
 	checkNoError(t, json.Unmarshal(prepared, &result))
 	sections := result["sections"].([]any)
 	items := sections[0].(map[string]any)["blocks"].([]any)[0].(map[string]any)["items"].([]any)
-	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), tileJSON(t, items[0].(map[string]any)["anchors"]))
-	assertSameDocumentJSON(t, []byte(`[{"type":"file","path":"main.go"}]`), tileJSON(t, items[1].(map[string]any)["anchors"]))
-	assertSameDocumentJSON(t, []byte(`[]`), tileJSON(t, sections[1].(map[string]any)["summary"].(map[string]any)["anchors"]))
+	assertSameDocumentJSON(t, []byte(`[{"type":"hunk","id":"h_0123456789ab"}]`), encodeJSON(t, items[0].(map[string]any)["anchors"]))
+	assertSameDocumentJSON(t, []byte(`[{"type":"file","path":"main.go"}]`), encodeJSON(t, items[1].(map[string]any)["anchors"]))
+	assertSameDocumentJSON(t, []byte(`[]`), encodeJSON(t, sections[1].(map[string]any)["summary"].(map[string]any)["anchors"]))
 }
 
 func TestNormalizationDropsItemBlocksWithoutItems(t *testing.T) {
@@ -615,7 +536,7 @@ func TestNormalizationDropsItemBlocksWithoutItems(t *testing.T) {
 			section := doc["sections"].([]any)[0].(map[string]any)
 			kept := map[string]any{"kind": "dependency", "items": []any{map[string]any{"name": "lib", "ecosystem": "go", "from": "1.0.0", "to": "1.1.0", "hunks": []any{testHunk}}}}
 			section["blocks"] = []any{empty, kept}
-			prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+			prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 			checkEqual(t, "", findings)
 			var result map[string]any
 			checkNoError(t, json.Unmarshal(prepared, &result))
@@ -625,7 +546,7 @@ func TestNormalizationDropsItemBlocksWithoutItems(t *testing.T) {
 			checkEqual(t, 1, len(blocks[0].(map[string]any)["items"].([]any)))
 			// A section left with no blocks is still valid.
 			section["blocks"] = []any{empty}
-			_, findings = v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+			_, findings = v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 			checkEqual(t, "", findings)
 		})
 	}
@@ -662,14 +583,14 @@ func TestDecisionApprovalIsOnlyForAgentDecisions(t *testing.T) {
 			item["approved_by_human"] = tc.approved
 		}
 		doc["sections"].([]any)[0].(map[string]any)["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
-		prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+		prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 		if (findings == "") != tc.valid {
 			t.Errorf("by %s, approved_by_human %v: findings %q, want valid %v", tc.by, tc.approved, findings, tc.valid)
 		}
 		// The lenient schema the model is given must take a null too.
 		if tc.approved == nil {
 			var lenient any
-			checkNoError(t, json.Unmarshal(tileJSON(t, doc), &lenient))
+			checkNoError(t, json.Unmarshal(encodeJSON(t, doc), &lenient))
 			if err := resolvedSchema(t, v.Schema).Validate(lenient); err != nil {
 				t.Errorf("by %s with a null approved_by_human: lenient schema rejects it: %v", tc.by, err)
 			}
@@ -748,7 +669,7 @@ func TestDecisionContextFieldsAreOptional(t *testing.T) {
 		item := map[string]any{"id": "dec_parser", "by": "agent", "text": "Chose a parser.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}
 		maps.Copy(item, tc.fields)
 		doc["sections"].([]any)[0].(map[string]any)["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
-		prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+		prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 		if (findings == "") != tc.valid {
 			t.Errorf("%s: findings %q, want valid %v", tc.name, findings, tc.valid)
 			continue
@@ -804,7 +725,7 @@ func TestReviewMinutesIsOptionalAndKeptInRange(t *testing.T) {
 			} else {
 				doc["summary"].(map[string]any)["review_minutes"] = tc.value
 			}
-			published, findings := v.Complete(tileJSON(t, doc), bundle, "", "fixture-model", now)
+			published, findings := v.Complete(encodeJSON(t, doc), bundle, "", "fixture-model", now)
 			checkEqual(t, "", findings)
 			if stored := v.ValidateStored(published, bundle); len(stored) > 0 {
 				t.Fatalf("published document is not a valid stored document: %v", stored)
@@ -853,10 +774,8 @@ func TestModelSchemaAsksForDecisionTitles(t *testing.T) {
 func TestModelSchemaAsksForReviewMinutes(t *testing.T) {
 	v, err := sharedValidator()
 	checkNoError(t, err)
-	encoded, err := v.ModelSchema(nil)
-	checkNoError(t, err)
 	var schema map[string]any
-	checkNoError(t, json.Unmarshal(encoded, &schema))
+	checkNoError(t, json.Unmarshal(v.Schema, &schema))
 	summary := schema["properties"].(map[string]any)["summary"].(map[string]any)
 	minutes, ok := summary["properties"].(map[string]any)["review_minutes"].(map[string]any)
 	if !ok {

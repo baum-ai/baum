@@ -19,7 +19,7 @@ afterEach(() => {
   node.remove();
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  Reflect.deleteProperty(window, "baumDesktop");
 });
 
 const focus = () => act(async () => void window.dispatchEvent(new Event("focus")));
@@ -30,7 +30,7 @@ it("rechecks the command line on focus at most every five minutes", async () => 
     hooks: { agents: [] },
   };
   const invoke = vi.fn(async () => view);
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
   let check!: ReturnType<typeof useCommandLineCheck>;
   let renders = 0;
   function Probe() {

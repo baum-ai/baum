@@ -598,7 +598,7 @@ func linkInputs(ctx context.Context, dir string, commits []gitlocal.Commit, opts
 	if from := earliest.Add(-locallink.SessionWindow); opts.Since.Before(from) {
 		opts.Since = from
 	}
-	d, err := sessions.Discover(ctx, dir, opts)
+	d, err := sessions.Discover(ctx, dir, locallink.WithFixes(ctx, dir, opts))
 	if err != nil {
 		return ""
 	}

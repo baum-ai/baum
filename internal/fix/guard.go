@@ -24,11 +24,14 @@ import (
 //   - A gitlink: git add records a repository the agent made in the checkout
 //     as a commit of another repository, which the push would carry without
 //     its content (ReasonNestedRepository).
+//   - A conflict marker line the fix adds (ReasonConflictsRemain): a merge
+//     the agent made itself and left unresolved, in any file.
 //   - A workflow or action change, in a fix whose prompt held review
 //     comments or a conversation, other people's or an agent's words: a
 //     workflow runs with the repository's secrets as soon as it is pushed
 //     (ReasonWorkflowChanged). A fix of conflicts or checks alone may change
-//     one.
+//     one, and so may every fix when baum's GitHub connection has workflow
+//     access or its access is unknown (Options.AllowWorkflows).
 
 // maxNamed bounds the paths a refusal names.
 const maxNamed = 5
@@ -59,9 +62,11 @@ func credentialPath(p string) bool {
 	return false
 }
 
-// guard refuses a result that adds a credential or a gitlink, or, when
-// untrusted words were part of the prompt, changes a workflow or action.
-func guard(ctx context.Context, checkout *gitlocal.Fix, head string, untrusted bool) error {
+// guard refuses a result that adds a credential, a gitlink or a conflict
+// marker, or, with refuseWorkflows (untrusted words were part of the prompt
+// and baum's GitHub connection is known to lack workflow access), changes a
+// workflow or action.
+func guard(ctx context.Context, checkout *gitlocal.Fix, head string, refuseWorkflows bool) error {
 	changes, err := checkout.Changes(ctx, head)
 	if err != nil {
 		return fail(ReasonGit, err)
@@ -83,12 +88,15 @@ func guard(ctx context.Context, checkout *gitlocal.Fix, head string, untrusted b
 	if len(unchecked) > 0 {
 		return fail(ReasonCredentialAdded, fmt.Errorf("the agent's change has files too large to check for credentials (%s), which baum never pushes", named(ctx, redactor, unchecked)))
 	}
+	if left := addedMarkers(changes); len(left) > 0 {
+		return fail(ReasonConflictsRemain, fmt.Errorf("conflict markers remain in %s", named(ctx, redactor, left)))
+	}
 	var links, flows []string
 	for _, change := range changes {
 		if change.Mode == gitlocal.ModeGitlink {
 			links = append(links, change.Path)
 		}
-		if untrusted && workflow(change.Path) {
+		if refuseWorkflows && workflow(change.Path) {
 			flows = append(flows, change.Path)
 		}
 	}
@@ -96,7 +104,7 @@ func guard(ctx context.Context, checkout *gitlocal.Fix, head string, untrusted b
 		return fail(ReasonNestedRepository, fmt.Errorf("the agent's change adds or changes a nested repository or submodule (%s), which a fix never pushes", named(ctx, redactor, links)))
 	}
 	if len(flows) > 0 {
-		return fail(ReasonWorkflowChanged, fmt.Errorf("the agent changed GitHub workflow or action files (%s), which a fix of review comments or a conversation never pushes", named(ctx, redactor, flows)))
+		return fail(ReasonWorkflowChanged, fmt.Errorf("the agent changed GitHub workflow or action files (%s), which needs workflow access that baum's GitHub connection does not have, so a fix of review comments or a conversation does not push them; choose Reconnect with workflow access in Settings, then run the fix again", named(ctx, redactor, flows)))
 	}
 	return nil
 }
@@ -166,4 +174,33 @@ func named(ctx context.Context, redactor *bundle.Redactor, paths []string) strin
 		return fmt.Sprintf("%d files", len(paths))
 	}
 	return masked
+}
+
+// addedMarkers lists the changed text files with a conflict marker line among
+// the lines the fix added.
+func addedMarkers(changes []gitlocal.Change) []string {
+	var left []string
+	for _, change := range changes {
+		for _, r := range change.Added {
+			if markerLines(change.Content[r[0]:r[1]]) {
+				left = append(left, change.Path)
+				break
+			}
+		}
+	}
+	return left
+}
+
+// markerLines reports whether text has a conflict marker line.
+func markerLines(text string) bool {
+	for line := range strings.SplitSeq(text, "\n") {
+		if marker(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func marker(line string) bool {
+	return strings.HasPrefix(line, "<<<<<<< ") || strings.HasPrefix(line, ">>>>>>> ") || line == "<<<<<<<" || line == ">>>>>>>"
 }

@@ -29,10 +29,38 @@ var allowedWindowsEnv = []string{
 // This covers environment variables only. HOME and the XDG directories stay,
 // so the child can still read credentials kept in files under them.
 func LocalEnvironment(environ []string, extra ...string) []string {
-	return localEnvironment(runtime.GOOS == "windows", environ, extra)
+	return localEnvironment(runtime.GOOS == "windows", environ, extra, nil)
 }
 
-func localEnvironment(windows bool, environ, extra []string) []string {
+// ConverseEnvironment is LocalEnvironment for a person's own session
+// (Converser), which works as the person would in a terminal: it also keeps
+// the SSH agent (SSH_AUTH_SOCK), GitHub CLI and token variables (GH_*,
+// GITHUB_TOKEN) and Git's settings (GIT_*), so the agent can push and use gh.
+// Git variables that point at another repository (repositoryGitEnv) are still
+// removed, so git works on the directory the session runs in, and so are the
+// provider credentials and settings.
+func ConverseEnvironment(environ []string, extra ...string) []string {
+	return localEnvironment(runtime.GOOS == "windows", environ, extra, sessionKept)
+}
+
+// repositoryGitEnv are the Git variables that choose a repository, working
+// tree, index or object store instead of the working directory's.
+var repositoryGitEnv = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX"}
+
+// sessionKept reports a variable ConverseEnvironment keeps although
+// LocalEnvironment does not. name is upper case on Windows.
+func sessionKept(name string) bool {
+	switch {
+	case name == "SSH_AUTH_SOCK" || name == "GITHUB_TOKEN" || strings.HasPrefix(name, "GH_"):
+		return true
+	case strings.HasPrefix(name, "GIT_"):
+		return !slices.Contains(repositoryGitEnv, name)
+	}
+	return false
+}
+
+func localEnvironment(windows bool, environ, extra []string, keeps func(string) bool) []string {
 	allowed := map[string]bool{}
 	add := func(names []string) {
 		for _, name := range names {
@@ -57,10 +85,11 @@ func localEnvironment(windows bool, environ, extra []string) []string {
 		if windows {
 			name = strings.ToUpper(name)
 		}
-		if denied(name) {
+		keep := keeps != nil && keeps(name)
+		if denied(name) && !keep {
 			continue
 		}
-		if allowed[name] || strings.HasPrefix(name, "LC_") {
+		if allowed[name] || strings.HasPrefix(name, "LC_") || keep {
 			kept = append(kept, entry)
 		}
 	}

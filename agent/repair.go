@@ -1,5 +1,7 @@
 package agent
 
+import "fmt"
+
 // The text around a validation repair. A repair is not a new review: the model
 // gets the input bundle, the document the validator rejected and the findings,
 // and corrects only those. Source excerpts are left out on purpose, so the
@@ -26,4 +28,13 @@ func RepairText(backend string) (instruction, ending string) {
 		return repairInstructionFinalMessage, repairEndingFinalMessage
 	}
 	return repairInstructionClaude, repairEndingClaude
+}
+
+// RepairReply is the text a task's prompt ends with on a validation repair
+// of its reply: the rejected reply (what names it, such as "answer"), what
+// the checker (who, such as "validator") found and the backend's ending.
+func RepairReply(backend, what, who string, pass TaskPass) string {
+	_, ending := RepairText(backend)
+	return "\n\nThis is validation repair of your previous reply, not a new task. Preserve valid content and correct only the reported problems.\nRejected " + what + ":\n" +
+		string(pass.Rejected) + "\nThe " + who + " found:\n" + pass.Findings + fmt.Sprintf(ending, pass.Number-1, pass.Repairs)
 }

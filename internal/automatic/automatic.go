@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -98,8 +99,13 @@ type Scheduler struct {
 	// Reviewed returns the head of the PR's latest saved review, "" if none.
 	// Nil uses SavedHead.
 	Reviewed func(context.Context, repos.Clone, int) (string, error)
-	// Groups holds the review groups; the reviews of stack groups follow
-	// their members' (see passGroups). Nil generates no group review.
+	// InAutoReviewInbox, while automatic reviews follow the saved inboxes
+	// (repos.PullRequestsInboxes), returns a test of whether a pull request
+	// is in an inbox with automatic reviews on
+	// (inboxqueue.Service.AutoReview). Nil covers no pull request then.
+	InAutoReviewInbox func(context.Context) (func(discovery.PullRequest) bool, error)
+	// Groups holds the review groups, for the stacks CatchUp takes whole.
+	// Automatic generation never queues a group's combined review.
 	Groups Groups
 	// Hold reports that the daemon is stopping or waiting to restart as a
 	// newer version; nothing is submitted meanwhile, and the new daemon's
@@ -168,7 +174,6 @@ func (s *Scheduler) BeginIdentityChange() func(bool) {
 		for _, repository := range s.load().Repositories {
 			repository.Since = s.resetAt
 			repository.PRs = map[int]*prState{}
-			repository.Groups = map[string]*groupState{}
 			repository.AwaitingBaseline = true
 		}
 		s.observed = map[string]time.Time{}
@@ -193,8 +198,11 @@ type Status struct {
 type Overview struct {
 	Enabled bool `json:"enabled"`
 	// PullRequests is which pull requests get automatic reviews: both,
-	// authored, requested or all.
-	PullRequests string   `json:"pull_requests"`
+	// authored, requested, all or inboxes.
+	PullRequests string `json:"pull_requests"`
+	// Updates is how automatic reviews follow later pushes: always, on_open
+	// or on_change (repos.Preferences.ReviewUpdates).
+	Updates      string   `json:"updates"`
 	Repositories []Status `json:"repositories"`
 }
 
@@ -207,11 +215,9 @@ type fileState struct {
 // pull requests already open then are not caught up. The paused_until and
 // paused_cap of the daily cap an older baum had are ignored on load.
 type repoState struct {
-	Since time.Time        `json:"since"`
-	PRs   map[int]*prState `json:"prs"`
-	// Groups are the repository's stack groups by ID.
-	Groups map[string]*groupState `json:"groups,omitempty"`
-	Notice string                 `json:"notice,omitempty"`
+	Since  time.Time        `json:"since"`
+	PRs    map[int]*prState `json:"prs"`
+	Notice string           `json:"notice,omitempty"`
 	// AwaitingBaseline: enabled at Since, but no discovery snapshot fetched
 	// since then has been seen yet; older snapshots are not a baseline.
 	AwaitingBaseline bool `json:"awaiting_baseline,omitempty"`
@@ -333,6 +339,30 @@ type repository struct {
 type view struct {
 	prefs repos.Preferences
 	repos map[string]repository
+	// covers reports whether the preferences' choice of pull requests
+	// covers one; set by coverage.
+	covers func(discovery.PullRequest) bool
+}
+
+// coverage sets v.covers: the choice of pull requests as Covers reads it,
+// or for repos.PullRequestsInboxes the saved inboxes with automatic reviews
+// on, read now so a change to them counts from this pass.
+func (s *Scheduler) coverage(ctx context.Context, v *view) error {
+	prefs := v.prefs
+	if prefs.PullRequests != repos.PullRequestsInboxes {
+		v.covers = func(pr discovery.PullRequest) bool { return prefs.Covers(pr.AuthoredByMe, pr.ReviewRequestedFromMe) }
+		return nil
+	}
+	v.covers = func(discovery.PullRequest) bool { return false }
+	if s.InAutoReviewInbox == nil {
+		return nil
+	}
+	test, err := s.InAutoReviewInbox(ctx)
+	if err != nil {
+		return fmt.Errorf("the saved inboxes could not be read: %w", err)
+	}
+	v.covers = test
+	return nil
 }
 
 // current reads the preferences and registered repositories. A repository
@@ -382,9 +412,6 @@ func (s *Scheduler) load() *fileState {
 	for _, r := range s.state.Repositories {
 		if r.PRs == nil {
 			r.PRs = map[int]*prState{}
-		}
-		if r.Groups == nil {
-			r.Groups = map[string]*groupState{}
 		}
 		if r.Notice == legacyNoticeDailyCap || r.Notice == legacyNoticeCursorAgent {
 			r.Notice = ""
@@ -440,16 +467,17 @@ func (s *Scheduler) prune(v view) bool {
 // on; its baseline is the first snapshot fetched after this. Called with mu
 // held.
 func (s *Scheduler) enable(name string) *repoState {
-	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, Groups: map[string]*groupState{}, AwaitingBaseline: true}
+	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, AwaitingBaseline: true}
 	s.state.Repositories[name] = rs
 	return rs
 }
 
 // eligible: the viewer's review is requested or the viewer wrote it, as
-// the preferences narrow or widen that to every pull request, and it is not a
-// draft, not from a fork and not by an author without known write access.
-func eligible(pr discovery.PullRequest, prefs repos.Preferences) bool {
-	return prefs.Covers(pr.AuthoredByMe, pr.ReviewRequestedFromMe) && !pr.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite
+// the preferences narrow or widen that to every pull request or to the saved
+// inboxes (v.covers), and it is not a draft, not from a fork and not by an
+// author without known write access.
+func eligible(pr discovery.PullRequest, v view) bool {
+	return v.covers(pr) && !pr.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite
 }
 
 // Observe records a complete discovery snapshot. The first one after a
@@ -460,6 +488,9 @@ func eligible(pr discovery.PullRequest, prefs repos.Preferences) bool {
 // repository is ignored.
 func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	v, err := s.current(ctx)
+	if err == nil {
+		err = s.coverage(ctx, &v)
+	}
 	if err != nil {
 		s.log().Warn("automatic generation skipped a snapshot", "error", err)
 		return
@@ -505,7 +536,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 			// A run interrupted before this baseline (before an off, say) is
 			// not retried for the head it recorded: re-enabling catches up on
 			// nothing.
-			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Retried: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr, v.prefs)}
+			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Retried: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr, v)}
 		}
 		rs.AwaitingBaseline = false
 		s.save()
@@ -528,7 +559,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 		// Marking a draft ready for review counts as a trigger.
 		ready := previous.Head != "" && previous.Draft && !pr.Draft
 		previous.Head, previous.Requested, previous.TeamKnown, previous.Draft = pr.HeadSHA, pr.ReviewRequestedFromMe, pr.TeamMembershipKnown, pr.Draft
-		previous.Eligible = eligible(pr, v.prefs)
+		previous.Eligible = eligible(pr, v)
 		switch {
 		case (newHead || newRequest || ready) && previous.Eligible && pr.HeadSHA != previous.Done:
 			trigger := jobs.TriggerReadyForReview
@@ -539,7 +570,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 				trigger = jobs.TriggerReviewRequested
 			}
 			previous.wait(pr.HeadSHA, trigger, s.now())
-		case previous.Pending != "" && (previous.Pending != pr.HeadSHA || !eligible(pr, v.prefs)):
+		case previous.Pending != "" && (previous.Pending != pr.HeadSHA || !eligible(pr, v)):
 			previous.Pending, previous.Trigger = "", ""
 		}
 		pending = pending || previous.Pending != ""
@@ -568,15 +599,19 @@ const SetupCatchUp = 3
 // polled now, and the poll is its baseline when it has none yet; the chosen
 // pull requests become pending with jobs.TriggerSetup and the next pass
 // submits them like any other, skipping a head already reviewed or queued.
-// A pull request in a stack group counts with its group as one and the
-// group's eligible members are caught up together, so the group review can
-// follow theirs (passGroups).
+// A pull request in a stack group of at most reviewgroups.MaxMembers open
+// pull requests counts with its group as one and the group's eligible
+// members are caught up together, so the stack's page has their reviews to
+// sum up; a larger stack's members count one by one.
 func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 	if s.Discover == nil {
 		return errors.New("no discovery")
 	}
 	v, err := s.current(ctx)
 	if err != nil {
+		return err
+	}
+	if err := s.coverage(ctx, &v); err != nil {
 		return err
 	}
 	// Enabling is recorded before the polls, so they can be the baselines.
@@ -622,7 +657,7 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 			s.Observe(ctx, snapshot)
 		}
 		for _, pr := range snapshot.PullRequests {
-			if eligible(pr, v.prefs) {
+			if eligible(pr, v) {
 				eligibleIn[name] = append(eligibleIn[name], pr)
 				candidates = append(candidates, candidate{name, pr})
 			}
@@ -640,7 +675,7 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 			s.log().Warn("setup catch-up reads no stack groups", "error", err)
 		}
 		for _, g := range groups {
-			if g.Stack && len(g.Members) >= reviewgroups.MinMembers {
+			if g.Stack && len(g.Members) >= reviewgroups.MinMembers && len(g.Members) <= reviewgroups.MaxMembers {
 				for _, number := range g.Members {
 					stacks[prKey{g.Repository, number}] = g.Members
 				}
@@ -828,8 +863,11 @@ func (s *Scheduler) Pass(ctx context.Context) {
 			paused[w.name] = true
 		}
 	}
-	s.passGroups(ctx, v, interrupted, refused, paused, now)
 }
+
+// errReviewedOnce is submit's answer for a pull request that already has a
+// saved review while automatic reviews are set to review on open only.
+var errReviewedOnce = errors.New("already reviewed once")
 
 type outcome int
 
@@ -848,9 +886,15 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 	}
 	var err error
 	var job jobs.Job
-	if head, rerr := reviewed(ctx, w.repo.clone, w.number); rerr == nil && head == w.head {
+	head, rerr := reviewed(ctx, w.repo.clone, w.number)
+	switch {
+	case rerr == nil && head == w.head:
 		err = jobs.ErrDuplicate
-	} else {
+	case rerr == nil && head != "" && v.prefs.ReviewUpdates() == repos.UpdatesOnOpen:
+		// Reviewed once already: on open, later heads and requests are
+		// not reviewed automatically.
+		err = errReviewedOnce
+	default:
 		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger})
 		queued = err == nil
 	}
@@ -875,7 +919,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 		s.log().Info("queued an automatic review", "repository", w.name, "pr", w.number, "job", job.ID, "trigger", w.trigger)
 		pr.Done, pr.Pending, pr.Trigger = w.head, "", ""
 		notice = ""
-	case errors.Is(err, jobs.ErrDuplicate):
+	case errors.Is(err, jobs.ErrDuplicate) || errors.Is(err, errReviewedOnce):
 		pr.Done, pr.Pending, pr.Trigger = w.head, "", ""
 	case errors.Is(err, jobs.ErrBusy):
 		// Its running job's completion wakes the next pass. (A waiting
@@ -949,7 +993,7 @@ func (s *Scheduler) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	o := Overview{Enabled: v.prefs.Automatic, PullRequests: cmp.Or(v.prefs.PullRequests, "both"), Repositories: []Status{}}
+	o := Overview{Enabled: v.prefs.Automatic, PullRequests: cmp.Or(v.prefs.PullRequests, "both"), Updates: v.prefs.ReviewUpdates(), Repositories: []Status{}}
 	names := make([]string, 0, len(v.repos))
 	for name := range v.repos {
 		names = append(names, name)

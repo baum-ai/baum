@@ -23,7 +23,8 @@ const CompleteMaxTurns = 2
 // settings, plugins, MCP servers or hooks, no session persisted, in an empty
 // temporary directory. The prompt goes on stdin and starts with
 // sessions.GenerationRunMarker, so session discovery leaves the run out should
-// it be recorded after all. Only the User profile completes.
+// it be recorded after all. Only the User
+// profile completes.
 func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (agent.Completion, error) {
 	if c.Profile != User {
 		return agent.Completion{}, errors.New("claude: only the User profile completes")
@@ -47,7 +48,7 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	if request.MaxOutputTokens > 0 {
 		env = append(env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS="+strconv.Itoa(request.MaxOutputTokens))
 	}
-	result, err := c.run(ctx, run, args, env, false)
+	result, err := c.run(ctx, run, args, env, runReview)
 	return agent.Completion{Document: result.Document, Model: cmp.Or(result.Model, c.Model), Usage: result.Usage,
 		Rejections: result.StructuredOutputRejections, RejectionDetail: result.LastRejection}, err
 }

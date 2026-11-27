@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/baum-ai/baum/internal/pricing"
-	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 )
@@ -41,6 +39,16 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	}
 	if err == nil {
 		o.Request.Previous, err = review.PreviousVersionOf(latest.Document, latest.Metadata.Version)
+		if o.V2 != nil {
+			// A baum.review/2 run reads its previous version itself; the
+			// bundle carries a baum.review/1 one's sections when it can.
+			v := *o.V2
+			v.Previous, v.PreviousVersion = latest.Document, latest.Metadata.Version
+			o.V2 = &v
+			if err != nil {
+				o.Request.Previous, err = nil, nil
+			}
+		}
 		if err != nil {
 			return result, err
 		}
@@ -87,17 +95,7 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	if err != nil {
 		return result, err
 	}
-	// A kept session is only worth its directory once the version is stored.
-	keptSession := result.Metadata.Session
-	dropSession := func() {
-		if keptSession != nil {
-			RemoveTree(keptSession.Directory)
-			_ = reviewruns.RemoveSessions(filepath.Dir(keptSession.Directory), keptSession.Directory)
-			result.Metadata.Session, result.RunDir = nil, ""
-		}
-	}
 	if ctx.Err() != nil {
-		dropSession()
 		return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
 	}
 	list := o.PriceList
@@ -114,8 +112,8 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 			result.Metadata.CostReason = "cost_not_calculated"
 		}
 	}
-	if err = versions.Put(ctx, key, latest, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
-		dropSession()
+	next := store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}
+	if err = versions.Put(ctx, key, latest, next); err != nil {
 		return result, fmt.Errorf("store generated version: %w", err)
 	}
 	published = true

@@ -2,13 +2,17 @@ import { usePreferences, type PageModifier } from "./preferences";
 import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { ReviewSteps } from "@baum/viewer/components/review-viewer";
+import { scrollToTop } from "@baum/viewer/components/scroller";
 import { CloseButton } from "@baum/viewer/components/ui";
+import { SectionLabel } from "@baum/viewer/components/section-label";
 import { PAGES, type Page } from "./pages";
 import { openExternal } from "./api";
 
 export type InboxAction =
   | "next"
   | "previous"
+  | "first"
+  | "last"
   | "open"
   | "select"
   | "peek"
@@ -29,6 +33,8 @@ const TRANSCRIPT_LABEL = "Watch the fix agent, or read its last transcript";
 export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
   { keys: ["j", "ArrowDown"], action: "next", label: "Next row", short: "move" },
   { keys: ["k", "ArrowUp"], action: "previous", label: "Previous row", short: "move" },
+  { keys: ["g", "Home"], action: "first", label: "First row" },
+  { keys: ["G", "End"], action: "last", label: "Last row" },
   { keys: ["Enter", "o"], action: "open", label: "Open the pull request or group", short: "open" },
   { keys: ["x"], action: "select", label: "Select or deselect", short: "select" },
   {
@@ -44,10 +50,19 @@ export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
 ];
 /** Pull requests' views (For you, Requested, Mine…), one either way. */
 export const VIEW_KEYS = { previous: ["h", "ArrowLeft"], next: ["l", "ArrowRight"] };
+/** The sort's keys (`sort-menu.tsx`): ⇧S opens it, and in it a digit adds
+ *  a field or turns it round. */
+const SORT_SHORTCUTS: Shortcut[] = [
+  { keys: ["S"], label: "Open the sort (Shift+S)", short: "sort" },
+  { keys: ["1–8"], label: "In the sort: add a field, or turn it round" },
+  { keys: ["Backspace"], label: "In the sort: drop the last field" },
+];
 /** The Up next inbox's keys, which `UpNextPage` handles itself. */
 const UP_NEXT_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next pull request", short: "move" },
   { keys: ["k", "ArrowUp"], label: "Previous pull request", short: "move" },
+  { keys: ["g", "Home"], label: "First pull request" },
+  { keys: ["G", "End"], label: "Last pull request" },
   { keys: ["Enter"], label: "Open the pull request or group", short: "act" },
   { keys: [" "], label: "Show or hide a group's pull requests" },
   { keys: ["m"], label: "Merge, where offered", short: "merge" },
@@ -66,22 +81,13 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
   },
   { keys: ["u"], label: "Undo a snooze or an archive", short: "undo" },
 ];
-/** The walkthrough's keys, which `Walkthrough` handles itself. */
-const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
-  { keys: ["j", "ArrowDown"], label: "Next behaviour", short: "move" },
-  { keys: ["k", "ArrowUp"], label: "Previous behaviour", short: "move" },
-  { keys: ["ArrowRight"], label: "Next chapter", short: "chapter" },
-  { keys: ["ArrowLeft"], label: "Previous chapter", short: "chapter" },
-  { keys: ["o"], label: "Show the behaviour's code", short: "code" },
-  { keys: ["c"], label: "Comment on the behaviour", short: "comment" },
-  { keys: ["v"], label: "Open the full review", short: "full review" },
-  { keys: ["a"], label: "Ask the review's agent a question", short: "ask" },
-];
 /** The keys of every other list (Sessions, Jobs, Repositories, Timeline), which
  *  `listKeys` handles. */
 const LIST_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next row", short: "move" },
   { keys: ["k", "ArrowUp"], label: "Previous row", short: "move" },
+  { keys: ["g", "Home"], label: "First row" },
+  { keys: ["G", "End"], label: "Last row" },
   { keys: ["Enter", "o"], label: "Open the row", short: "open" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
@@ -100,7 +106,7 @@ const SETTINGS_SHORTCUTS: Shortcut[] = [
     label: "Previous section",
     short: "sections",
   },
-  { keys: ["1–6"], label: "Go to a section", short: "section" },
+  { keys: ["1–9"], label: "Go to a section", short: "section" },
   { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section", short: "go in" },
   { keys: ["Space", "Enter"], label: "Change or press the focused control" },
   { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections", short: "back" },
@@ -116,8 +122,8 @@ export type ShortcutsPlace =
   | "repositories"
   | "timeline"
   | "settings"
-  | "page"
-  | "walkthrough";
+  | "panel"
+  | "page";
 const KEY_NAMES: Record<string, string> = {
   ArrowDown: "↓",
   ArrowUp: "↑",
@@ -126,6 +132,28 @@ const KEY_NAMES: Record<string, string> = {
   Escape: "Esc",
   " ": "Space",
 };
+/** The session panel's key, anywhere, a text field included: Ctrl with the
+ *  backtick, as an editor's terminal has it (Ctrl on a Mac too, where ⌘`
+ *  is the system's). As `aria-keyshortcuts` writes it, and as drawn. */
+export const PANEL_KEY = "Control+`";
+export const PANEL_KEY_LABEL = MAC ? "⌃`" : "Ctrl+`";
+
+/** The review's right-hand sidebar's key: Ctrl with `]`, which by itself
+ *  folds the code beside a section's Overview. As the viewer takes it, and
+ *  as drawn. */
+export const SIDE_PANE_KEY = "Control+]";
+export const SIDE_PANE_KEY_LABEL = MAC ? "⌃]" : "Ctrl+]";
+
+/** Whether a keydown is the session panel's key: Ctrl with the backtick, or
+ *  with the key in its place on a layout where it types something else or
+ *  is a dead key. */
+export function isPanelKey(
+  event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+) {
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+  return event.key === "`" || event.code === "Backquote";
+}
+
 /** The app's command modifier as drawn: ⌘ on a Mac, Ctrl elsewhere. */
 export const COMMAND = MAC ? "⌘" : "Ctrl+";
 
@@ -319,10 +347,26 @@ export function inboxAction(event: Pick<KeyboardEvent, "key">): InboxAction | nu
   return INBOX_SHORTCUTS.find((s) => s.keys.includes(event.key))?.action ?? null;
 }
 
-/** The id one step from `current` through `ids`, stopping at either end. From
- *  nothing, forward starts at the first and back at the last. */
-export function moveFocus(ids: string[], current: string | null, step: 1 | -1): string | null {
+/** A move through a list: a row on or back, or to its first or last row. */
+export type ListStep = 1 | -1 | "first" | "last";
+
+/** The move a list key asks for: j/↓ and k/↑ a row on or back, g/Home and
+ *  G/End (Shift+G) the first and last row, as a pager has them. */
+export function listStep(key: string): ListStep | null {
+  if (key === "j" || key === "ArrowDown") return 1;
+  if (key === "k" || key === "ArrowUp") return -1;
+  if (key === "g" || key === "Home") return "first";
+  if (key === "G" || key === "End") return "last";
+  return null;
+}
+
+/** The id one step from `current` through `ids`, stopping at either end, or
+ *  the first or last id. From nothing, forward starts at the first and back at
+ *  the last. */
+export function moveFocus(ids: string[], current: string | null, step: ListStep): string | null {
   if (ids.length === 0) return null;
+  if (step === "first") return ids[0]!;
+  if (step === "last") return ids[ids.length - 1]!;
   const index = current === null ? -1 : ids.indexOf(current);
   if (index < 0) return step === 1 ? ids[0]! : ids[ids.length - 1]!;
   return ids[Math.min(ids.length - 1, Math.max(0, index + step))]!;
@@ -407,7 +451,8 @@ export function openActiveBlock(): boolean {
 }
 
 /** Where a key moves a review page, as the navigator does: j and k (↓ ↑)
- *  through the blocks of the section being read; Shift+J and Shift+K
+ *  through the blocks of the section being read, or the files of Files
+ *  changed (the place's `item` steps); Shift+J and Shift+K
  *  (Shift+↓ ↑), or → and ←, to the next or previous section. */
 export function reviewKeyStep(event: KeyboardEvent, steps: ReviewSteps | null) {
   if (!steps) return null;
@@ -488,7 +533,7 @@ export function useFocusRow(
     const target = rowLink(focused);
     target?.focus({ preventScroll: true });
     const row = target?.closest<HTMLElement>("[data-row-id]");
-    if (row && first && !returning.current) scrollAreas(row)[0]?.scrollTo?.({ top: 0 });
+    if (row && first && !returning.current) scrollToTop(row);
     else if (row && !inSight(row))
       row.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
     returning.current = false;
@@ -541,7 +586,7 @@ export function useRowFocus<List extends HTMLElement = HTMLElement>(
     focused,
     setFocused,
     rowLink,
-    move: (step: 1 | -1) => setFocused(moveFocus(ids, focused, step)),
+    move: (step: ListStep) => setFocused(moveFocus(ids, focused, step)),
     clear: () => {
       setFocused(null);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -550,16 +595,18 @@ export function useRowFocus<List extends HTMLElement = HTMLElement>(
 }
 
 /** The keys every list shares (`LIST_SHORTCUTS`): j/↓ and k/↑ move the row
- *  focus, Enter or o opens the focused row's link and Escape clears it.
+ *  focus, g/Home and G/End take it to the first and last row, Enter or o
+ *  opens the focused row's link and Escape clears it.
  *  Returns whether it took the key; a page's own keys go after. */
 export function listKeys(
   event: KeyboardEvent,
   rows: Pick<ReturnType<typeof useRowFocus>, "focused" | "move" | "clear" | "rowLink">,
 ) {
   const key = event.key;
-  if (key === "j" || key === "ArrowDown" || key === "k" || key === "ArrowUp") {
+  const step = listStep(key);
+  if (step !== null) {
     event.preventDefault();
-    rows.move(key === "j" || key === "ArrowDown" ? 1 : -1);
+    rows.move(step);
     return true;
   }
   if (key === "Escape") {
@@ -708,7 +755,8 @@ const TABBABLE = [
 function tabbables(root: ParentNode, all = false) {
   return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((element) => {
     if ((!all && element.tabIndex < 0) || element.closest("[inert]")) return false;
-    if (element.getClientRects().length === 0) return false;
+    if (element.getClientRects().length === 0 || getComputedStyle(element).visibility === "hidden")
+      return false;
     if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
       const group = Array.from(
         (element.form ?? document).querySelectorAll<HTMLInputElement>(
@@ -847,6 +895,10 @@ function shortcutGroups(
       title: "Anywhere",
       rows: [
         { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
+        {
+          keys: [PANEL_KEY_LABEL],
+          label: "Show the session panel or write in it; from its composer, hide it",
+        },
         { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
         { keys: [REFRESH_KEY_LABEL], label: "Refresh the page" },
         {
@@ -872,6 +924,7 @@ function shortcutGroups(
         ...UP_NEXT_SHORTCUTS,
         { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
+        ...SORT_SHORTCUTS,
         {
           keys: MAC ? ["⇧J", "⇧K", "⌃↓", "⌃↑"] : ["Shift+J", "Shift+K", "Ctrl+↓", "Ctrl+↑"],
           label: "Next, previous inbox",
@@ -885,6 +938,7 @@ function shortcutGroups(
         ...INBOX_SHORTCUTS,
         { keys: [GITHUB_KEY_LABEL], label: "Open the focused pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
+        ...SORT_SHORTCUTS,
         { keys: ["Escape"], label: "Clear the row focus" },
         { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
         { keys: VIEW_KEYS.next, label: "Next view", short: "views" },
@@ -894,31 +948,41 @@ function shortcutGroups(
       place: "review",
       title: "A pull request or group",
       rows: [
-        { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
-        { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
+        {
+          keys: ["j", "ArrowDown"],
+          label: "Next item in the section; on Files changed, the next file",
+          short: "move",
+        },
+        { keys: ["k", "ArrowUp"], label: "Previous item, or file", short: "move" },
         {
           keys: MAC ? ["⇧J", "⇧↓", "ArrowRight"] : ["Shift+J", "Shift+↓", "ArrowRight"],
-          label: "Next section",
+          label: "Next section, or tile",
           short: "sections",
         },
         {
           keys: MAC ? ["⇧K", "⇧↑", "ArrowLeft"] : ["Shift+K", "Shift+↑", "ArrowLeft"],
-          label: "Previous section",
+          label: "Previous section, or tile",
           short: "sections",
         },
         {
           keys: [" "],
-          label: "Open or close the item's details, or the selected group in the sidebar",
+          label:
+            "Open or close the item's details, a group's hidden tiles, or the selected group in the sidebar",
           short: "expand",
         },
-        { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
+        {
+          keys: ["Enter"],
+          label: "Open the item, such as a tile or a commit in the list",
+          short: "open",
+        },
+        { keys: ["Escape", "u"], label: "From a tile, back to the tiles page's summary" },
         { keys: ["m"], label: "Merge, where offered", short: "merge" },
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
         { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         {
           keys: ["c"],
-          label: `Comment on the section, risk or file being read; ${COMMAND}↵ saves it`,
+          label: `Comment on the section, risk, file or tile being read; ${COMMAND}↵ saves it`,
           short: "comment",
         },
         {
@@ -928,22 +992,33 @@ function shortcutGroups(
         },
         {
           keys: ["a"],
-          label: "Ask the review's agent a question; Esc in the panel closes it",
+          label: "Ask an agent about the pull request in the session panel",
           short: "ask",
         },
         {
+          keys: ["["],
+          label: "Collapse or expand the list of sections on the left",
+          short: "list",
+        },
+        {
           keys: ["]"],
-          label: "Toggle the right-hand sidebar; opening it gives it the keys",
-          short: "sidebar",
+          label: "Collapse or expand the code beside a section's Overview",
+          short: "code",
         },
         {
           keys: ["h", "l"],
-          label: "In the sidebar: Details, Activity and Comments; Esc goes back to the review",
+          label:
+            "Previous or next of a section's views (Code, Tests, Session, Docs); in the sidebar, its Details, Activity and Comments, until Esc gives the keys back",
+          short: "views",
+        },
+        {
+          keys: [SIDE_PANE_KEY_LABEL],
+          label: "Toggle the right-hand sidebar; opening it gives it the keys",
+          short: "sidebar",
         },
         back,
       ],
     },
-    { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
     {
       place: "sessions",
       title: "Sessions",
@@ -1002,6 +1077,38 @@ function shortcutGroups(
       ],
     },
     { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
+    {
+      // While the panel has the keys, the page under it gets none of these.
+      place: "panel",
+      title: "Session panel",
+      rows: [
+        {
+          keys: [PANEL_KEY_LABEL],
+          label: "Show the panel, or write in it; from its composer, hide it",
+        },
+        {
+          keys: ["↑"],
+          label: "At the composer's start: leave it for the session, on its latest message",
+        },
+        { keys: ["j"], label: "Next message; past the last, back to the composer", short: "next" },
+        { keys: ["k"], label: "Previous message", short: "previous" },
+        { keys: ["g"], label: "The session's start", short: "start" },
+        { keys: ["G"], label: "The session's end", short: "end" },
+        { keys: [" "], label: "Show all of the message, or less again", short: "show all" },
+        { keys: ["a"], label: "Open or close the message's agent activity", short: "activity" },
+        { keys: ["Enter", "i"], label: "Back to the composer", short: "write" },
+        {
+          keys: ["Esc"],
+          label: "Leave the composer for the session; then give the keys back to the page",
+          short: "back to the page",
+        },
+        { keys: ["q"], label: "Hide the panel, out of its composer", short: "hide" },
+        {
+          keys: ["PageUp", "PageDown"],
+          label: "Scroll the session, from the composer too",
+        },
+      ],
+    },
     {
       place: "page",
       title: "A session or job transcript",
@@ -1062,8 +1169,19 @@ export function KeyBar({ place, className }: { place: ShortcutsPlace; className?
   );
 }
 
-/** Every key of the app, grouped by where it works, as a small native dialog
- *  like the others. `?` opens it from any page. */
+/** Whether a row of the sheet matches `query`: every word of it is in the
+ *  row's description or names one of its keys, ignoring case. */
+export function shortcutMatches(row: Shortcut, query: string) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const keys = row.keys.flatMap((key) => [key, KEY_NAMES[key] ?? key]).join(" ");
+  const text = `${row.label} ${keys}`.toLowerCase();
+  return words.every((word) => text.includes(word));
+}
+
+/** Every key of the app, grouped by where it works, as Go to draws its
+ *  places: a native dialog with a search field over a list that scrolls.
+ *  `?` opens it from any page, and Go to has it too. It opens on the list,
+ *  for reading; typing (or `/`) goes to the search field. */
 export function ShortcutsSheet({
   close,
   current = "anywhere",
@@ -1073,55 +1191,91 @@ export function ShortcutsSheet({
   current?: ShortcutsPlace;
 }) {
   const dialog = useModal();
-  const title = useRef<HTMLHeadingElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
   useEffect(() => {
-    // The list scrolls; it opens at its top, on the current page's keys,
-    // rather than on its close control.
-    title.current?.focus({ preventScroll: true });
-    if (dialog.current) dialog.current.scrollTop = 0;
+    // The list takes the focus, so the arrow and page keys scroll it.
+    body.current?.focus({ preventScroll: true });
   }, []);
   const groups = shortcutGroups(usePreferences().preferences.page_modifier);
   const ordered = [
     ...groups.filter((group) => group.place === current),
     ...groups.filter((group) => group.place !== current),
-  ];
+  ]
+    .map((group) => ({ ...group, rows: group.rows.filter((row) => shortcutMatches(row, query)) }))
+    .filter((group) => group.rows.length > 0);
   return (
     <dialog
       ref={dialog}
       data-shortcuts-sheet=""
       onCancel={close}
       aria-labelledby="shortcuts-title"
-      className="shortcuts-sheet"
+      onKeyDown={(event) => {
+        if (event.target === search.current) return;
+        if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+        // `?` closes the sheet and Space scrolls it. Another character lands
+        // in the search field, not on the page's keys, and `/` only moves there.
+        if (event.key === "?" || event.key === " ") return;
+        if (event.key === "/") event.preventDefault();
+        event.stopPropagation();
+        search.current?.focus();
+      }}
+      className="go-to shortcuts-sheet"
     >
-      <div className="local-dialog-head shortcuts-head">
-        <h2
-          ref={title}
-          id="shortcuts-title"
-          tabIndex={-1}
-          className="text-lg font-semibold outline-none"
-        >
+      <div className="shortcuts-head">
+        <h2 id="shortcuts-title" className="text-lg font-semibold">
           Keyboard shortcuts
         </h2>
         <CloseButton onClick={close} />
       </div>
-      <div className="shortcuts-body">
-        {ordered.map((group) => (
-          <section key={group.place} aria-label={group.title} className="shortcuts-group">
-            <h3>{group.title}</h3>
-            <dl className="shortcuts-list">
-              {group.rows.map((row) => (
-                <div key={row.keys.join()}>
-                  <dt>
-                    {row.keys.map((key) => (
-                      <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
-                    ))}
-                  </dt>
-                  <dd>{row.label}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        ))}
+      <input
+        ref={search}
+        type="text"
+        role="searchbox"
+        aria-label="Search the shortcuts"
+        aria-controls="shortcuts-list"
+        placeholder="Search the shortcuts…"
+        spellCheck={false}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          // Back to the list, to scroll the matches.
+          if (event.key !== "ArrowDown") return;
+          event.preventDefault();
+          body.current?.focus();
+        }}
+        className="go-to-input"
+      />
+      <div
+        ref={body}
+        id="shortcuts-list"
+        tabIndex={-1}
+        role="region"
+        aria-labelledby="shortcuts-title"
+        className="shortcuts-body"
+      >
+        {ordered.length === 0 ? (
+          <p className="go-to-empty">Nothing matches “{query}”.</p>
+        ) : (
+          ordered.map((group) => (
+            <section key={group.place} aria-label={group.title} className="shortcuts-group">
+              <SectionLabel>{group.title}</SectionLabel>
+              <dl className="shortcuts-list">
+                {group.rows.map((row) => (
+                  <div key={row.keys.join()}>
+                    <dt>
+                      {row.keys.map((key) => (
+                        <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
+                      ))}
+                    </dt>
+                    <dd>{row.label}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))
+        )}
       </div>
     </dialog>
   );

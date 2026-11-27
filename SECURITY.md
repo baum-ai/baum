@@ -315,7 +315,8 @@ content and pull request text are untrusted input to the agent: a pull
 request could try to persuade it to read files outside the checkout. Use
 baum on pull requests you are prepared to have an agent read under your
 account. The one exception to read-only is a fix you start, which gives the
-agent write access to a temporary checkout: see
+agent a sandboxed shell with write access to a temporary checkout and, by
+default, network access: see
 [Fixing a pull request](#fixing-a-pull-request).
 
 The `claude` backend (`agent/claude`, the `User` profile) restricts Claude Code
@@ -328,17 +329,18 @@ as far as the tool allows:
 - `--setting-sources ""` skips the user, project and local settings files, so
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
-  (`--strict-mcp-config` with an empty list) for reviews, fixes and Ask. A
-  run the chat or a quick action starts may get exactly one: baum's own,
+  (`--strict-mcp-config` with an empty list) for reviews and fixes. A
+  run a quick action starts may get exactly one: baum's own,
   named by `--mcp-config` under `--strict-mcp-config` (so the user's, a
   project's and plugins' stay out) and allowed as `mcp__baum`, with the token
   in the environment only, never in the configuration or the arguments (see
   [MCP server for agents](#mcp-server-for-agents)). No session is written
-  (`--no-session-persistence`), unless the caller asks the local run to keep,
-  resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
-  never does. `--restricted` and the tool allowlist apply on every launch,
-  resume and fork included. Callers must resume only session ids baum itself
-  recorded: an id could otherwise name any session the user's CLI stored.
+  (`--no-session-persistence`), unless the caller asks the local run to keep
+  or resume (`--resume`) a session, which no review or fix does now; the hosted
+  profile never does. `--restricted` and the tool allowlist apply on every
+  launch, a resume included. Callers must resume only session ids baum itself
+  recorded: an id could otherwise name any session the user's CLI stored. baum
+  no longer forks a session (`--fork-session`).
 - The process gets an allowlist of your environment variables. Provider
   credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
   `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
@@ -370,11 +372,12 @@ Codex's own read-only sandbox:
   model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
   a pull request could try to persuade it to. Baum adds no further
   restriction, and the model's answer is the only thing baum keeps.
-- `--ephemeral` writes no session (a local run that keeps, resumes or forks a
-  session omits it and runs `exec resume` or `exec fork`, with the sandbox set
-  as `-c sandbox_mode="read-only"` because those subcommands take no
-  `--sandbox`; approvals stay `-c approval_policy="never"` and the other flags
-  apply as on every launch), and the `hooks`, `apps` and `multi_agent`
+- `--ephemeral` writes no session (a local run that keeps or resumes a
+  session omits it and runs `exec resume`, with the sandbox set as
+  `-c sandbox_mode="read-only"` because that subcommand takes no `--sandbox`;
+  approvals stay `-c approval_policy="never"` and the other flags apply as on
+  every launch; no review or fix does this now, and baum never runs
+  `exec fork`), and the `hooks`, `apps` and `multi_agent`
   features are disabled. Web search is off and approvals are never requested.
 - `--ignore-rules` skips user and project execpolicy `.rules` files, and
   `--ignore-user-config` skips `$CODEX_HOME/config.toml` (auth still uses
@@ -386,7 +389,7 @@ Codex's own read-only sandbox:
   `CODEX_HOME` when you set it. `CODEX_API_KEY`, `OPENAI_*` and the other
   provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
   are set only when you configure an endpoint for baum.
-- A run with an MCP server (none does yet; the chat and quick actions will) gets
+- A run with an MCP server (none does yet; quick actions will) gets
   `-c mcp_servers.baum.url` (the daemon's loopback `/api/mcp`) and
   `.bearer_token_env_var="BAUM_MCP_TOKEN"`, so Codex reads the token from its
   own environment and it is never an argument. Codex itself makes those
@@ -419,51 +422,23 @@ What remains for `codex`:
   file. Baum does not pass the desktop session variables the keyring needs; sign
   in with `codex login` so the login is stored in `CODEX_HOME`.
 
-A review the daemon runs with `claude` or `codex` keeps its agent session and
-run directory so a chat can continue it. The kept directory holds what the
-model was given: the unpacked head and merge-base checkouts, the description
-images, `bundle.json` (already redacted) and `schema.json`. The raw model output
-of a repair (`rejected-N.json`, unredacted) is deleted before the directory is
-kept. The CLI also keeps its transcript of the kept session in its usual store
-(for Claude Code the configuration directory Settings chose for the run, else
-`$CLAUDE_CONFIG_DIR` or `~/.claude`; for Codex the home Settings chose, else
-`$CODEX_HOME` or `~/.codex`), which holds the prompt, the bundle and the model's
-answers. Only the session that produced the saved review stays: the sessions of
-retries and repairs are deleted when the run ends, and all of them when the run
-fails, is rejected or interrupted. The directory lives under baum's user cache
-directory (`<cache>/baum/review-runs/`), not in the system temporary directory
-or your repository, with mode 0700. Baum deletes the directories of a pull
-request's versions beyond the latest two and any directory untouched for 14
-days, together with the CLI sessions that ran in them (chat forks included),
-only ever real directories with the run prefix directly under that root, Claude
-project directories named after such a directory and Codex rollouts that record
-such a directory as their cwd; it never follows a symlink. Runs for other
-backends and review groups keep nothing and are removed at once.
+A review keeps no agent session and no run directory: each runs in a
+temporary directory removed when it ends, its CLI sessions unwritten. Earlier
+versions of baum kept a local Claude Code or Codex review's session and run
+directory under baum's user cache directory (`<cache>/baum/review-runs/`, mode
+0700), with the CLI's transcript of it in its usual store, so that a question
+about the review (Ask) could fork it. The daemon still deletes those
+directories once untouched for 14 days, together with the CLI sessions that
+ran in them (forks included), only ever real directories with the run prefix
+directly under that root, Claude project directories named after such a
+directory and Codex rollouts that record such a directory as their cwd; it
+never follows a symlink.
 
-Asking the review agent a question about a pull request (chat, desktop and
-daemon only) runs the same harness with the same read-only restrictions as the
-review: Claude Code in restricted mode with Read, Glob and Grep confined to
-the run directory, Codex in its read-only sandbox (also on `exec fork` and
-`exec resume`). It never runs Cursor or the Anthropic API backend. The first
-question forks the review's kept session in the review's run directory, later
-questions resume that fork there; the CLI keeps each conversation's
-transcript in its usual store beside the review's, holding the questions, the
-files the agent read and its answers. When the review's session is gone, baum
-seeds a new run directory under the same `<cache>/baum/review-runs/` root
-(0700) with the checkout of the review's head from your clone, the saved
-review (already masked) and the earlier questions and answers (masked;
-questions are stored and shown as you typed them, and masked only where they
-go to the agent). Using
-a directory refreshes its modification time, so it expires 14 days after the
-conversation last used it; pruning a review's older versions and the expiry
-delete these directories and every CLI session in them, chat forks included,
-by the same rules as above. The question and the part of the review it is
-about are untrusted data in the prompt, between markers with a random nonce
-and with secrets masked. The answer is masked for secrets before it is
-stored or shown, and its citations are checked against the checkout (no
-absolute paths, no `..`, no symlink leaving it, only lines that exist).
-Conversations are stored in the clone's review store; the session id and run
-directory never leave the daemon, and the logs carry sizes, not text.
+Questions about a pull request are now asked in the session panel (see
+[Session panel](#session-panel)). The conversations of the earlier Ask stay in
+the clone's review store and are served read-only (`GET /api/prs/chat`): their
+answers were masked for secrets before they were stored, their questions are
+shown as you typed them, and no new question is run.
 
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
@@ -612,37 +587,116 @@ taken when you start it, so a comment added or edited afterwards stops the
 fix before the agent runs). A registered local clone is required. Only the `claude` and `codex` backends fix; `cursor-agent` and
 `anthropic` are refused (and the desktop app runs neither at all).
 
-The checkout is a linked worktree of your registered clone, detached at the
-head the fix started from, under `fixes/<id>/` in your user cache directory
+A fix lives in `fixes/<id>/` in your user cache directory
 (`$XDG_CACHE_HOME/baum` or the platform's), outside the clone and outside the
 system temporary directory. Its branch and the base branch are fetched into
-`refs/baum/fix/<id>/`, as a review's missing commits are; a branch that moved
-on stops the fix. For a conflict, baum starts the merge of the base branch
-itself, so the agent finds the conflict markers. When the fix ends, however it
-ends (success, failure, cancellation), the worktree, its registration in the
-clone and the temporary refs are removed. A directory a crashed daemon left is
-removed by a later fix once it is a day old, and its registration pruned.
+`refs/baum/fix/<id>/` of your clone, as a review's missing commits are, for
+every fix; a branch that moved on stops the fix. The directory holds:
+
+- `checkout`, the files the agent works on;
+- `git`, a git repository of the agent's own, whose `.git` file in the
+  checkout names it. baum makes it with no template (so no hook), borrows
+  your clone's objects through `objects/info/alternates`, checks the pull
+  request's branch out at the head and gives the base branch as
+  `origin/<base>`. It has no remote URL and no credentials. Its commits are
+  not signed.
+- `tmp`, the agent's scratch directory, which also holds its package and
+  build caches;
+- `hooks`, an empty directory, and `index`, baum's own index, which the agent
+  cannot write.
+
+baum writes the checkout's files with its own git and your clone's
+configuration before the agent runs, so smudge filters such as Git LFS find
+your clone's store and remote; the agent's repository only records them.
+
+For a conflict, baum starts the merge of the base branch in the agent's
+repository itself, before the agent runs, so the agent finds the conflict
+markers. When the fix ends, however it ends (success, failure, cancellation),
+the directory and the temporary refs are removed. A directory a crashed
+daemon left is removed by a later fix once it is a day old.
 
 What the agent can do, per backend:
 
-- `claude` runs in the same restricted mode as a review, with the `Read`,
-  `Glob`, `Grep`, `Edit` and `Write` tools and `--permission-mode
-  acceptEdits`. Restricted mode removes every tool that runs a command or
-  reaches the network, confines the file tools to the checkout and leaves
-  writes to settings, git and tool-configuration files to a person, which a
-  `--print` run never has. So Claude Code edits files but cannot run your
-  tests, git or anything else, and cannot read outside the checkout. Settings
-  files, MCP servers and sessions are off as in a review.
-- `codex` runs in Codex's `workspace-write` sandbox with the network off: the
-  commands it runs, such as your tests, can write to the checkout and to a
-  private scratch directory that becomes their `TMPDIR`, and nowhere else
-  (`/tmp` and your `TMPDIR` are excluded). As in a review, they can read any
-  file your account can. baum checks before the first run that Codex's
-  sandbox starts (the read-only preflight); the write-enabled profile is not
-  checked separately.
+- `claude` runs in restricted mode, as a review does, with the `Read`,
+  `Glob`, `Grep`, `Edit`, `Write` and `Bash` tools, `--permission-mode
+  acceptEdits` and Claude Code's sandbox (bubblewrap on Linux, Seatbelt on
+  macOS) passed in `--settings`: `sandbox.enabled`, `failIfUnavailable`,
+  `autoAllowBashIfSandboxed`, `allowUnsandboxedCommands: false`, and an
+  allow rule for `Bash` so that no command waits for an approval a `--print`
+  run cannot give. Every command runs in the sandbox, and none outside it.
+  Commands can write only to the checkout, the agent's repository and the
+  scratch directory (and Claude Code's own temporary directory,
+  `/tmp/claude-<uid>`, which its sandbox always allows). They can read your
+  home directory (`allowRead`, since the sandbox hides it otherwise) and
+  your clone's objects, except the credential paths below (`denyRead`).
+  Restricted mode keeps the file tools in the checkout
+  (`blockReadsOutsideWorkingDirectories` is left out: with it, Claude Code
+  hides the home directory from the sandbox and then fails every command
+  when a file it protects there, such as `~/.gitconfig`, is a symbolic
+  link). Settings files, MCP servers and
+  sessions are off as in a review. A write the sandbox blocks can appear to
+  succeed and leave nothing; the instructions say so.
+  When the sandbox cannot start (no bubblewrap or socat, an unsupported
+  platform), Claude Code refuses to run before any model call, and baum runs
+  the fix again as before the sandbox: file tools only, no command, no
+  network, and the daemon log says why.
+- `codex` runs in Codex's sandbox. From Codex 0.170.0 on it is a permission
+  profile (`default_permissions` with `permissions.baum_fix`): everything
+  readable, the credential paths below unreadable (`none`), and the checkout,
+  the agent's repository and the scratch directory writable. An older Codex,
+  or one on Windows, runs in `workspace-write` with the agent's repository and
+  the scratch directory as `writable_roots` and `/tmp` and your `TMPDIR`
+  excluded; it **cannot deny reads**, so its commands can read any file your
+  account can. The scratch directory is the commands' `TMPDIR`. baum checks
+  before the first run that Codex's sandbox starts (the read-only
+  preflight); the write-enabled profile is not checked separately.
+- The agent's repository sits outside the checkout because Codex's sandbox
+  keeps a `.git` directory under a writable root read-only, and Claude
+  Code's protects `.git/config` and hooks; a repository of its own outside
+  the checkout is writable in both, so the agent can use git freely: log,
+  diff, show, blame, merge, commit, branch.
+- **Network access is on by default** (the fixes setting **Network access**,
+  `fix_network`). With it the agent can install dependencies and fetch what
+  builds and tests need, which most fixes of failing checks require: without
+  it, a project whose dependencies are not already on disk cannot be built or
+  tested in the sandbox, and the agent fixes blind. For Claude Code every
+  domain is reachable (an allow rule `WebFetch(domain:*)`, since the
+  sandbox's `allowedDomains` takes no wildcard for all domains; the WebFetch
+  tool itself stays off); for Codex it is the profile's `network.enabled` or
+  `sandbox_workspace_write.network_access`. Turned off, Claude Code's
+  sandbox allows no domain (`allowedDomains: []`), Codex gets no network, and
+  the instructions tell the agent so. A setting that allows only package
+  registries is not offered.
+- Because the agent can reach the network, its commands cannot read the files
+  where tools keep credentials, under your home directory: `~/.ssh`,
+  `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`,
+  `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`,
+  `~/.config/git/credentials`, `~/.config/gh`, `~/.config/hub`, `~/.npmrc`,
+  `~/.yarnrc.yml`, `~/.pypirc`, `~/.gem/credentials`, `~/.cargo/credentials`,
+  `~/.terraform.d/credentials.tfrc.json`, and the agent CLIs' own logins
+  (`~/.codex/auth.json`, `~/.claude/.credentials.json`, and those under
+  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`), and the session's runtime directory
+  (`$XDG_RUNTIME_DIR`, `/run/user/<uid>` on Linux), whose D-Bus socket
+  reaches the Secret Service keyring (where baum keeps its own GitHub token,
+  and `gh` and git credential helpers often keep theirs) and which holds the
+  SSH, GPG and keyring agents' sockets. Claude Code's sandbox also refuses
+  Unix socket connections on Linux. The CLI itself, outside its commands'
+  sandbox, still signs in with them. This holds whether the network
+  is on or off, and on a Codex older than 0.170.0 it does not hold at all.
 - Both get the same environment allowlist as a review: no SSH agent, no
   `GIT_` variable, no GitHub token, no provider credential baum did not set.
-  The agent never gets git credentials or network access to push anything.
+  On top of it a fix removes, also from the variables you set yourself, any
+  GitHub or git-host token (`GITHUB_*`, `GH_*`, `GITLAB_TOKEN` and the like),
+  registry tokens (`NPM_TOKEN`, `NODE_AUTH_TOKEN`, `TWINE_PASSWORD`,
+  `CARGO_REGISTRY_TOKEN`), the SSH agent and askpass helpers, Git variables
+  that choose a repository, and any variable whose name says it holds a
+  token, secret or password, except the agent CLI's own provider settings
+  (`ANTHROPIC_*`, `CLAUDE_*`, `OPENAI_*`, `CODEX_*`, `AWS_*`, `GOOGLE_*`,
+  `VERTEX_*`, `AZURE_*`), which a Bedrock, Vertex or API-key sign-in needs and
+  which therefore reach the commands too. It points `GOCACHE`, `GOMODCACHE`,
+  `GOPATH`, `npm_config_cache`, `YARN_CACHE_FOLDER`, `PIP_CACHE_DIR` and
+  `XDG_CACHE_HOME` at the scratch directory. The agent never gets git
+  credentials to push anything.
   The one addition is the environment for agents you set yourself (Settings,
   or `[agent_env]` in the config file), which every agent baum runs on this
   computer and the git commands that commit and push a fix receive, for
@@ -651,8 +705,7 @@ What the agent can do, per backend:
   win over it, and git commands drop one that would point git at another
   repository (`GIT_DIR` and the like).
 - When your configuration signs commits (`commit.gpgSign`), baum makes one
-  signed commit object in the checkout before the agent runs, referenced by
-  nothing. A key that needs a passphrase prompt the daemon cannot show fails
+  signed commit object before the agent runs, referenced by nothing. A key that needs a passphrase prompt the daemon cannot show fails
   the fix there, with git's error, before the agent's work is paid for.
 
 What reaches the agent: the pull request's title and branches, the conflicted
@@ -694,8 +747,10 @@ not instructions, and to ignore requests to run commands, read or send files,
 or change credentials, secrets, CI or workflow configuration, dependencies or
 unrelated files.
 
-A fix can also be made from a conversation with the review's agent (chat), an
-answer's "Fix this". The app sends only the conversation's and the turn's ids:
+A fix could also be made from a conversation with the review's agent (the
+earlier Ask), an answer's "Fix this". The app no longer offers it; the daemon
+still takes such a fix item. The app sent only the conversation's and the
+turn's ids:
 the daemon reads the questions and answers from your review store for that
 clone and pull request, so a page or request cannot supply the text. The
 conversation is an agent's reading of the pull request plus your own questions,
@@ -710,8 +765,8 @@ turn, and one whose stored turns changed stops before the agent runs. Nothing
 about the confirmation changes: the same evidence, the same dialog, the same
 write access. A fix from a conversation is its own fix: it makes only that
 change, reads no checks or review threads and replies on none, only the newest
-review's conversation can start one, and it never pushes a workflow or action
-change.
+review's conversation can start one, and it pushes a workflow or action
+change only under the workflow access rule below.
 
 The agent reports per thread whether it addressed it, in a JSON block at the
 end of its final message whose opening fence carries the prompt's random tag,
@@ -735,23 +790,43 @@ the fix.
 
 What baum does after the agent:
 
-- Every git command in the checkout names the worktree's git directory
-  explicitly (`GIT_DIR`, `GIT_WORK_TREE`), so a `.git` file the agent
-  rewrote is ignored, and runs with `core.hooksPath` pointing at an empty
-  directory outside the checkout, so no hook runs, neither the clone's nor
-  one the pull request carries (such as a `.husky` directory); the
-  file-system monitor is off.
-- baum stages everything the agent left, ignored files excepted, and commits
-  it with your git identity and signing configuration, completing the merge
-  for a conflict. It refuses to commit while a conflicted file still has a
-  conflict marker, and fails when nothing changed.
-- It refuses a result that does not descend from the head it started from: a fix
-  only adds commits, it never rewrites the branch.
+- It never runs git with the agent's repository as its git directory once the
+  agent has run, and never reads its configuration, hooks or attributes:
+  anything the agent wrote there (a `core.fsmonitor`, a hook, a filter or
+  merge driver, `info/attributes`, an `include`) is never used. baum's own
+  commands name your clone's git directory (`GIT_DIR`), the checkout
+  (`GIT_WORK_TREE`) and baum's own index (`GIT_INDEX_FILE`), so a `.git` file
+  the agent rewrote is ignored, and run with `core.hooksPath` pointing at an
+  empty directory, so no hook runs, neither the clone's nor one the pull
+  request carries (such as a `.husky` directory); the file-system monitor,
+  the untracked cache and sparse checkout are off. Your clone's HEAD, index
+  and refs are not touched; only the objects of baum's commit are written to
+  it.
+- Of the agent's repository baum reads `HEAD`, `MERGE_HEAD` and the refs they
+  name, as files (no symbolic link is followed), and then, with your clone's
+  git and the agent's objects borrowed for that one command (no commit-graph
+  file trusted), whether the base branch's commit is an ancestor of one of
+  them. That decides only whether the result merges the base branch.
+- baum makes its own commit of everything the agent left in the checkout,
+  ignored files excepted, with your git identity and signing configuration:
+  a merge commit of the head and the base when the result merges the base (a
+  conflict fix always does), one commit on the head otherwise. Nothing the
+  agent committed, staged or branched is pushed, so a fix only adds commits
+  on the head and never rewrites the branch. A file the base tracks although
+  an ignore rule covers it stays in a merge commit. It refuses to commit while
+  a conflicted file of its own merge still has a conflict marker, refuses a
+  conflict fix whose agent abandoned the merge (`conflicts_remain`), and fails
+  when nothing changed.
+- It still checks that the result descends from the head it started from.
 - It checks what the fix itself changed: the paths and lines the result has
-  that the pull request's head did not, and, after a merge of the base branch,
-  that the merge did not bring (for a merge that stopped at conflicts, a line
-  counts only when neither side had it). Submodules are included whatever
-  your git configuration says.
+  that the pull request's head did not, and, when the result merges the base
+  branch, those that differ from the merge git makes without conflicts (so
+  reverting a change the base made counts as the fix's), or, when git's merge
+  conflicts or the git is older than 2.38, only paths that also differ from
+  the base and lines neither side had. Submodules are included whatever your git configuration says. A
+  conflict marker line among those lines refuses the fix
+  (`conflicts_remain`), so a merge the agent made and left unresolved is not
+  pushed.
 - It refuses a result that adds a credential: a line the fix added on which
   the redactor reviews use finds a secret (e-mail addresses aside; the whole
   file is searched, so a private key whose first line the file already had
@@ -763,14 +838,31 @@ What baum does after the agent:
 - It refuses a result that adds or changes a gitlink (mode `160000`): `git add`
   records a repository the agent made in the checkout as a commit of another
   repository, which the push would carry without its content.
-- A fix whose prompt held review comments or a conversation refuses a
-  result that changes anything under `.github/workflows/` or
-  `.github/actions/`, whether or not it also fixes conflicts or checks: a
-  workflow runs with the repository's secrets as soon as it is pushed, and no
-  review comment or conversation, being other people's or an agent's words,
-  may bring one about. A workflow change the merge of the base branch brought
-  is not the fix's. A fix of conflicts or failing checks alone may change a
-  workflow.
+- A workflow runs with the repository's secrets as soon as it is pushed, so
+  workflow changes follow the workflow access you gave baum's GitHub
+  connection, the opt-in **Reconnect with workflow access** in Settings that
+  merges of workflow changes already need. When the saved connection is
+  known to lack it, a fix whose prompt held review comments or a
+  conversation (other people's or an agent's words) refuses a result that
+  changes anything under `.github/workflows/` or `.github/actions/`
+  (`workflow_changed`), whether or not it also fixes conflicts or checks; the
+  refusal says to choose Reconnect with workflow access in Settings and run
+  the fix again. With workflow access, or when baum cannot know the token's
+  scopes (an explicit token or `GITHUB_TOKEN`), every fix may push one. A
+  connection whose status cannot be read refuses them. The push itself uses
+  your git credentials: GitHub refuses a workflow change from an HTTPS token
+  without the `workflow` scope, but an SSH key, or a token that has the scope,
+  is not limited, so with workflow access a review comment that steers the
+  agent can bring about a `pull_request` workflow change that runs with the
+  repository's secrets. A
+  workflow change the merge of the base branch brought is not the fix's. A
+  fix of conflicts or failing checks alone may change a workflow.
+- The push uses your git credentials, not baum's connection. When GitHub
+  refuses it because that credential lacks the `workflow` scope ("refusing to
+  allow ... to create or update workflow ... without `workflow` scope", read
+  from git's output), the fix fails with `workflow_scope`, which says to give
+  the credential the scope (for the GitHub CLI, `gh auth refresh -s
+  workflow`), rather than as an ordinary refused push.
 - It pushes with a plain `git push --no-verify <remote> <commit>:refs/heads/<branch>`
   from your clone to the remote whose URL names the repository: never forced,
   so GitHub refuses it if the branch moved on, and nothing else (no tags, no
@@ -783,14 +875,31 @@ What remains:
 
 - The agent's changes are pushed without anyone reviewing them first. Look at
   the commit before you merge the pull request.
-- A `codex` agent can read files outside the checkout, such as credentials
-  under your home directory, and copy them into the checkout. A pull request
-  or check log could try to make it do so. baum refuses to push what the
-  redactor recognises as a secret or what sits at a well-known credential
-  path, but a credential in a format it does not know, encoded, renamed, split
-  so no line holds it whole, or inside a binary file would still be committed
-  and pushed to the pull request's branch, which may be public. The `claude`
-  backend's file tools cannot read outside the checkout.
+- The agent's commands can read files outside the checkout that are not on
+  the credential list (a project's `.env` elsewhere, a key in an unusual
+  place), and, on a Codex older than 0.170.0, the credential files too. With
+  network access on, they could send what they read anywhere; a pull request,
+  a check log or a review comment could try to make the agent do so. Without
+  network access, they could still copy it into the checkout: baum refuses to
+  push what the redactor recognises as a secret or what sits at a
+  well-known credential path, but a credential in a format it does not know,
+  encoded, renamed, split so no line holds it whole, or inside a binary file
+  would still be committed and pushed to the pull request's branch, which may
+  be public. Turn **Network access** off for fixes if you want the agent
+  offline.
+- Provider settings the agent CLI signs in with stay in its environment:
+  an API key baum sets for an endpoint, or `ANTHROPIC_*`, `AWS_*` and the
+  like from your agent environment. Claude Code's commands inherit them,
+  and with network access on they could send them out. A Claude Code
+  subscription login is not in the environment.
+- On macOS, whether the sandboxes let commands ask the keychain for an item
+  without a prompt was not checked.
+- With network access on, the agent's commands can also download and run
+  code (a dependency's install script, a tool), as a build on your computer
+  would, inside the same sandbox.
+- Claude Code's sandbox always lets commands write to its own temporary
+  directory (`/tmp/claude-<uid>`), which other Claude Code sessions of yours
+  use too.
 - The commit is yours: your identity, and your signature if you sign commits.
   Clean and smudge filters your git configuration defines (Git LFS, for
   example) run on the checkout as they do in your clone.
@@ -814,8 +923,8 @@ calls (see "MCP server for agents"). There are seven writes and no others:
 
 - **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
   `expectedHeadOid` set to the head you saw.
-- **Fix push** (`internal/fix`): a plain `git push` of the agent's commit to
-  the pull request's branch, never forced (see "Fixing a pull request").
+- **Fix push** (`internal/fix`): a plain `git push` of baum's commit of the
+  agent's changes to the pull request's branch, never forced (see "Fixing a pull request").
 - **Review thread replies** (`internal/github/threads.go`): after a fix that
   addressed review comments pushed, `addPullRequestReviewThreadReply` with
   baum's own "Addressed in <commit>: <summary>" text, then
@@ -1258,7 +1367,26 @@ that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
 authentication; `POST /api/mcp` requires the JSON content type but no Origin,
 and refuses a foreign one (see [MCP server for agents](#mcp-server-for-agents)).
-No route enables CORS. The capability is the daemon's app
+No route enables CORS. Right after the Host check, before any route, the
+server refuses with 403 every request whose `Sec-Fetch-Site` header is
+`cross-site` or `same-site`, except a top-level document navigation (`GET` or
+`HEAD` with `Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document`). Browsers
+set these headers on every request and a page cannot change them, so a page
+from another origin, a sandboxed frame or a service on another loopback port
+cannot make the daemon answer with fetch, XHR, an event stream, an image,
+script or other subresource, a frame navigation or a form post, even where the
+browser would attach the session cookie to a `GET`. A top-level navigation
+passes so that a link or the desktop shell can open the app from elsewhere; it
+needs the launch secret and cannot read the response. The header is absent from
+agent CLIs calling the MCP endpoint, the hook command, the desktop shell's own
+client, health checks and test clients, and those pass; the browser app's own
+requests are `same-origin` and a typed launch URL is `none`, and those pass too.
+The page's Content-Security-Policy names `frame-src 'self'` explicitly. The
+one document route outside the namespace and without the cookie is a custom
+tile's frame, `GET /tile-frames/<digest>`, served only to a same-origin frame
+navigation (see [Custom tiles](#custom-tiles)); the app's own frames are
+same-origin navigations, so the check above lets them through. The capability
+is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
@@ -1480,6 +1608,385 @@ branch update and a re-run you confirm and a fix you start, with that fix's
 replies on the review threads it addressed, and resolving a review thread you
 chose; it supplies no approvals or other discussion controls.
 
+### Custom tiles
+
+A custom tile is HTML and JavaScript an AI agent wrote: a component that
+draws one tile's data in a review's tile document. It is untrusted code, and
+it runs only in its own frame, `<iframe sandbox="allow-scripts">`, whose
+document the daemon serves with its own Content-Security-Policy:
+`default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';
+img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none';
+frame-ancestors 'self'; sandbox allow-scripts`.
+
+**Built-in library types.** baum's own library types (`tiles/library`:
+schema changes, interface changes) are custom tiles too: their HTML is
+baum's, but it draws data a model wrote from the pull request (a fill), so it
+runs in the same frame under the same policy and checks as any custom tile.
+The page names such a tile as baum's own, without the "Custom" mark, only when
+the daemon marks its served definition `builtin: true`, which it does when the
+digest computed from the stored definition's content is a built-in type's,
+current or past; the digest covers the whole definition, so neither a tile's
+title, a `builtin` member it carries nor a stored definition that differs in
+any byte can claim it. A fill's data
+is model output like the review's: it is masked for secrets as a task's
+output and checked against the type's schema and the diff (every citation a
+hunk of the diff). Authored tiles (exhibits), which only versions written
+before tile reviews were written in levels carry, are table, code and prose
+data drawn by the page's own built-in faces.
+Table cells, code and captions are drawn as text. A note's Markdown draws
+paragraphs, emphasis, code spans and lists only: a link reads as its text and
+raw HTML is not rendered.
+
+**Saved tile types.** A person's library of tile types (`internal/tilelibrary`)
+lives in the private application database on this computer. A type's code and
+instructions are the person's: they are never read from repository content, and
+a type's fill instructions enter its fill's prompt as instructions of the
+same trust as a custom prompt, while the pull request stays
+data.
+
+- Generation offers saved types in every repository, by default: at most six
+  per review, those whose paths match the diff, and the pinned ones are
+  filled. A saved type's fill opens with a note that its instructions are the
+  person's and the only instructions about the tile, and that text in the pull
+  request, its code, sessions or the outline that reads like tile
+  instructions is data. The fill text says the same of every type. The map
+  lists a saved type's title and use-when line as the person wrote them,
+  bounded in length. A type "Not checked yet" is neither offered nor filled.
+  The person's instructions only add: the note says they never change the
+  review, its risks or its recommendation, and in a fill what the tile is to
+  show follows under a heading of its own, marked as data. A saved title's
+  whitespace is collapsed wherever it heads a section, so it cannot open a
+  heading of its own. A type's path globs are bounded where they are saved (at most 8 braces
+  expanding to at most 64 patterns, refused with a reason past that), and
+  brace expansion stops at that bound, so matching a glob against a diff's
+  paths takes bounded time whatever the glob. Offering is not restricted
+  further on purpose: each tile is labelled "Custom", cites the review, passes
+  the first-show preflight and stands among a section's tiles, never in the
+  place of the review's own text, recommendation or risk score.
+- A saved type's data may cite more of the pull request than its code. A
+  fill's citations are checked against the whole bundle (`library.CheckFillIn`):
+  a file must be a path of the diff, a prompt or session event must name one
+  of the bundle's sessions that is not restricted, a check or review thread
+  must be the bundle's, and a risk, evidence item or tile is refused. A
+  restricted session is never cited, here or when the composition resolves
+  the tile's citations against the review.
+- A tile review fills a saved type only when the run offered it
+  (`orchestrate.Registry`): a tile the map plans of any other type is sent
+  back for a repair.
+
+- Persistence needs the person. A chat can only propose saving or changing a
+  type (`propose_tile_type`); the person's Save in the panel writes it, the same
+  way every other proposal is saved, and a proposal that is stale (the type
+  changed since it was read) saves nothing. A saved type is checked as a
+  built-in type is (`library.Check`, which includes the kit's lint) and its name
+  may not shadow a built-in tile type, a built-in library type or a tile ID
+  prefix.
+- Samples are self-contained and checked not to copy the open pull request.
+  A proposal needs a render check that passed on a sample whose hunks and
+  items are its own, only such samples are saved, and a sample whose citations
+  do not resolve to its own hunks and items is refused. On a pull request's
+  page the proposal is also refused when a sample's hunks share three or more
+  distinct non-trivial lines (not blank, brackets, imports or common
+  boilerplate) with that pull request's diff, and when its diff cannot be
+  read to check. This is a heuristic on lines, not proof that a sample holds
+  none of a pull request's data: the person sees every sample, in the
+  proposal's Before and After, before they press Save, and nothing is saved
+  until they do.
+- "Built in" is decided by digest only. A saved type is never marked built in
+  unless its content is byte for byte a built-in type's, which then is baum's
+  own code; nothing a proposal, a name or a stored row carries can claim it.
+- An agent reads a type's source only through `tile_type`, a chat tool on the
+  pull request page and Settings' Tile library section; an action never sees
+  it, and the tile routes still serve definitions without their HTML.
+- The preview route `GET /api/tile-types/{name}/preview` registers the type's
+  digest in the frame registry like the tile routes, and has the session
+  namespace's cookie or the launch token like every other `/api` route; a
+  request that carries a definition registers nothing, with one exception:
+  the import check below.
+- Importing a tile type file (`POST /api/tile-type-files/check`, then `POST
+  /api/tile-type-files`, from Settings › Tile library) treats the file as
+  untrusted. It is refused past 3 MiB, nested deeper than 64 levels or holding
+  more than 200,000 JSON values (checked before it is decoded), holding a NUL or not valid UTF-8,
+  with a member a tile type file does not have (at any level, a sample's
+  included) or a schema other than
+  `baum.tile-type/1`; its definition must pass the definition checks (shape,
+  UTF-8, dialect, a supported kit) and the kit's lint without an error, its
+  samples must validate and cite only their own hunks and items, and its name
+  must pass the name rules (a name already in the library is renamed with a
+  numeric suffix). Its digest is computed and whether it is built in follows
+  from that digest; a digest or `builtin` in the file is never read. Its
+  origin is "Imported". The person sees the title, use-when line, the fill
+  instructions it would give the review agent, its paths and a preview of a
+  sample before anything is saved; to draw that preview, the check registers
+  the file's definition in the frame registry once it has passed every check.
+  This is the one registration of something a request carries: it is the
+  person's own file pick, sent by the authenticated app, which already holds
+  that HTML, and the frame is the same sandbox as every custom tile's.
+  Bidirectional controls, zero-width characters and Unicode tag characters
+  are removed from the title, use-when line, fill instructions, glance and
+  review checks on import and on every save (the stored text and its digest
+  never hold them), and a path with a control or invisible character is
+  refused; the review checks are at most 1,500 characters. The dialog shows
+  the fill instructions, glance and review checks, labelled as instructions
+  given to the review agent. An import then runs the render check
+  (`tilechecks.Checker.ImportCheck`) on the file's first three samples in the
+  app's sandboxed frames: a type that fails or hangs is refused. When no
+  runner takes the check (the app is closed or cannot draw tiles) the type is
+  saved marked "Not checked yet", which is all that mark means: it is saved
+  and previewable, but no render check ran on it. Its first preview with a
+  runner available runs the check in the background once per daemon run and
+  marks it checked on a pass; a failed deferred check leaves the mark. The
+  check draws the type's HTML in the same sandbox as any custom tile; it does
+  not read the type's content for instructions.
+  An exported file holds the type's synthetic samples and no review content.
+- A review keeps the definition it was made with: its library tiles embed
+  the full definition, so editing or deleting a saved type changes no saved
+  review.
+
+**What a tile's frame cannot reach.** The sandbox gives the frame an opaque
+origin, so it cannot read the app's page, its cookies or storage, or the
+desktop app's bridge, and it cannot open windows, submit forms or navigate
+the app's page. The frame's policy allows no request at all: no `fetch`,
+images, fonts, styles or frames from anywhere, the daemon included;
+everything the kit needs is inlined into the document. A request the frame
+tries to send to the daemon anyway would carry no cookie, and the frame
+never learns the secret `/s/<namespace>/` path the app's API lives under.
+
+A frame can still navigate itself (`location.href = …`, a meta refresh): its
+own policy does not govern that. The control for it is the page's
+`frame-src`, which today falls back to the page's `default-src 'self'`, so a
+frame can only be navigated to the daemon's own origin, where every route
+but `/tile-frames/` needs the cookie and that route refuses a navigation a
+frame starts (it is `cross-site`). The frame also talks to the page by
+`postMessage`; the frame protocol (see "Custom tile kit" in
+`ARCHITECTURE.md`) has no message that approves, merges, comments, changes a
+setting or reads anything, and the page must treat every message from a
+frame as untrusted.
+
+**How its document is served.** The frame document is
+`GET /tile-frames/<digest>`, where the digest is the 64 lowercase hex digits
+of the tile type's definition digest. It is the one document route outside
+the session namespace and without the cookie, so that a tile never sees the
+namespace and its document request carries no credential. In its place it is
+served only when all of these hold, and otherwise answers the same plain 404,
+which never says whether a digest exists:
+
+- the Host check passes, as for every route;
+- the method is `GET` or `HEAD`;
+- the request is a frame navigation started by a document of the daemon's own
+  origin: `Sec-Fetch-Dest: iframe`, `Sec-Fetch-Mode: navigate` and
+  `Sec-Fetch-Site: same-origin`, all three present. A client that sends no
+  fetch metadata, a script's fetch, an `<object>` or `<embed>`, an address
+  typed into the address bar (`none`), another loopback service (`same-site`),
+  any web page and a tile's own frame (opaque, so `cross-site`) are refused;
+- the path is exactly `/tile-frames/` and the digits, with no encoding, extra
+  segment or trailing slash; the query is ignored;
+- the daemon itself handed that type to the authenticated app: the tile
+  routes register the types of the custom tiles they serve, the tile type
+  preview route the type it draws (see "Saved tile types"), and a
+  render-check candidate is registered when the daemon hands it to the app's
+  check runner; nothing else a request carries is ever registered (the one
+  exception, an imported file the person picked, is registered after the
+  import checks, see "Saved tile types"), so the route serves only HTML the
+  app already received or sent. At most 32 MiB of documents are kept, the
+  least recently
+  used going first; reading the tile route again registers its types again.
+
+The answer is `no-store`, sets no cookie, ignores `Range` and carries
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+`Cross-Origin-Resource-Policy: same-origin`.
+
+**What the page checks.** The app's host (see "The app's host" under
+"Custom tile kit" in `ARCHITECTURE.md`) treats every message from a frame as
+untrusted:
+
+- The frame is `<iframe sandbox="allow-scripts">` with no other flag, no
+  `srcdoc`, `referrerpolicy="no-referrer"` and an empty `allow`; so it cannot
+  open windows or dialogs, submit forms, navigate the app's page or reach
+  storage, and its own policy lets it load nothing.
+- **Where frames mount.** In a browser, always. In the desktop app only when
+  the shell declares, from its preload before the page's own scripts,
+  `window.__BAUM_DESKTOP__ = { tileFrames: true }`: a shell says so once it
+  refuses every navigation that is not to the daemon's own pages (only a
+  request for a new window opens your browser) and once its commands are
+  checked to be out of a sandboxed frame's reach. A shell without the
+  declaration (an older one) mounts no
+  frame, and its custom tiles say they aren't available in
+  this version of the desktop app yet. A frame cannot set the declaration:
+  it cannot write the page's globals.
+- A message counts only from a frame's own window (`event.source`) and with
+  the opaque origin `"null"`, so no frame can speak for another tile or for
+  the page; a frame's kit likewise hears only the page, so a frame posting
+  to its neighbours as if it were the page is ignored. Messages are counted
+  before their data is read: past 30 in a second the rest of that second's
+  are dropped unread, and a frame over that rate in more than three of the
+  last ten seconds, or past 300 in one second, is unmounted.
+- Every field is read with strict type checks; a string longer than 1024
+  UTF-16 code units is dropped, an error's message is cut to 500, and what a
+  tile writes is shown only as text.
+- A detail's height, whether from `ready` or `resize`, is held to 120 to
+  20,000px, applied at most once an animation frame, and stops following a
+  height that keeps growing by one amount or keeps changing direction;
+  `ready` is taken once for each `init` or `update` the page sent, any other
+  is a resize under the same rules. A glance's box is fixed.
+- A frame can ask the page only to jump to an item its own data cites,
+  which the page resolved from the review it already shows (the frame names
+  it by key, never by address), to open the session panel's question about
+  the tile, or to act on a whitelisted key; and only from a detail whose
+  keyboard the reader gave it (below). A jump or a question also needs the
+  browser to report a user activation at that moment (a browser that cannot
+  say is taken as no), and the page honours at most one a second.
+- **The keyboard.** A frame takes no keys unless the reader gives them: a
+  glance never (it lies under its card's link with `tabindex=-1`); a detail
+  when a Tab lands on its frame, or when the pointer is over it, the browser
+  reports a user activation and the page saw no key press of its own in
+  the half second before (the reader typing elsewhere with the pointer
+  resting on a tile is not a click). The page cannot see clicks inside a
+  frame, so this is how it tells one apart. Focus a frame takes otherwise is
+  given back to the page's element that had it, and a frame that takes it a
+  fourth time is unmounted (its document unloaded at once, before the page
+  draws the failure). A key pressed in the instant a frame holds the
+  keyboard, before the page takes it back on its next task, reaches the
+  frame.
+- **Forwarded keys.** The whitelist is the page's reading keys only: Escape
+  and `u` (back to the summary), `j` and `k` (next and previous),
+  ArrowLeft and ArrowRight (previous and next tile), `[` and `]` (the
+  sidebars) and `?` (the shortcuts sheet). The page dispatches a `keydown` on
+  the frame's element carrying the key's name and whether Shift was held,
+  nothing else (no other modifier, code or text), and only while the reader
+  has given the frame the keyboard. No key that acts outward or changes
+  anything is on it: not Enter or Space, `m` (merge), `v` (send a review),
+  `c` (comment), `a` (ask), `f` (fix), `t`, `g`, or any key with Ctrl, Alt
+  or Meta; the frame's kit forwards none of those, and the page drops any
+  other key a frame names.
+- A frame that does not start, does not draw in time, says hello twice,
+  floods or keeps taking the keyboard is unmounted and its tile says it
+  couldn't load, in the host's own words; what the tile reported is shown
+  apart, quoted, behind Details. A frame that navigates itself after it
+  drew is unmounted where the engine reports the navigation as a load
+  (Chromium does for the navigations the suite tries); one that
+  navigates before it drew never draws and is unmounted when its time runs
+  out. That failure is about that frame only: nothing a frame sends marks
+  its tile type, or any other tile, as broken. Only the daemon's own render
+  check or the authenticated app may block a type.
+- What the tile draws is set apart from the page: its kicker reads
+  "Custom ·" and the type's title, whatever the title (one that names a
+  built-in tile too), in the card, the detail and the rail, and its detail
+  sits inside a faint edge under a "Custom tile" caption that the page
+  draws.
+
+The browser suite (`app/custom-tile-tests/tile-frames.spec.ts`) runs hostile
+tiles on the real frame route in Chromium: every way out it tries (reading the page,
+cookies, storage, caches and the shell's message handlers, top and parent
+navigation, `window.open`, dialogs, form submission, nested frames, fetch,
+XHR, WebSocket, EventSource, beacons, images, fonts, stylesheets and CSS
+`url()` to the daemon and to another origin, workers, spoofed and oversized
+messages, a second hello, floods, taking the keyboard while the reader
+types elsewhere, navigating itself before and after it drew) is refused,
+the page stays as it was and a listening server on another port receives
+nothing. The desktop shell's harness (`desktop/tests/shell`, in CI) checks
+on Linux that a sandboxed frame reaches none of its commands, sees no
+declaration and can neither leave the app nor open the browser; the
+shell is also checked by hand on each platform
+(`desktop/tests/tile-frames-manual.md`).
+
+**What a tile is given.** The frame protocol gives a tile its own data, the
+face and size it draws, the app's theme and language, and the items of the
+review its data cites. Nothing else: not the review, the repository, other
+tiles, or code it does not cite. Anything given to a tile is visible to
+whoever wrote it. The tile routes send each custom tile's definition without
+its HTML (its length in bytes instead), to the app and to every read of them
+by the chat's agent.
+
+**Residual risks.**
+
+- A tile's author can learn what the tile is given, at low bandwidth: the
+  browser may resolve or connect to hosts a tile names in its markup (DNS
+  prefetch and preconnect) before any policy applies, and where the engine
+  offers WebRTC (Chromium does), a peer connection can reach a server the policy does not
+  govern. baum ships no script that tries to block these inside the frame: a
+  fresh realm gets around such a script. It minimises what a tile receives
+  instead.
+- **A tile in an endless loop freezes the page until it is closed**, where
+  the engine runs the frame on the page's thread (a browser, in some runs),
+  and nothing in the page can stop it; the next time the review is opened it
+  freezes again. In the browser suite a 1.5-second loop held the page for
+  its length in some runs and not others. The host unmounts a frame that
+  does not draw in time, but cannot interrupt one that holds the thread.
+  The desktop app runs sandboxed frames in a process apart from the page, so
+  a looping tile there stalls only the tiles that share its process, and the
+  page keeps working. The desktop app gives the render check a window with
+  its own renderer process, which takes the freeze instead (see "The render check" below). Elsewhere
+  (a browser, a shell without one) the render check draws in the app's own
+  page, so a
+  candidate that loops freezes it, and the daemon then answers `hang` and
+  refuses that type until it restarts.
+- A frame can navigate itself to a page of the daemon's own origin: the
+  request reaches the daemon without the cookie, the namespace or any data,
+  and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
+  host then unmounts the frame.
+- In a desktop shell that hands navigations to external addresses to your
+  browser, a frame navigating itself could open a page of its choosing there,
+  with what the tile was given in its address, and the page would not see it
+  happen. That is why the page mounts frames in a desktop shell only when
+  the shell declares it refuses such navigations (above).
+- A local process that knows a tile type's digest can fetch that type's
+  source by sending the three `Sec-Fetch-*` headers itself; the checks are
+  not authentication. It never gets a tile's data, which is not in the
+  document, and a process running as you can read the app's credential
+  anyway.
+- The author today is your own agent, writing for you; a tile shared by or
+  imported from someone else trusts its author with what it is given.
+
+Tile code is never read from repository content: a pull request cannot
+supply a tile.
+
+
+**The render check.** Before a tile made in the app is shown, the daemon
+checks its type (`internal/tilechecks`) and the app's check runner draws it
+in the same sandboxed frames, under the same policy, with the type's own
+samples and the data it will show. It is a quality gate for honest
+mistakes, not a security control: a tile can fake its `ready`, swallow its
+errors or behave differently later. What it does protect against is a
+freeze where it would hurt:
+
+- In the desktop app, which provides a check window, the runner draws in that
+  hidden window with its
+  own renderer process. While it
+  draws, the runner tells the daemon it is alive every 2 seconds and as
+  frames finish. Where frames share the page's process (WebKitGTK), a
+  candidate that never finishes drawing freezes the runner, so after 10 s
+  without a sign of life (or past a limit scaled by the frames the check
+  draws) the daemon answers `hang`. Chromium runs the candidate's frames in
+  a process apart from the check page, so the runner keeps running: a frame
+  that has not said hello within 5 seconds is pinged, and one that neither
+  answers within 2 seconds nor finished loading is stuck in its script, and
+  the runner reports `hang`. Either way the daemon marks the type's digest
+  hung (the frame route then refuses it until the daemon restarts) and
+  tells the main page, which has the shell close the window, ending its
+  processes and the loop. The main window is not affected.
+- Where that window exists, the first time the app shows a custom tile that is not of a
+  built-in type, with data it has not drawn before, it first draws that
+  pair in the check window (the first-show preflight). A pair that hangs
+  stays down, with "This tile stopped responding when it was checked."; a
+  pair that drew, or failed in a way the frame's own failure faces show,
+  is shown. Verdicts are kept per pair (the type's digest and the data's
+  SHA-256) in `app.sqlite`, the newest 10,000.
+- The runner's routes (`/api/tile-checks/next`, `/{id}/result`,
+  `/preflight`) sit behind the app server's Host, session, Origin and JSON
+  checks, and refuse a browser request that is not same-origin: claiming a
+  job registers its frame document, so only the app may claim. A job
+  carries the candidate's served definition (no HTML: the frame route
+  serves that by digest), its samples and their citations' payloads, and
+  never more than the page itself would give the frame. The `tile_check`
+  event names a check's ID and state only.
+- No message from a frame marks a digest hung. The daemon does, from its
+  own timer or from a runner's report of a hang, which the runner makes
+  only from a frame's silence; a runner could get the same by going quiet,
+  so the report gives it nothing new. A runner whose page goes away mid-check reports the
+  job abandoned, which ends it unavailable without blocking the type, and a
+  long poll whose client left puts its job back.
+
 ### MCP server for agents
 
 An agent CLI reaches the server over HTTP at the daemon's loopback
@@ -1495,7 +2002,58 @@ user's `agent_env`, so that cannot replace or remove it, and accepts only an
 local profiles run an MCP server; the hosted and container profiles refuse a
 request that asks for one. Claude Code runs with `--strict-mcp-config` and
 Codex with `--ignore-user-config`, so baum's server is the only one. No job
-sets it yet: the chat and quick actions will, and no other run has it.
+sets it yet: quick actions will, and no other run has it.
+
+The session panel's conversations are the exception, by design: each is your
+own Claude Code or Codex session, run as you set it up, with your settings,
+hooks, instructions and MCP servers, and baum's server added beside yours.
+By default it runs in auto mode: Claude Code's `auto` permission mode, whose
+classifier approves or blocks each action, and Codex in its `workspace-write`
+sandbox with its automatic reviewer answering each request to leave it. You
+can choose full access instead (Claude Code's `bypassPermissions` mode and
+Codex without approvals or sandbox, what running the agent yourself with every
+prompt approved would allow) or workspace access (`acceptEdits` and Codex's
+`workspace-write` sandbox with no requests to leave it). It runs in a
+directory baum chose: a worktree of the pull request you opened it from (yours, or one baum
+adds without changing your other checkouts and without running hooks) or an
+empty directory of its own. Each conversation holds a `chat` token of its own,
+bound to its session once the agent names it and revoked when you close it or
+the daemon stops; through it the agent can propose changes to baum's state,
+which change nothing until you save them, like any chat's.
+
+A conversation's environment is the one every local run gets plus what you
+need to work as you would in a terminal: your SSH agent (`SSH_AUTH_SOCK`),
+`GITHUB_TOKEN`, `GH_*` and your `GIT_*` settings, so the agent can push and
+use `gh` with your credentials. Git variables that point at another
+repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+`GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`,
+`GIT_NAMESPACE`, `GIT_PREFIX`) and provider and cloud credentials are still
+removed; reviews and fixes keep the narrower environment. Claude
+Code still gets `DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY` and
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. `BAUM_MCP_TOKEN` is in the
+environment of your Claude Code process, so your own hooks and stdio MCP
+servers can read it; that gives them no access they lack, since they run as
+you. Codex reads it itself, to authenticate to baum's server, and forwards it
+to no MCP server.
+
+#### Session panel
+
+Full mode runs your agent with your permissions, as running it yourself with
+every prompt approved would. Saving or confirming a proposal in the app is the
+boundary for an agent that cooperates with baum, not a sandbox: an agent in
+Full mode can read the daemon's launch credential (`credential.json`) or
+`app.sqlite` and act on baum directly, as any program you run can, and its
+MCP token, which its own hooks and stdio MCP servers can read too, opens only
+the MCP route. Auto mode, the default, and Workspace mode narrow that only as
+far as the agent's own checks do: in auto mode Claude Code's classifier and
+Codex's reviewer, a model that decides what to allow, and in Workspace mode
+Claude Code's `acceptEdits`, which refuses commands it would ask about, and
+Codex's `workspace-write` sandbox, which limits where its commands write. None
+of them is a boundary baum adds. The panel's sessions are listed on the Sessions page
+marked as the panel's, without the end, message or focus actions, and their
+routes, the message queue and request answers refuse them (409
+`panel_session`): the panel runs and stops them. A panel session's permission
+requests are never shown in the app; its own permission mode decides them.
 
 The application server also serves `POST /api/mcp`, an MCP server that lets
 an agent read what the app shows. It takes only an MCP token, sent as
@@ -1638,9 +2196,9 @@ from the sessions of its pull requests, the group patches and files its groups'
 reviews cite, and what the app offers about a branch and the failed checks.
 It may also read the last lines of a failing check's log for any check of its
 repository's pull requests (`check_log`; see below).
-It may read the person's own draft review comments and walkthrough place only
-for its own pull request: those are kept by a key that names the repository
-and pull request, the handler cannot tell whose a key is, so the reader refuses
+It may read the person's own draft review comments only for its own pull
+request: those are kept by a key that names the repository and pull request,
+the handler cannot tell whose a key is, so the reader refuses
 any key but the action's own pull request's (and any other kind of saved state),
 whatever the repository. A chat reads them for any pull request, as it reads
 the page the person has open.
@@ -1680,7 +2238,9 @@ error that says nothing more. The current value is shown to you, never
 returned to the agent: a proposal tool answers only the proposal's id, page,
 target and kind. Saving checks that you still have the page open, showing the
 same repository, pull request or group, that the target still belongs to the
-section you see and that the agent's token is still live, and the page
+section you see and that the agent's token is still live (a colour theme or a
+prompt is about no page, so you can save it from any page, for example a
+prompt while reading the review it wrote), and the page
 compares the revision and writes in one step, so a target changed by anyone
 since the proposal was made is refused and nothing is saved. A token revoked
 while a save is writing takes effect once the write ends.
@@ -1690,9 +2250,10 @@ Settings page (appearance, plan usage, automatic reviews, decision capture,
 the harnesses for reviews and fixes, time limits, job concurrency, whether
 the app answers Codex's permission requests), a custom prompt or its reset, a
 repository's review and decision capture choices, a saved inbox, a review
-group's name and members, or a comment added to your pending review (never
-sent to GitHub: you send the review). Nothing is saved without your save, and
-your save is the page's own, with the page's checks, so a proposal cannot
+group's name and members, or a comment added to your pending review through
+`propose_review_comment` (Save in the panel, never sent to GitHub: you send
+the review). Nothing is saved without your save, and your save is the page's
+own, with the page's checks, so a proposal cannot
 save what the page itself would refuse. A proposed prompt, or a reset, that
 would leave out the text of a safety rule the prompt in use has is refused,
 when proposed and again when saved. That check only finds each rule's text;
@@ -1705,6 +2266,106 @@ setting and is never stored in the proposal, returned to the agent, printed
 or logged. Nothing outside that list can be changed through a saved
 proposal: not your GitHub connection, a repository's registration or clones,
 nor any GitHub write.
+
+One change takes no save: adding a tile to the review on the pull request
+page you have open. A chat may add a library tile type or a tile it made for
+that page (`add_tile`, `start_tile`, `check_tile`, `add_custom_tile`), on one
+of the review's sections, and it applies at once. The agent reads untrusted
+pull request text (the diff, the description, threads and transcripts), which
+can tell it to add tiles, and baum accepts that without asking, because the
+worst such text can do is add a tile to your own page, visibly, removably and
+within fixed rules:
+
+- No content changes. An added tile stands among a section's tiles; the
+  review's text, risks, recommendation and risk score, the saved version, the
+  repository and GitHub are never touched.
+- Every added tile shows, and is taken off in one step: Remove on its menu
+  takes it off every version of the pull request, and the toast's Undo puts
+  it back on the section it stood on. Only you remove; the chat has no tool
+  for it.
+- Scope is one page. The tools are global, so an action never sees them; they
+  refuse any page but the pull request's, and a section they name must be one
+  of the review that page shows. A conversation's page follows the person
+  around the app, so an add acts on the pull request the current message was
+  sent from, never on the page open now: a long turn begun about one pull
+  request keeps working on it while the person reads another page, and
+  cannot change that other page. Added tiles stay on this
+  computer, in `app.sqlite`, for that pull request; the event that tells the
+  page carries only the pull request's key.
+- Bounded: at most 8 added tiles a pull request, the 200 most recently
+  changed pull requests; a removed tile is kept a day for its Undo.
+
+An added library tile brings data. Data the agent writes
+for it is checked against the type's schema, every hunk it cites must be in
+the diff of the version shown (a refusal names the place in the data, never
+its values), and it is masked for secrets, as every model output is, before
+it is stored on this computer. The type is one of baum's built-in library
+types, named by the host; the page labels the tile as baum's own by its
+definition's digest, which data cannot change. A review never takes the
+agent's data as its own: only fills baum ran itself are reused in a later
+version. An add without data starts one fill run with your review agent (a
+model call at your expense, as a review's fill is): each version's tile type
+is filled at most once while baum runs, however often it is added, removed
+and added again, and a failed run is not retried for ten minutes. The run is checked
+and masked like any fill.
+
+A tile made in chat brings code as well as data: the agent, which reads
+untrusted pull request content, writes a tile type (HTML and JavaScript) for
+the pull request page you have open (`start_tile`, `check_tile`,
+`add_custom_tile`), and it is added at once, as any added tile is. That is
+safe to do without asking for the same reasons, and these:
+
+- The frame is the boundary, unchanged. The tile runs in the custom tile
+  frame described above ("Custom tiles"): sandboxed, an opaque origin, the
+  frame route's policy with no network, only its own data and the items it
+  cites, and the strict message router. The render check and the lint are
+  quality gates for honest mistakes, not security controls; the check draws
+  the candidate in the check window where the desktop app has one, else in
+  the page, as the first-show preflight does.
+- It is labelled and grounded. It stands under a "Custom tile" caption on
+  the review page, whatever its title says, and is marked baum's own only by a
+  built-in type's digest; its name may not be a built-in library type's. Its
+  data must cite at least one hunk, file, prompt or session event of the
+  review, and every citation must resolve to the version shown, so each
+  claim leads to code or a transcript you can open. It stands among a
+  section's tiles and cannot take the place of the review's own text,
+  recommendation or risk score.
+- Its data is masked for secrets before it is checked or stored, as every
+  model output is, and kept, with its definition, in `app.sqlite` for that
+  pull request only.
+- It is yours and the page's only. Saving it as a type for later reviews is
+  a proposal (`propose_tile_type`) you save, with synthetic samples only; on
+  later versions it is never filled again, because its fill instructions were
+  written by the session agent, which reads untrusted pull request content, and
+  you have not seen them: it shows its newest data marked as from the version
+  it was made for. Save to library shows the fill instructions before you save
+  them, and only then does a review agent fill the type on later versions.
+- The pending card that shows while the tile is made lives in the daemon's
+  memory; its event carries only the pull request's key.
+- Where the desktop app does not mount tile frames (Windows, for now), the
+  tools refuse before anything is made.
+
+Both an images tile (`add_tile`) and a tile made in chat (an
+`{"image_file": path}` in `check_tile`'s data) may name image files on this
+computer, so the agent never writes image bytes. The daemon reads such a
+file under one set of rules for both: an absolute path, read as the user
+baum runs as (a link is followed), at most 40 MiB, kept only when its bytes
+sniff as PNG, JPEG, GIF or WebP (never by name or extension), downscaled,
+and stored in `app.sqlite` for that pull request, at most 6 images a tile
+(a made tile's 16 MiB together). Anything else is refused with the file's
+base name only, never its contents. A stored image is shown only on your own
+page: the attachment route serves it, behind the server's usual checks, and
+a custom tile's frame gets it from the page as a `data:` URL in its data, so
+the frame's policy, sandbox and lack of network are unchanged, and the
+frame never reaches the daemon. The agent gets back a short reference, never
+the pixels. The worst untrusted text can do is have the agent show you an
+image file that is already on your computer, on your own page.
+
+There is no confirmation and no rate cap on purpose: each would make "add
+the API changes tile" slower for everyone to guard against an attack whose
+worst result is a tile you see and remove. Anything that lasts beyond the page you have open
+(standing preferences for a repository's future reviews, for instance) stays
+a proposal.
 
 A chat may also propose an operation: one of the buttons of the page you
 have open, for something that page shows. The agent never runs anything.
@@ -1797,10 +2458,47 @@ It accepts the file only when it is private to you and names a
 `127.0.0.1` launch URL for that daemon, and it never logs that URL.
 
 The window loads only its bundled screens and the attached daemon's
-loopback origin. Links to other web hosts open in your default browser; other
-loopback servers, other schemes and new windows are refused. The daemon's
-pages get no Tauri capability, so they cannot call the app's commands or any
-plugin. The bundled connecting screen may only read the connection state and
+loopback origin, and refuses every other navigation: other web hosts, other
+loopback servers and other schemes, and any address with a user name or
+password in it. A navigation never opens your browser or leaves the app. The
+shell asks about every navigation of the page and of every frame in
+it (a frame navigating itself, a page setting a frame's address and a new
+frame alike) and tells the app only the destination, and it checks every
+frame load again at the network, so a load the events miss is refused too.
+`data:` and `blob:` frames are refused; `about:blank` and `about:srcdoc`
+frames load nothing and take the page's own origin and policy. The daemon's
+pages limit frames to their own origin, which stops a frame's navigation
+elsewhere before the app is asked, but a page without that policy (the
+development server's) would rely on the shell alone; if a navigation could
+open the browser, such a frame could open it at an address carrying data it
+read, as often as it liked. Links to other web hosts open in your default
+browser only as requests for a new window (`target="_blank"` links and
+`window.open`), or through the app's `open_link` command, which opens the
+same addresses and only from the page itself; no window ever opens. A
+sandboxed frame can make such a request only when its sandbox allows pop-ups,
+and a tile's frame does not: the shell is not told which frame
+asked, so it relies on that. A page's script can make one at any time, so
+the app opens the browser at most once a second and drops the
+rest. Setup opens GitHub's fixed device sign-in page itself, a few seconds
+after you start a sign-in.
+
+The daemon's pages can call a few of the app's commands, granted to the
+attached daemon's own origin in the main window and listed in
+`desktop/electron/main/commands.ts`: the folder picker, reading and changing the `baum` command and the user-wide agent
+hooks (as Settings does), the window's zoom, and reading, checking for,
+installing and dismissing app updates (only an update the app has already
+downloaded and verified installs), opening and closing the tile check
+window, and opening a link to another web host in your browser (at most once
+a second). They can call no other command and no plugin. Only the page itself can call them: the shell
+puts its command bridge in the page's main frame only and runs a command
+only when it comes from the main frame of one of its own command windows, so
+a frame embedded in the page, even one served from the daemon's origin,
+cannot reach a command; on Linux its harness (`desktop/tests/shell`, run in
+CI) checks this with sandboxed frames trying every way to the bridge, and a
+person checks it on macOS and Windows. Its pages reach neither Node.js nor
+Electron. The shell declares to the page (`window.__BAUM_DESKTOP__.tileFrames`,
+set before the page's scripts and not replaceable) that it may embed frames
+of untrusted content from the daemon's origin. The bundled connecting screen may only read the connection state and
 ask to reconnect. The bundled setup screen may also read what is installed and
 install or remove the `baum` command and the user-wide agent hooks; it does
 so only when you click the button for that change, and a change that would
@@ -1817,6 +2515,28 @@ is off until you turn it on; it adds one per-user entry (an XDG autostart file,
 a LaunchAgent or a Run key value) that starts the app hidden, which starts
 your daemon. Turn it off in the tray or the window's Background menu, which
 removes the entry.
+
+The daemon's page checks a custom tile in a hidden second window, the tile
+check window, which runs in renderer processes of its own. It starts at the
+attached daemon's check page and can load only pages of that daemon's
+origin, under the main window's navigation rules, opens no browser, and its
+page can call no app command. It runs in a session of
+its own, in memory, into which the app copies the daemon's cookies before
+each load and which it empties when the window closes. A tile that never
+yields there stalls only that window, and closing it ends its processes.
+
+A sandboxed tile frame runs in a renderer process
+apart from the page, so a tile that never yields no longer freezes the
+window: it stalls the tiles that share its process (the page's other
+sandboxed frames of the daemon's site), and the page keeps working. A
+script that never yields in the page itself, or in a frame of the page's
+own origin, still freezes the whole window; the shell does not detect an
+unresponsive page. The tray, its menu and the daemon keep
+working, and quitting the app from the tray and opening it again loads the
+page anew. Your data is not at risk, but nothing stops a page from being
+unusable until then.
+
+A navigation to an address the app's URL parser cannot read is refused.
 
 On first run, and from "Command Line and Hooks…" in its menu, the app
 installs its bundled `baum` as your `baum` command, because agent hooks run
@@ -1878,12 +2598,12 @@ gives no new control; directories that no longer exist are skipped.
 Besides loopback requests to the daemon, the app makes one kind of network
 request: a release build checks GitHub Releases for a newer version of
 baum-ai/baum when it starts and once a day (`BAUM_DESKTOP_UPDATES=0` turns
-this off). The check is a plain HTTPS download of `latest.json`; it carries
-no token or data of yours. The app installs an update only when the
-downloaded bundle carries a minisign signature from the release key built
-into the app, made for the version the manifest announces, so neither a
-changed bundle nor an older signed release served as a newer one is
-installed. It waits while the daemon runs a generation job and restarts only
+this off). The check is a plain HTTPS download of the release's update file
+(`latest-mac.yml` or `latest-linux.yml`); it carries no token or data of
+yours. The app installs an update only when the downloaded file carries a
+minisign signature from the release key built into the app, made for the
+version being installed, so neither a changed file nor an older signed
+release served as a newer one is installed. It waits while the daemon runs a generation job and restarts only
 after you confirm.
 
 The signing keys (the updater key, and Apple's and Windows' code signing
@@ -1896,5 +2616,5 @@ is on `main`. The jobs that use the environment build nothing: they sign
 bundles that an earlier job compiled without any secret, using Apple's and
 Microsoft's signing tools and a minisign binary pinned by checksum. The
 release workflow verifies every updater signature, version and download URL
-before it publishes the manifest, and the release stays a draft until it
+before it publishes the update files, and the release stays a draft until it
 has. See `desktop/README.md` for the jobs.

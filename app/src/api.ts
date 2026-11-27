@@ -1,5 +1,8 @@
 import { formatUSD } from "@baum/viewer/components/format";
 import type { ReviewDocument } from "@baum/viewer/review-document";
+import { chromeOf } from "./review-view/chrome";
+import { parseReviewV2, REVIEW_V2, type ReviewV2 } from "./review-view/document";
+import { withReview } from "./review-view/model";
 export type Clone = {
   id: string;
   path: string;
@@ -11,8 +14,14 @@ export type Clone = {
     /** Decision capture for this repository: false turns it off, null and
      *  true follow the global switches. Absent from an older daemon. */
     decisions?: boolean | null;
+    /** The saved tile types pinned to this repository, which its reviews
+     *  always fill (Settings › Tile library sets them); absent when none
+     *  are. */
+    tiles?: TileSettings | null;
   };
 };
+/** A repository's tile settings: the library types pinned to it. */
+export type TileSettings = { types?: string[] };
 export type Repository = {
   repository: string;
   settings: Clone["settings"];
@@ -24,12 +33,19 @@ export type Repository = {
 export class LocalRequestError extends Error {
   code?: string;
   status?: number;
-  constructor(message: string, code?: string, status?: number) {
+  /** The error's JSON body, for a refusal that carries more than its code
+   *  (the session panel's `operation_changed` holds the new summary). */
+  body?: unknown;
+  constructor(message: string, code?: string, status?: number, body?: unknown) {
     super(message);
     this.code = code;
     this.status = status;
+    this.body = body;
   }
 }
+/** The code a session's end, message, focus or answer route refuses a
+ *  session panel's session with: the panel runs and stops it. */
+export const PANEL_SESSION = "panel_session";
 export type GitHubState = {
   review: "" | "approved" | "changes_requested" | "commented" | "unreviewed";
   checks: "" | "passing" | "failing" | "running" | "none";
@@ -74,6 +90,10 @@ export type PR = GitHubState & {
   /** GitHub says the branch is out of date with its base and not conflicting,
    *  which Update branch fixes; absent in data from an older daemon. */
   behind?: boolean;
+  /** When it was opened and last updated on GitHub (RFC 3339); absent in
+   *  data from an older daemon. */
+  created_at?: string;
+  updated_at?: string;
   /** GitHub still waits for a required approving review. False when none is
    *  required or the one required is given; null or absent when unknown. */
   review_required?: boolean | null;
@@ -94,6 +114,11 @@ export type Entry = GitHubState & {
     recorded_cost_usd: number | null;
   } | null;
   risk_score: { score: number | null; status: string } | null;
+  /** A newer head the latest review was found to still cover: with
+   *  automatic reviews set to On change, the agent read what it changed and
+   *  kept the review, which is then current at that head. Absent when there
+   *  is none, and from an older daemon. */
+  kept?: { head: string; reason: string; kept_at: string };
   historical: boolean;
   /** The repository's list is not current (discovery failed, unvalidated or past its next poll). Age is not part of it: see `metadataStale`. */
   stale: boolean;
@@ -152,10 +177,35 @@ export type ReviewGroup = {
     model: string;
     recorded_cost_usd: number | null;
   } | null;
-  risk_score: { score: number | null; status: string } | null;
+  /** The latest version's risk; a stack's is its riskiest member review's. */
+  risk_score: {
+    score: number | null;
+    status: string;
+    reasons?: { section: string; text: string }[];
+  } | null;
   /** The members the latest version covered, with the heads it read. */
   reviewed: { number: number; head_sha: string; review_version: number }[];
   outdated: boolean;
+  /** A stack's overview, in place of a combined review; absent for a group a
+   *  person made (and from an older daemon). */
+  overview?: StackOverviewData;
+};
+/** What a stack's page shows beside its pull requests, from their saved
+ *  reviews. */
+export type StackOverviewData = {
+  /** The open pull request whose saved review scores the highest risk. */
+  riskiest?: number;
+  /** How many open pull requests have a saved review. */
+  reviewed: number;
+  /** A few sentences about the whole stack, written from those reviews. */
+  summary: {
+    text: string;
+    model: string;
+    created_at: string;
+    members: { number: number; review_version: number }[];
+  } | null;
+  /** The summary read every open pull request's latest saved review. */
+  current: boolean;
 };
 export const MAX_GROUP_MEMBERS = 8;
 /** An older daemon answers 404 or `available: false`: no groups. */
@@ -322,7 +372,10 @@ export type AutomaticStatus = {
 export type Automatic = {
   enabled: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
-  pull_requests?: "all" | "both" | "authored" | "requested";
+  pull_requests?: "all" | "both" | "authored" | "requested" | "inboxes";
+  /** What a push to a reviewed pull request does; absent from older daemons,
+   *  which review every push. */
+  updates?: "always" | "on_open" | "on_change";
   repositories: AutomaticStatus[];
 };
 const jobReasons: Record<string, string> = {
@@ -364,12 +417,16 @@ const jobReasons: Record<string, string> = {
   head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
   no_remote: "The local clone has no remote for this repository to push to.",
   git: "A git command in the temporary checkout failed.",
+  no_significant_change:
+    "The new commits don't change what the review says, so baum kept the existing review.",
   no_changes: "The agent changed nothing, so there was nothing to push.",
   conflicts_remain: "The agent left conflict markers in a file, so nothing was pushed.",
   history_rewritten:
     "The result didn't build on the pull request's commits, so baum refused to push it.",
   workflow_changed:
-    "The agent changed a GitHub workflow or action, which a fix of review comments or a conversation never pushes. Nothing was pushed.",
+    "The agent changed a GitHub workflow or action, which needs workflow access that baum's GitHub connection does not have, so nothing was pushed. Choose Reconnect with workflow access in Settings, then run the fix again.",
+  workflow_scope:
+    "GitHub refused the push because the git credential it used can't change workflows. Give that credential the workflow scope (for the GitHub CLI: gh auth refresh -s workflow), then run the fix again.",
   credential_added:
     "The agent's change adds what looks like a credential, which baum never pushes. Nothing was pushed.",
   nested_repository:
@@ -389,6 +446,13 @@ export function changedNothing(job: Job): boolean {
     job.reason === "no_changes" &&
     (job.state === "completed" || job.state === "failed")
   );
+}
+/** A review that ended by keeping the saved review: the agent read what
+ *  changed since it and found nothing that would make a difference. It is an
+ *  outcome to read, not an error and not a new review; the agent's one line
+ *  is in `summary`. */
+export function keptReview(job: Job): boolean {
+  return !job.kind && job.reason === "no_significant_change" && job.state === "completed";
 }
 /** The first paragraph of what a fix's agent said, which says why when it
  *  changed nothing; empty without a summary. */
@@ -567,7 +631,10 @@ export type LiveSession = {
     | "ambiguous"
     | "stale"
     | "unavailable"
-    | "unknown_history";
+    | "unknown_history"
+    /** A session panel's session whose directory is in no clone: it has no
+     *  repository. */
+    | "panel";
   /** How `pr` was found: from the session's directory (`branch`, `upstream`,
    *  `head`), or from its agent's latest commit or push elsewhere. */
   link_method?: "branch" | "upstream" | "head" | "commit" | "push";
@@ -589,6 +656,12 @@ export type LiveSession = {
    *  tmux pane or Claude desktop conversation, or only the window it runs
    *  in. Absent when it cannot, as once the session ended. */
   focus?: "session" | "window";
+  /** `panel` for a session the app's session panel runs, which has no end,
+   *  message or focus actions (the panel runs and stops it); absent for
+   *  every other session. */
+  origin?: "panel";
+  /** The panel conversation a panel session belongs to. */
+  conversation?: string;
 };
 /** One tool call of a session: the tool as displayed ("Read", "Edit",
  *  "Bash", "server: tool") and what it works on, one masked line. */
@@ -613,6 +686,9 @@ export function focusSession(
     {},
   );
 }
+/** A path with the home folder written as `~`. */
+export const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
   // Analytics names agents by their session store's vendor slug.
@@ -886,7 +962,7 @@ export function appURL(path = ""): string {
 /** What the app keeps in each of its history entries: how many of its own
  *  entries lie behind it (`depth`), the place it shows (`place`), and the
  *  depth of the entry it was opened from (`back`), the last one that showed
- *  another place. Moves within a place (a walkthrough step, the Ask panel)
+ *  another place. Moves within a place (such as the Ask panel)
  *  keep their `back`, so going back leaves the place in one step. */
 type AppHistory = { depth: number; place: string; back?: number };
 
@@ -936,14 +1012,14 @@ export function navigate(href: string) {
   writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
 }
-/** Opens a page outside the app, as a link to it would. */
-export function openExternal(url: string) {
-  Object.assign(document.createElement("a"), {
-    href: url,
-    target: "_blank",
-    rel: "noreferrer",
-  }).click();
+/** Opens one of the app's own addresses in the current entry's place, so
+ *  Back skips the address it replaces. */
+export function redirect(href: string) {
+  writeHistory(href, true);
+  dispatchEvent(new PopStateEvent("popstate"));
 }
+/** Opens a page outside the app, as a link to it would. */
+export { openExternal } from "./outside-links";
 /** A job's own page: everything kept about it and its transcript. */
 export function jobHref(job: Job) {
   return appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`);
@@ -1009,6 +1085,7 @@ async function failure(response: Response): Promise<LocalRequestError> {
   let body: {
     code?: string;
     message?: string;
+    error?: string;
     needs_clone?: boolean;
     blocked_reason?: string;
     isolation_required?: boolean;
@@ -1025,13 +1102,16 @@ async function failure(response: Response): Promise<LocalRequestError> {
       ? "Needs a local clone"
       : body.blocked_reason
         ? jobReasonText(body.blocked_reason)
-        : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
+        : (body.message ??
+          body.error ??
+          `Local request failed (${response.status}): ${text.slice(0, 240)}`),
     body.needs_clone
       ? "needs_clone"
       : body.isolation_required
         ? "isolation_required"
         : (body.blocked_reason ?? body.code),
     response.status,
+    body,
   );
 }
 
@@ -1194,13 +1274,97 @@ function validDocument(doc: ReviewDocument) {
     throw Error("Invalid review document.");
   return doc;
 }
+/** A saved review or a draft as the app's lists, previews and chrome read
+ *  it: a baum.review/1 document as served, a baum.review/2 one as the review
+ *  it makes (its summary, risk and sections). */
+export function readableDocument(doc: ReviewDocument | ReviewV2 | Record<string, unknown>) {
+  if ((doc as { schema?: unknown }).schema === REVIEW_V2) {
+    const review = parseReviewV2(doc);
+    if (!review) throw Error("Invalid review document.");
+    return chromeOf(review);
+  }
+  return validDocument(doc as ReviewDocument);
+}
 export function documentRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
-  return request<ReviewDocument>(
+  return request<ReviewDocument | ReviewV2>(
     `api/document?${selector(clone, pr, version)}`,
     undefined,
     "GET",
     signal,
-  ).then(validDocument);
+  ).then(readableDocument);
+}
+/** A version of the review as the review page reads it. A baum.review/1
+ *  version is read as stored (its own document, which the viewer's Summary
+ *  and section pages draw in the page's shell); a baum.review/2 one through
+ *  the tile route, with the tiles the person added. */
+export function shellRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
+  return request<ReviewDocument | ReviewV2 | Record<string, unknown>>(
+    `api/document?${selector(clone, pr, version)}`,
+    undefined,
+    "GET",
+    signal,
+  ).then((doc) =>
+    (doc as { schema?: unknown }).schema === REVIEW_V2
+      ? tilesRequest(clone, pr, version, signal)
+      : validDocument(doc as ReviewDocument),
+  );
+}
+/** A version of the review as the review page's tabs read it: the review the
+ *  page's chrome reads, carrying the baum.review/2 document the tabs read. */
+export function tilesRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
+  return request<TilesAnswer>(
+    `api/tiles?${selector(clone, pr, version)}`,
+    undefined,
+    "GET",
+    signal,
+  ).then(tiledDocument);
+}
+/** The daemon's answer for a review's tiles (and a draft's, `?tiles=1`): the
+ *  review as a baum.review/2 document, and the pending cards of tiles being
+ *  made in the session panel (latest version only). A baum.review/1 version
+ *  is answered as stored. */
+export type TilesAnswer = {
+  document: ReviewDocument | ReviewV2 | Record<string, unknown>;
+  problem?: string;
+  drafts?: unknown;
+};
+/** The tile route's answer as both of the page's documents: the
+ *  baum.review/2 document the tabs read, and the review the chrome reads
+ *  (made from it). A baum.review/1 answer has no baum.review/2 document: its
+ *  chrome is the stored review, which the page draws with its built-in
+ *  baum.review/1 view. */
+export function tilesAnswer(body: TilesAnswer): {
+  chrome: ReviewDocument;
+  review: ReviewV2 | null;
+} {
+  const served = body.document as { schema?: unknown } | undefined;
+  if (served?.schema === REVIEW_V2) {
+    const review = parseReviewV2(served, body.drafts);
+    if (!review) throw Error("Invalid review document.");
+    return { chrome: chromeOf(review), review };
+  }
+  return { chrome: validDocument(body.document as ReviewDocument), review: null };
+}
+/** The review the page's chrome reads, carrying the baum.review/2 document
+ *  the tabs read. */
+export function tiledDocument(body: TilesAnswer): ReviewDocument {
+  const { chrome, review } = tilesAnswer(body);
+  return review ? withReview(chrome, review) : chrome;
+}
+/** Removes a tile the person added from every version of a pull request, or
+ *  puts it back where it was. */
+export function addedTileRequest(
+  clone: string,
+  pr: number,
+  tile: string,
+  action: "remove" | "restore",
+) {
+  return request<{ tile: string; action: string }>("api/tiles/added", {
+    clone,
+    pr,
+    tile,
+    action,
+  });
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(
@@ -1208,7 +1372,7 @@ export function groupDocumentRequest(id: string, version?: number, signal?: Abor
     undefined,
     "GET",
     signal,
-  ).then(validDocument);
+  ).then(readableDocument);
 }
 export function rowKey(row: Entry) {
   return `${row.clone_id ?? ""}:${row.pull_request.repository}:${row.pull_request.number}`;
@@ -1226,18 +1390,14 @@ export function isActiveJob(job: Job | undefined): boolean {
   return job?.state === "queued" || job?.state === "running";
 }
 /** A queue entry belongs to the PR, including its GitHub host, across clones.
- * Active work takes precedence over earlier terminal attempts. A fix and a
- * question to the review's agent are not reviews: see fixJob and chatJobs. */
+ * Active work takes precedence over earlier terminal attempts. A fix and an
+ * earlier question to the review's agent are not reviews: see fixJob. */
 export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
   return prJob(entry, jobs, (job) => !job.kind);
 }
 /** The PR's latest retry of a review's details, an active one first. */
 export function detailsJob(entry: Entry, jobs: Job[]): Job | undefined {
   return prJob(entry, jobs, (job) => job.kind === "details");
-}
-/** The PR's questions to the review's agent, oldest first. */
-export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
-  return jobsOf(entry, jobs).filter((job) => job.kind === "chat");
 }
 /** The jobs by PR (repository lower-cased, with its host, and number), built
  *  once per jobs array: the workspace asks about every PR on each render, and
@@ -1381,22 +1541,9 @@ export type FixOnly = "checks";
  *  fix it will not run (a fork, no push access, nothing to fix) is refused
  *  with its reason in words, as a `LocalRequestError` whose code is the
  *  reason. `only` limits it, as Fix CI on the Inbox's failing checks does. */
-export async function startFix(
-  clone: string,
-  pr: number,
-  only?: FixOnly,
-  chat?: { conversation_id: string; turn: number },
-): Promise<Job[]> {
+export async function startFix(clone: string, pr: number, only?: FixOnly): Promise<Job[]> {
   const answer = await request<{ jobs: Job[] }>("api/jobs", {
-    items: [
-      {
-        clone,
-        pr,
-        kind: "fix",
-        ...(only ? { only } : {}),
-        ...(chat ? { fix_chat: { conversation_id: chat.conversation_id, turn: chat.turn } } : {}),
-      },
-    ],
+    items: [{ clone, pr, kind: "fix", ...(only ? { only } : {}) }],
     mode: "single",
   });
   return answer.jobs;
@@ -1431,10 +1578,11 @@ export type GitHubConnection = {
  *  usually because they restrict OAuth app access until an owner approves baum. */
 export type OrganizationAccess = { hidden: string[]; approval_url: string };
 
-/** What a question is about: a section of the review, a stop of the
- *  walkthrough, or the pull request as a whole. */
+/** What an Ask is about: a section of the review or the pull request as a
+ *  whole. The session panel carries it in the page
+ *  context's focus; an earlier question to the review's agent stored it. */
 export type ChatFocus = {
-  kind: "section" | "stop" | "overview";
+  kind: "section" | "overview" | "tile";
   id?: string;
   title?: string;
   anchors?: ChatAnchor[];
@@ -1483,8 +1631,9 @@ export type ChatConversation = {
 /** A turn that has not settled. */
 export const chatTurnActive = (turn: ChatTurn) =>
   turn.state === "queued" || turn.state === "running";
-/** The pull request's conversations with the review's agent, newest first;
- *  null when the daemon has no chat. */
+/** The pull request's earlier conversations with the review's agent, newest
+ *  first and read-only (no new questions are asked); null when the daemon has
+ *  no chat. */
 export async function listChats(
   clone: string,
   pr: number,
@@ -1503,16 +1652,4 @@ export async function listChats(
     if (e instanceof LocalRequestError && e.code === "chat_unavailable") return null;
     throw e;
   }
-}
-/** Asks the review's agent a question; the conversation is new without an id.
- *  A refusal is a LocalRequestError whose message is the daemon's own words. */
-export function askChat(ask: {
-  clone: string;
-  pr: number;
-  version: number;
-  conversation_id?: string;
-  question: string;
-  focus?: ChatFocus;
-}) {
-  return request<{ conversation_id: string; turn: number; job: Job }>("api/prs/chat", ask);
 }

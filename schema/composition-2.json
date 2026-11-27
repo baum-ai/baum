@@ -1,0 +1,815 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static.usebaum.com/schemas/composition/2.json",
+  "title": "baum review view composition",
+  "description": "How a generated review is presented on its review page, stored beside its baum.review/1 document: the overview's model-written parts, the tiles placed on each section, the diagrams the view call wrote, and the library and authored tiles. It holds choices and the content a review cannot hold, never a copy of the review's. This is the composition as the host stores it, after checking what a model wrote. A reference to #/$defs/<name> that this file does not define names a definition of the merged tile schema (tiles-1.json with review-1.json's definitions).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "overview",
+    "sections"
+  ],
+  "properties": {
+    "schema": {
+      "const": "baum.composition/2"
+    },
+    "generator": {
+      "$ref": "#/$defs/compositionGenerator"
+    },
+    "overview": {
+      "$ref": "#/$defs/viewOverview"
+    },
+    "sections": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/viewPlacement"
+      }
+    },
+    "diagrams": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/nativeTile"
+      }
+    },
+    "library": {
+      "description": "Library tiles: a custom tile type's definition and the data filled for this review. A library tile's ID is its type's name, so a review has at most one of each type.",
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/compositionLibraryTile"
+      }
+    },
+    "authored": {
+      "description": "Table, code and prose tiles the composer wrote, each citing the code it shows.",
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/compositionAuthoredTile"
+      }
+    }
+  },
+  "$defs": {
+    "compositionGenerator": {
+      "type": "object",
+      "description": "Provenance: the prompt version and digest, the model, when the composition was made (RFC 3339), whether it is the host's fallback (no call answered: no diagrams, verdict or risk summary, and the library and authored tiles placed by the hunks they cover), the fixes the host's checks made by kind and the host's problems. template is unused.",
+      "properties": {
+        "prompt_version": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "prompt_digest": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "composed_at": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "template": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "fallback": {
+          "type": "boolean"
+        },
+        "fixes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "problems": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "viewOverview": {
+      "type": "object",
+      "description": "The overview tab's model-written parts. Every one is optional; the page falls back to the review's own.",
+      "properties": {
+        "risk_summary": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "Why the risk score is what it is, in at most two sentences."
+        },
+        "verdict": {
+          "description": "Only when the reader must do something before merging: one line, then one point per thing to do.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "maxLength": 120,
+                  "minLength": 1
+                },
+                "points": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "minLength": 1
+                      },
+                      "section": {
+                        "type": "string",
+                        "pattern": "^sec_[a-z0-9_]+$",
+                        "maxLength": 128
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "text"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "text",
+                "points"
+              ]
+            }
+          ]
+        },
+        "screenshots": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^att_[a-f0-9]+$",
+            "maxLength": 128
+          },
+          "description": "The main screenshots, attachment IDs of the review's index."
+        },
+        "diagram": {
+          "description": "The overview's main diagram: a tile of the composition.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/tileId"
+            }
+          ]
+        },
+        "intent": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "asked": {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              "got": {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              "session": {
+                "type": "string",
+                "minLength": 1
+              },
+              "prompt": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "asked",
+              "got",
+              "session",
+              "prompt"
+            ]
+          },
+          "description": "What a linked session asked for (its prompt by index), against what the pull request does."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "screenshots",
+        "intent"
+      ]
+    },
+    "viewPlacement": {
+      "type": "object",
+      "description": "The tiles placed on a section, or on \"Where this fits\" (id context), in order. A tile is placed once, here or as the overview's diagram. The view call places at most 3 per section; the host may place more when it places the library and authored tiles the call left out.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(context|sec_[a-z0-9_]+)$",
+          "maxLength": 128
+        },
+        "tiles": {
+          "type": "array",
+          "maxItems": 19,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/tileId"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "tiles"
+      ]
+    },
+    "nativeTile": {
+      "type": "object",
+      "description": "A tile the view call wrote, drawn by the app's own components. Its data has its type's shape; every text is plain, with no markdown but `code` spans.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^dg_[a-z0-9_]{1,60}$"
+        },
+        "type": {
+          "enum": [
+            "flow",
+            "columns",
+            "sequence",
+            "table"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80,
+          "minLength": 1
+        },
+        "data": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "title",
+        "data"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "flow"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/nativeData_flow"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "columns"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/nativeData_columns"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "sequence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/nativeData_sequence"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "table"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/nativeData_table"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "nativeTone": {
+      "enum": [
+        "plain",
+        "new",
+        "good",
+        "bad",
+        "muted",
+        "missing"
+      ],
+      "description": "How a part reads: plain (the default), new, good, bad, muted, or missing (something that does not exist yet)."
+    },
+    "nativeAnchor": {
+      "type": "object",
+      "description": "A hunk of this pull request the tile rests on.",
+      "properties": {
+        "type": {
+          "const": "hunk"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^h_[0-9a-f]{12}(-[0-9]+)?$"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id"
+      ]
+    },
+    "nativeData_flow": {
+      "type": "object",
+      "properties": {
+        "caption": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/nativeAnchor"
+          }
+        },
+        "lanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 24
+              },
+              "from": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6,
+                "description": "On a lane after the first: the step of the first lane (from 1) it branches off."
+              },
+              "steps": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 6,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "maxLength": 60,
+                      "minLength": 1
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 80
+                    },
+                    "more": {
+                      "type": "string",
+                      "maxLength": 300,
+                      "description": "The detail the page shows when the step is opened."
+                    },
+                    "tone": {
+                      "$ref": "#/$defs/nativeTone"
+                    },
+                    "join": {
+                      "enum": [
+                        "arrow",
+                        "both",
+                        "none"
+                      ],
+                      "description": "The connector drawn before the step, ignored on a lane's first: arrow (the default), both (a two-way arrow) or none (side by side)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "title"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "lanes"
+      ]
+    },
+    "nativeData_columns": {
+      "type": "object",
+      "properties": {
+        "caption": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/nativeAnchor"
+          }
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 40,
+                "minLength": 1
+              },
+              "tone": {
+                "$ref": "#/$defs/nativeTone"
+              },
+              "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "minLength": 1
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 80
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "title"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "label"
+            ]
+          }
+        },
+        "rows": {
+          "description": "Two or three states of one thing compared item by item: each row holds one item per column, null where that column has none. With rows, the columns have no items.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "minLength": 1
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 80
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "title"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "columns"
+      ]
+    },
+    "nativeData_sequence": {
+      "type": "object",
+      "properties": {
+        "caption": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/nativeAnchor"
+          }
+        },
+        "actors": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": {
+            "type": "string",
+            "maxLength": 24,
+            "minLength": 1
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              },
+              "to": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              "tone": {
+                "$ref": "#/$defs/nativeTone"
+              },
+              "reply": {
+                "type": "boolean",
+                "description": "An answer to an earlier message, drawn dashed."
+              },
+              "change": {
+                "enum": ["added", "changed"],
+                "description": "What the pull request does to this message."
+              },
+              "was": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "description": "A changed message's text before the change."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to",
+              "text"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "actors",
+        "steps"
+      ]
+    },
+    "nativeData_table": {
+      "type": "object",
+      "properties": {
+        "caption": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/nativeAnchor"
+          }
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 5,
+            "items": {
+              "description": "A table cell: its text, or the text and what the value was before the change.",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    "was": {
+                      "type": "string",
+                      "maxLength": 120
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "text"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "columns",
+        "rows"
+      ]
+    },
+    "compositionLibraryTile": {
+      "type": "object",
+      "description": "A library tile: its type's definition, with its digest, and its data. A pending tile is still being filled and has empty data.",
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/tileTypeDefinition"
+        },
+        "data": {
+          "type": "object"
+        },
+        "pending": {
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "definition",
+        "data"
+      ]
+    },
+    "compositionAuthoredTile": {
+      "type": "object",
+      "description": "A tile the composer wrote. id starts with its type (table, code or prose), and data has that type's shape without origin. It cites at least one hunk or file of the review, and every citation resolves.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(table|code|prose)_[a-z0-9_]{1,64}$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "data": {
+          "type": "object",
+          "not": {
+            "required": [
+              "origin"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "data"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "pattern": "^table_"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/tileData_table"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "pattern": "^code_"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/tileData_code"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "pattern": "^prose_"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/tileData_prose"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

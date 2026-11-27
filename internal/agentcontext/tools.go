@@ -43,6 +43,11 @@ type Tool struct {
 	// default, false, is a read-only tool; tools/list reports it in the tool's
 	// annotations so a client can approve read-only tools unasked.
 	Proposes bool
+	// Edits marks a tool that changes state at once, without a proposal:
+	// only the tools that add a tile to the person's own page they have open
+	// (addtools.go, tiletools.go). Its annotations say it is not read-only
+	// and destroys nothing.
+	Edits bool
 	// Call runs the tool. Its text, or its error's message, goes back to the
 	// agent through the envelope: masked, cut and fenced.
 	Call func(ctx context.Context, c CallContext, args json.RawMessage) (string, error)
@@ -75,6 +80,10 @@ type CallContext struct {
 	// Page is the consumer's page; HasPage is false until one is set.
 	Page    PageContext
 	HasPage bool
+	// Turn is the page the consumer's current turn was sent from; HasTurn is
+	// false when the host recorded none.
+	Turn    PageContext
+	HasTurn bool
 	// Reader reads the routes the tool declared (Tool.Reads); an action's
 	// reads only its repository's, through actionRoutes.
 	Reader *Reader
@@ -84,10 +93,14 @@ type CallContext struct {
 }
 
 // Target resolves the repository and pull request a tool reads: the ones
-// asked for, else the action's own, else those of the page the user has open.
-// An action is refused any other repository.
+// asked for, else the action's or review's own, else those of the page the
+// user has open. An action is refused any other repository.
 func (c CallContext) Target(repository string, number int) (string, int, error) {
 	repository = strings.TrimSpace(repository)
+	if c.Consumer.Kind == Review {
+		repository, number = c.reviewTarget(repository, number)
+		return repository, number, nil
+	}
 	if c.Consumer.Kind == Action {
 		if repository != "" && !strings.EqualFold(repository, c.Consumer.Repository) {
 			return "", 0, errOtherRepository
@@ -192,9 +205,17 @@ func (t *Tool) arguments(args json.RawMessage) (json.RawMessage, error) {
 	return args, nil
 }
 
-// visible reports whether consumer may list and call t.
+// visible reports whether consumer may list and call t: a chat every tool,
+// an action the repository's tools, a review the tools listed as its reads
+// (reviewaccess.go).
 func (t Tool) visible(consumer Consumer) bool {
-	return consumer.Kind != Action || t.Scope == ScopeRepository
+	switch consumer.Kind {
+	case Action:
+		return t.Scope == ScopeRepository
+	case Review:
+		return t.reviewReadable()
+	}
+	return true
 }
 
 // builtinTools are the tools every consumer has, whatever its page.

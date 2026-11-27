@@ -590,6 +590,43 @@ func TestUnprovenUserItemMakesDownstreamTurnUnsupported(t *testing.T) {
 	}
 }
 
+func TestDaemonRecoveryKeepsResumedActivity(t *testing.T) {
+	lines := append(basicStart(),
+		envelope("2026-08-01T12:00:04Z", "event_msg", `{"type":"turn_aborted","turn_id":"turn","reason":"interrupted"}`),
+		envelope("2026-08-01T12:00:05Z", "event_msg", `{"type":"task_started","turn_id":"recovery","turn_attribution":{"turn_trigger":"daemon_recovery","root_turn_id":"turn"}}`),
+		envelope("2026-08-01T12:00:06Z", "response_item", `{"type":"message","role":"user","content":[{"type":"input_text","text":"Copied history"}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn","content_item_kinds":["daemon_recovery.internal_context"]}}`),
+		envelope("2026-08-01T12:00:07Z", "response_item", `{"type":"message","role":"user","content":[{"type":"input_text","text":"Continue the unfinished work."}],"internal_chat_message_metadata_passthrough":{"turn_id":"recovery","content_item_kinds":["daemon_recovery.internal_context"]}}`),
+		envelope("2026-08-01T12:00:08Z", "response_item", `{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"true\"}","call_id":"resumed"}`),
+		envelope("2026-08-01T12:00:09Z", "token_usage_record", `{"turn_id":"recovery","usage":{"input_tokens":10,"output_tokens":5}}`),
+		envelope("2026-08-01T12:00:10Z", "response_item", `{"type":"function_call_output","call_id":"resumed","output":"Chunk ID: test\nProcess exited with code 0\nOutput:\nRan successfully"}`),
+		envelope("2026-08-01T12:00:11Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Finished after recovery."}]}`),
+		envelope("2026-08-01T12:00:12Z", "token_usage_record", `{"turn_id":"recovery","usage":{"input_tokens":20,"output_tokens":7}}`),
+		envelope("2026-08-01T12:00:13Z", "event_msg", `{"type":"task_complete","turn_id":"recovery"}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if !report.Records.Balanced() || report.UnsupportedTurns != 0 || len(graph.UserInputs) != 2 {
+		t.Fatalf("inputs = %+v, report = %+v", graph.UserInputs, report)
+	}
+	human, recovery := graph.UserInputs[0], graph.UserInputs[1]
+	if human.Origin != session.OriginHuman || !human.Interrupted ||
+		recovery.Origin != session.OriginSystem || recovery.Text != "Continue the unfinished work." {
+		t.Fatalf("inputs = %+v", graph.UserInputs)
+	}
+	tool := toolForCall(t, graph, "resumed")
+	if tool.UserInputID != recovery.ID || len(graph.ToolResults) != 1 ||
+		!strings.Contains(string(graph.ToolResults[0].Output), "Ran successfully") {
+		t.Fatalf("tool = %+v, results = %+v", tool, graph.ToolResults)
+	}
+	if len(graph.ModelInvocations) != 2 || graph.ModelInvocations[0].InputTokens != 10 ||
+		graph.ModelInvocations[1].OutputTokens != 7 ||
+		len(graph.AssistantMessages) != 1 || graph.AssistantMessages[0].UserInputID != recovery.ID {
+		t.Fatalf("invocations = %+v, messages = %+v", graph.ModelInvocations, graph.AssistantMessages)
+	}
+	if err := session.Validate(graph); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConsequenceOutsideATurnBlocksPersistence(t *testing.T) {
 	lines := basicStart()[:1]
 	lines = append(lines,

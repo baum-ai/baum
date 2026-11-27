@@ -1,5 +1,8 @@
+import { PullRequestIssueLinks } from "./integrations";
 import { SavedStateNotice } from "./ui-state";
-import { PreferencesProvider } from "./preferences";
+import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
+import { TileCheckPage } from "./tiles/custom/check-runner";
+import { PreferencesProvider, usePreferences } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
@@ -57,7 +60,8 @@ import {
   progressParts,
   type ReloadPart,
 } from "./reload-events";
-import { queueItems, UpNextPage, useUpNext } from "./up-next";
+import { queueItems, UpNextPage, upNextKey, useUpNext } from "./up-next";
+import { usePullActivity } from "./pr-activity";
 import {
   FilterBar,
   FilterButton,
@@ -65,12 +69,15 @@ import {
   SaveButton,
   type SaveOption,
 } from "./filter-menu";
+import { parseSort } from "./pr-sort";
+import { SortButton } from "./sort-menu";
 import {
   matchesQuery,
   MAX_TABS,
   queryProblem,
   quote,
   usePageFilter,
+  usePageSort,
   useFilterDraft,
   useSavedTabs,
   type SavedTab,
@@ -89,6 +96,7 @@ import {
   useShortcuts,
   VIEW_KEYS,
   type ShortcutsPlace,
+  pageKeyLabel,
   useReadlineArrows,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
@@ -108,8 +116,19 @@ import {
   type ReviewDefaults,
 } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
+import { pageContextOf, pageLabel, withPicked } from "./page-context";
+import {
+  PANEL_KEY_LABEL,
+  publishConsoleEvent,
+  publishConsoleResync,
+  sessionPanel,
+  SessionPanelHost,
+  useConversations,
+  useSessionPanel,
+} from "./session-panel";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
+import { publishAddedTilesEvent, publishAddedTilesResync } from "./tiles/added-events";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import {
   Notice,
@@ -131,7 +150,6 @@ import {
   detailsJob,
   fixJob,
   jobName,
-  chatJobs,
   fixJobs,
   isActiveJob,
   jobHref,
@@ -140,6 +158,8 @@ import {
   filtered,
   rowKey,
   jobReasonText,
+  keptReview,
+  summaryLead,
   parseLive,
   parseAgentRequests,
   noAgentRequests,
@@ -164,8 +184,9 @@ import {
 import { useModal } from "./modal";
 import { PageRead, ReadFailed, readState } from "./page-state";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, type FixChat } from "./fix";
+import { FixDetails } from "./fix";
 import { useLocation } from "./location";
+import { Profiled } from "./perf";
 import {
   AnalyticsPage,
   GroupPage,
@@ -258,6 +279,22 @@ function rememberPullsTab(tab: string) {
     // Without storage the page opens on Open.
   }
 }
+const LAST_INBOX_KEY = "baum.inbox.last.v1";
+/** The saved inbox last shown in this window's browser, if any. */
+function lastInbox(): string | null {
+  try {
+    return localStorage.getItem(LAST_INBOX_KEY);
+  } catch {
+    return null;
+  }
+}
+function rememberInbox(id: string) {
+  try {
+    localStorage.setItem(LAST_INBOX_KEY, id);
+  } catch {
+    // Without storage ⌘1 opens the first inbox.
+  }
+}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
@@ -271,10 +308,12 @@ function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
           !e.metaKey &&
           !e.ctrlKey &&
           !e.shiftKey &&
-          href.startsWith(appBase())
+          (href.startsWith(appBase()) || href.startsWith("?"))
         ) {
+          // A link the viewer writes as a query of the page it is on, such
+          // as a quote's session, stays in the app too.
           e.preventDefault();
-          navigate(href);
+          navigate(href.startsWith("?") ? appURL(href) : href);
         }
       }}
     />
@@ -286,7 +325,9 @@ function errorText(error: unknown) {
 export function App() {
   return (
     <PreferencesProvider>
-      <Application />
+      <Profiled id="app">
+        <Application />
+      </Profiled>
     </PreferencesProvider>
   );
 }
@@ -319,7 +360,10 @@ function Application() {
       <ToastProvider>
         <SampleGuard />
         <ViewerLinkProvider link={LocalLink}>
-          {auth === "ready" ? (
+          {auth === "ready" && url.search.get("page") === "tile-check" ? (
+            // The desktop shell's hidden check window: the runner alone.
+            <TileCheckPage />
+          ) : auth === "ready" ? (
             <Workspace url={url} />
           ) : (
             <main className="local-connecting">
@@ -337,6 +381,7 @@ function Application() {
   );
 }
 function Workspace({ url }: { url: UrlState }) {
+  const { preferences } = usePreferences();
   const [clones, setClones] = useState<Clone[]>([]);
   const [picked, setPicked] = useState<Repository[]>([]);
   const [attached, setAttached] = useState<FoundClones["attached"]>([]);
@@ -659,6 +704,23 @@ function Workspace({ url }: { url: UrlState }) {
     for (const kind of ["decisions", "open", "reset", "automatic"])
       source.addEventListener(kind, refreshDecisions);
     source.addEventListener("reset", refreshLive);
+    // The session panel reads its conversations on their events, and all of
+    // them again after a reset or a reconnection (below), as it may have
+    // missed some.
+    source.addEventListener("console", (event) =>
+      publishConsoleEvent(String((event as MessageEvent).data)),
+    );
+    // Like the other reads, not while the window is hidden.
+    const resyncConsole = () => gate.run("console", publishConsoleResync);
+    source.addEventListener("reset", resyncConsole);
+    // The open review page reads its tiles again when the tiles the person
+    // added, or those being made, changed, from the session panel or another
+    // window.
+    source.addEventListener("added_tiles", (event) =>
+      publishAddedTilesEvent(String((event as MessageEvent).data)),
+    );
+    const resyncAddedTiles = () => gate.run("added_tiles", publishAddedTilesResync);
+    source.addEventListener("reset", resyncAddedTiles);
     // Each kind of event reads what it can change, and what it may change
     // where that is unclear.
     source.addEventListener("index", () => markStale(indexParts));
@@ -676,6 +738,12 @@ function Workspace({ url }: { url: UrlState }) {
       }
     });
     source.addEventListener("automatic", () => markStale(automaticParts));
+    // The render check: open the check window, or draw in this page.
+    source.addEventListener("tile_check", (event) =>
+      onTileCheckEvent((event as MessageEvent).data),
+    );
+    // A new connection is not sent past checks: ask once what is waiting.
+    void checkWaitingJobs();
     source.addEventListener("reset", () => markStale(allReloadParts));
     const refreshTimeline = () => gate.run("timeline", () => setTimelineTick((n) => n + 1));
     source.addEventListener("timeline", refreshTimeline);
@@ -688,6 +756,8 @@ function Workspace({ url }: { url: UrlState }) {
         markStale(allReloadParts);
         refreshLive();
         refreshTimeline();
+        resyncConsole();
+        resyncAddedTiles();
       }
       connected = true;
     });
@@ -720,6 +790,12 @@ function Workspace({ url }: { url: UrlState }) {
     savedTab ? savedTab.query : null,
   );
   const viewFilter = usePageFilter("pulls");
+  // Open and Closed share Pull requests' sort; a saved tab has its own,
+  // saved with it at once.
+  const pageSort = usePageSort("pulls");
+  const pullsSort = savedTab ? (savedTab.sort ?? "") : pageSort.sort;
+  const setPullsSort = (next: string) =>
+    savedTab ? savedTabs.setSort(savedTab.id, next) : pageSort.set(next);
   const pullsQuery = pullsFilter.query;
   const setPullsQuery = (query: string) => {
     if (query === pullsQuery || queryProblem(query, false)) return;
@@ -905,6 +981,23 @@ function Workspace({ url }: { url: UrlState }) {
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
   const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error, groups);
+  // What happened on each pull request since its page was last open, which
+  // its row counts; the page open now has read all of it.
+  const conversations = useConversations();
+  // Pull requests are counted on the pages that show them: counting compares
+  // reads, so what changes meanwhile is counted on coming back.
+  const pullPage = page === "inbox" || page === "pulls";
+  const openGroup = pullPage && groupId ? groups.find((group) => group.id === groupId) : undefined;
+  const activity = usePullActivity(
+    snapshot.entries,
+    conversations.loaded && !conversations.error ? conversations.list : null,
+    openGroup
+      ? openGroup.members.map((number) => upNextKey({ repository: openGroup.repository, number }))
+      : pullPage && selectedEntry
+        ? [upNextKey(selectedEntry.pull_request)]
+        : [],
+    pullPage && revision > 0 && !error,
+  );
   // What the sidebar highlights is the page that shows the queue, with the
   // inbox the address names, when the daemon still has it.
   const railPage: Page =
@@ -922,6 +1015,9 @@ function Workspace({ url }: { url: UrlState }) {
     railPage === "inbox"
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
+  useEffect(() => {
+    if (selectedInbox) rememberInbox(selectedInbox.id);
+  }, [selectedInbox?.id]);
   const firstInbox = inboxes.status === "ready" ? (inboxes.inboxes[0] ?? null) : null;
   const queueInbox = page === "inbox" ? (selectedInbox ?? (detailPage ? firstInbox : null)) : null;
   // The root, a legacy link to the whole queue, or an inbox that is gone:
@@ -998,8 +1094,7 @@ function Workspace({ url }: { url: UrlState }) {
     if (first && url.search.get("inbox") === target.id)
       url.update(
         (current) => {
-          for (const key of ["page", "pr", "clone", "repository", "group", "walk"])
-            current.delete(key);
+          for (const key of ["page", "pr", "clone", "repository", "group"]) current.delete(key);
           current.set("inbox", first.id);
           return current;
         },
@@ -1111,14 +1206,14 @@ function Workspace({ url }: { url: UrlState }) {
   // A fix starts at once, from its button or key: there is no dialog and no
   // price to confirm. One the daemon will not run (a fork, no push access,
   // nothing to fix) says why where it was asked for.
-  const fix = async (entry: Entry, only?: FixOnly, chat?: FixChat) => {
+  const fix = async (entry: Entry, only?: FixOnly) => {
     const clone = cloneFor(entry);
     const key = rowKey(entry);
     if (!clone || fixStarting.has(key) || isActiveJob(fixJob(entry, jobs))) return;
     setFixError(null);
     setFixStarting((now) => new Set([...now, key]));
     try {
-      await startFix(clone, entry.pull_request.number, only, chat);
+      await startFix(clone, entry.pull_request.number, only);
       await reload();
     } catch (e) {
       setFixError({ key, number: entry.pull_request.number, text: errorText(e) });
@@ -1132,9 +1227,13 @@ function Workspace({ url }: { url: UrlState }) {
   });
   // One notice for every repository GitHub could not refresh, whichever
   // refresh failed: the cause and the fix are usually the same connection.
+  // One pull request's details failing to read is not the repository failing
+  // to refresh: that read backs off on its own while the polls go on.
   const unsynced = [
     ...new Set([
-      ...background.filter((s) => s.error).map((s) => s.repository),
+      ...background
+        .filter((s) => s.error && s.error !== "metadata_unavailable")
+        .map((s) => s.repository),
       ...rates.filter((r) => r.error).map((r) => r.repository),
     ]),
   ];
@@ -1240,6 +1339,9 @@ function Workspace({ url }: { url: UrlState }) {
   const pageRefresh = usePageRefresh(shownPage, () =>
     Promise.all([reload({ restart: true }), reloadLive()]),
   );
+  // Retry after a failed read starts a new one: a read still under way may
+  // never answer, and joining it would leave the page waiting on it.
+  const retryRead = () => reload({ restart: true });
   // The pages that show what the first read brought: when it failed they say
   // so, once, rather than wait for it or call themselves empty.
   const readFailed =
@@ -1267,20 +1369,51 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : selectedEntry && url.search.get("walk") && url.search.get("walk") !== "full"
-      ? "walkthrough"
-      : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
-        ? "review"
-        : (page === "sessions" && openSession) || openJob || openRepository
-          ? "page"
-          : page === "inbox" ||
-              page === "sessions" ||
-              page === "jobs" ||
-              page === "repositories" ||
-              page === "timeline" ||
-              page === "settings"
-            ? page
-            : "anywhere";
+    : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
+      ? "review"
+      : (page === "sessions" && openSession) || openJob || openRepository
+        ? "page"
+        : page === "inbox" ||
+            page === "sessions" ||
+            page === "jobs" ||
+            page === "repositories" ||
+            page === "timeline" ||
+            page === "settings"
+          ? page
+          : "anywhere";
+  // What the person has open, as the session panel reports it to the daemon
+  // and names it in its bar, with its subject's name where the app has it,
+  // and the part of a pull request's review an Ask picked.
+  const panel = useSessionPanel();
+  const pageContext = useMemo(
+    () =>
+      withPicked(
+        pageContextOf(
+          url.search,
+          (id) => clones.find((clone) => clone.id === id)?.repository,
+          location.hash,
+        ),
+        panel.ask,
+      ),
+    // The hash is a pull request's anchor: read again whenever the page draws.
+    [url.search, clones, location.hash, panel.ask],
+  );
+  const pageTitle =
+    pageContext.page === "pull_request"
+      ? selectedEntry?.pull_request.title
+      : pageContext.page === "group"
+        ? groups.find((group) => group.id === pageContext.group)?.name
+        : pageContext.page === "session"
+          ? live.find((s) => `${s.agent}:${s.session_id}` === pageContext.session)?.title
+          : undefined;
+  // The window title names the page, for the window switcher and screen readers.
+  const windowTitle = pageLabel(pageContext, pageTitle);
+  useEffect(() => {
+    document.title = `${windowTitle} · baum`;
+  }, [windowTitle]);
+  // The prompt a link opened the session at, `&turn=<n>`.
+  const turnParam = url.search.get("turn");
+  const openTurn = turnParam && /^\d+$/.test(turnParam) ? Number(turnParam) : undefined;
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -1312,9 +1445,28 @@ function Workspace({ url }: { url: UrlState }) {
         id: `page:${item.page}`,
         kind: "Page" as const,
         label: item.label,
+        detail: pageKeyLabel(item.page, preferences.page_modifier),
         href: item.href(),
       })),
-      { id: "tour", kind: "Page" as const, label: "Take the tour", href: TOUR_HREF() },
+      { id: "tour", kind: "Action" as const, label: "Take the tour", href: TOUR_HREF() },
+      {
+        id: "session-panel",
+        kind: "Action" as const,
+        label: panel.open ? "Hide the session panel" : "Open the session panel",
+        detail: PANEL_KEY_LABEL,
+        keywords: "agent claude codex terminal console chat",
+        href: "",
+        run: () => sessionPanel.toggle(),
+      },
+      {
+        id: "shortcuts",
+        kind: "Action" as const,
+        label: "Keyboard shortcuts",
+        detail: "?",
+        keywords: "keys keybindings hotkeys help",
+        href: "",
+        run: () => setShortcuts(true),
+      },
       ...(inboxes.available
         ? [
             ...inboxes.inboxes.map((one) => ({
@@ -1371,6 +1523,9 @@ function Workspace({ url }: { url: UrlState }) {
     entries: indexedEntries,
     saves: inboxes.saves,
     save: inboxes.save,
+    reviewsFollowInboxes: automatic
+      ? automatic.enabled && automatic.pull_requests === "inboxes"
+      : null,
     go: navigate,
     Link: LocalLink,
   };
@@ -1409,7 +1564,16 @@ function Workspace({ url }: { url: UrlState }) {
     if (action.kind === "refresh") pageRefresh.press();
     else if (action.kind === "back") history.back();
     else if (action.kind === "forward") history.forward();
-    else navigate(PAGES.find((item) => item.page === action.page)!.href());
+    else if (action.page === "inbox") {
+      // ⌘1 returns to the inbox last seen, while it still exists; otherwise
+      // the root opens the first one.
+      const last = lastInbox();
+      navigate(
+        last && inboxes.inboxes.some((candidate) => candidate.id === last)
+          ? appURL(`?inbox=${encodeURIComponent(last)}`)
+          : PAGES.find((item) => item.page === "inbox")!.href(),
+      );
+    } else navigate(PAGES.find((item) => item.page === action.page)!.href());
   });
   useShortcuts(
     (event) => {
@@ -1421,11 +1585,12 @@ function Workspace({ url }: { url: UrlState }) {
         if (shortcuts) setShortcuts(false);
         else if (openHelp.current) openHelp.current();
         else setShortcuts(true);
+      } else if (shortcuts) {
+        // With the sheet open, no page key acts behind it.
       } else if (
         onList &&
         (VIEW_KEYS.previous.includes(event.key) || VIEW_KEYS.next.includes(event.key))
       ) {
-        if (shortcuts) return;
         // One view along, stopping at either end, as the tabs read.
         event.preventDefault();
         const index = tabKeys.indexOf(activeTab);
@@ -1468,7 +1633,7 @@ function Workspace({ url }: { url: UrlState }) {
         event.preventDefault();
         if (backToOpener()) return;
         url.update((current) => {
-          for (const key of ["pr", "clone", "repository", "group", "walk"]) current.delete(key);
+          for (const key of ["pr", "clone", "repository", "group"]) current.delete(key);
           return current;
         });
       } else if (
@@ -1481,6 +1646,7 @@ function Workspace({ url }: { url: UrlState }) {
         if (backToOpener()) return;
         url.update((current) => {
           current.delete("session");
+          current.delete("turn");
           return current;
         });
       }
@@ -1489,45 +1655,48 @@ function Workspace({ url }: { url: UrlState }) {
   );
   const shell = (
     <div className="local-shell">
-      <Sidebar
-        page={railPage}
-        inbox={inbox.queue.length}
-        inboxes={
-          inboxes.available
-            ? {
-                list: inboxes.inboxes,
-                // An inbox counts everything it lists but the person's own
-                // that wait, others' pull requests included; the Inbox
-                // total above counts only the queue.
-                counts: Object.fromEntries(
-                  inboxes.inboxes.map((candidate) => [
-                    candidate.id,
-                    countOf(candidate, inboxPageProps.items, held),
-                  ]),
-                ),
-                selected: selectedInbox?.id ?? null,
-                remove: askRemoveInbox,
-                edit: (target) => navigate(editInboxHref(target.id)),
-                create: () => navigate(newInboxHref()),
-                manage: () => navigate(manageInboxesHref()),
-              }
-            : undefined
-        }
-        activeJobs={jobs.filter(isActiveJob).length}
-        runningSessions={live.filter((s) => s.state === "running").length}
-        needsYou={asksYou(live).length}
-        problems={diagnostics.problems}
-        settingsWarning={
-          [codexTrust.warning, commandLine.warning].filter(Boolean).join(" ") || null
-        }
-        update={pendingUpdate(appUpdates.view)}
-        help={{
-          shortcuts: () => setShortcuts(true),
-          report: () => setReporting(true),
-          opener: openHelp,
-        }}
-        Link={LocalLink}
-      />
+      <Profiled id="sidebar">
+        <Sidebar
+          page={railPage}
+          inbox={inbox.queue.length}
+          inboxes={
+            inboxes.available
+              ? {
+                  list: inboxes.inboxes,
+                  // An inbox counts everything it lists but the person's own
+                  // that wait, others' pull requests included; the Inbox
+                  // total above counts only the queue.
+                  counts: Object.fromEntries(
+                    inboxes.inboxes.map((candidate) => [
+                      candidate.id,
+                      countOf(candidate, inboxPageProps.items, held),
+                    ]),
+                  ),
+                  selected: selectedInbox?.id ?? null,
+                  remove: askRemoveInbox,
+                  edit: (target) => navigate(editInboxHref(target.id)),
+                  create: () => navigate(newInboxHref()),
+                  manage: () => navigate(manageInboxesHref()),
+                }
+              : undefined
+          }
+          activeJobs={jobs.filter(isActiveJob).length}
+          runningSessions={live.filter((s) => s.state === "running").length}
+          needsYou={asksYou(live).length}
+          problems={diagnostics.problems}
+          settingsWarning={
+            [codexTrust.warning, commandLine.warning].filter(Boolean).join(" ") || null
+          }
+          update={pendingUpdate(appUpdates.view)}
+          help={{
+            shortcuts: () => setShortcuts(true),
+            report: () => setReporting(true),
+            tour: () => navigate(TOUR_HREF()),
+            opener: openHelp,
+          }}
+          Link={LocalLink}
+        />
+      </Profiled>
       <div className="local-frame">
         <div className="local-notices">
           {attached.map((a) => (
@@ -1555,7 +1724,7 @@ function Workspace({ url }: { url: UrlState }) {
             </Notice>
           ) : null}
         </div>
-        <main className="local-main">
+        <LocalMain>
           <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {refreshError ? (
             <div className="local-list-note">
@@ -1590,7 +1759,7 @@ function Workspace({ url }: { url: UrlState }) {
             <section>
               <PageBar title={readPageTitle(page, groupId)} />
               <div className="local-page-body local-list-page">
-                <ReadFailed what={readPageWhat(page, groupId)} message={error} retry={reload} />
+                <ReadFailed what={readPageWhat(page, groupId)} message={error} retry={retryRead} />
               </div>
             </section>
           ) : page === "repositories" && openRepository ? (
@@ -1631,8 +1800,19 @@ function Workspace({ url }: { url: UrlState }) {
               setSection={(section) =>
                 url.update((current) => {
                   current.set("page", "settings");
+                  current.delete("type");
                   if (section === "general") current.delete("section");
                   else current.set("section", section);
+                  return current;
+                })
+              }
+              tileType={url.search.get("type")}
+              openTileType={(type) =>
+                url.update((current) => {
+                  current.set("page", "settings");
+                  current.set("section", "tiles");
+                  if (type) current.set("type", type);
+                  else current.delete("type");
                   return current;
                 })
               }
@@ -1655,6 +1835,7 @@ function Workspace({ url }: { url: UrlState }) {
               key={openSession}
               agent={openAgent}
               id={openID}
+              focusTurn={openTurn}
               session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
               queued={agentRequests.messages.find(
                 (m) => m.agent === openAgent && m.session_id === openID,
@@ -1662,6 +1843,7 @@ function Workspace({ url }: { url: UrlState }) {
               tick={liveTick}
               prHref={sessionPR}
               Link={LocalLink}
+              openInPanel={(conversation) => sessionPanel.show(conversation)}
             />
           ) : page === "analytics" ? (
             <AnalyticsPage Link={LocalLink} />
@@ -1736,6 +1918,7 @@ function Workspace({ url }: { url: UrlState }) {
                     Link={LocalLink}
                     prHref={sessionPR}
                     navigate={navigate}
+                    openInPanel={(conversation) => sessionPanel.show(conversation)}
                   />
                 </PageRead>
               </div>
@@ -1823,7 +2006,7 @@ function Workspace({ url }: { url: UrlState }) {
                 <section>
                   <PageBar title="Review group" />
                   <div className="local-page-body">
-                    <ReadFailed what="the review group" message={groupsError} retry={reload} />
+                    <ReadFailed what="the review group" message={groupsError} retry={retryRead} />
                   </div>
                 </section>
               ) : (
@@ -1850,6 +2033,7 @@ function Workspace({ url }: { url: UrlState }) {
                 ) : (
                   <LocalLink href={backTo(url.search).href}>Inbox</LocalLink>
                 )}
+                <PullRequestIssueLinks pr={selectedEntry.pull_request} />
                 <h2>Needs a local clone</h2>
                 <p>
                   Pull requests are available from GitHub. Choose a local folder before generating a
@@ -1890,15 +2074,10 @@ function Workspace({ url }: { url: UrlState }) {
                 )}
                 generate={() => void generate([selectedEntry], "single")}
                 starting={starting.has(rowKey(selectedEntry))}
-                fix={
-                  cloneFor(selectedEntry)
-                    ? (chat) => void fix(selectedEntry, undefined, chat)
-                    : undefined
-                }
+                fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
                 fixRuns={fixJobs(selectedEntry, pullRequestJobs)}
-                chats={chatJobs(selectedEntry, pullRequestJobs)}
               />
             </DecisionsRevision.Provider>
           ) : page === "inbox" && !queueInbox ? (
@@ -1948,6 +2127,7 @@ function Workspace({ url }: { url: UrlState }) {
                   : undefined
               }
               entries={indexedEntries}
+              activity={activity}
               Link={LocalLink}
             />
           ) : page === "pulls" ? (
@@ -2065,7 +2245,13 @@ function Workspace({ url }: { url: UrlState }) {
                                   const id = newInboxId();
                                   // From a saved tab, the new one holds its query and the filter.
                                   savedTabs.add(
-                                    { id, name, view: savedTab?.view ?? view, query: pullsQuery },
+                                    {
+                                      id,
+                                      name,
+                                      view: savedTab?.view ?? view,
+                                      query: pullsQuery,
+                                      ...(pullsSort ? { sort: pullsSort } : {}),
+                                    },
                                     savedTab ? `tab:${savedTab.id}` : "pulls",
                                   );
                                   setNamingTab(null);
@@ -2082,6 +2268,7 @@ function Workspace({ url }: { url: UrlState }) {
                     }
                   />
                 )}
+                {tabsPending ? null : <SortButton sort={pullsSort} onChange={setPullsSort} />}
               </div>
               <div className="local-page-body">
                 {/* A cache older than the poll interval is normal; only a failed refresh
@@ -2127,6 +2314,8 @@ function Workspace({ url }: { url: UrlState }) {
               {!loading && rows.length > 0 ? (
                 <Inbox
                   rows={rows}
+                  pageScope={JSON.stringify([activeTab, pullsQuery, pullsSort])}
+                  sort={parseSort(pullsSort)}
                   cloneFor={cloneFor}
                   selection={selection}
                   setSelection={setSelection}
@@ -2297,12 +2486,29 @@ function Workspace({ url }: { url: UrlState }) {
               pending={generating}
             />
           ) : null}
-        </main>
+        </LocalMain>
         <KeyBar place={shortcutsPlace} className="local-key-bar" />
+        <Profiled id="session-panel">
+          <SessionPanelHost
+            page={pageContext}
+            title={pageTitle}
+            liveTick={liveTick}
+            conversations={conversations}
+            go={navigate}
+          />
+        </Profiled>
       </div>
     </div>
   );
   return <PageRefreshProvider value={pageRefresh}>{shell}</PageRefreshProvider>;
+}
+/** The page's column, its renders counted as region `main` when profiling. */
+function LocalMain({ children }: { children: ReactNode }) {
+  return (
+    <Profiled id="main">
+      <main className="local-main">{children}</main>
+    </Profiled>
+  );
 }
 /** The one confirmation generation still asks for: an agent runs with code
  *  from a fork, or from an author without known write access. */
@@ -2529,9 +2735,13 @@ const jobStates: Record<string, { label: string; tone: string }> = {
   interrupted: { label: "Interrupted", tone: "stopped" },
 };
 function JobState({ job }: { job: Job }) {
-  const state = jobStates[job.state] ?? { label: job.state, tone: "stopped" };
-  const Icon =
-    state.tone === "done"
+  const kept = keptReview(job);
+  const state = kept
+    ? { label: "Review still applies", tone: "waiting" }
+    : (jobStates[job.state] ?? { label: job.state, tone: "stopped" });
+  const Icon = kept
+    ? CircleDashedIcon
+    : state.tone === "done"
       ? CircleCheckIcon
       : state.tone === "failed" || state.tone === "stopped"
         ? CircleCrossIcon
@@ -2628,6 +2838,9 @@ function JobRow({
           <p role="status" className="local-job-meta">
             {jobReasonText(job.reason, job.kind)}
           </p>
+        ) : null}
+        {keptReview(job) && summaryLead(job.summary) ? (
+          <p className="local-job-meta">{summaryLead(job.summary)}</p>
         ) : null}
         {cancelling ? (
           <p role="status" className="local-job-meta">

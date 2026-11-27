@@ -56,6 +56,10 @@ type Options struct {
 	// PreviousPaths are directories the repository used to live at, so
 	// sessions recorded there still count.
 	PreviousPaths []string
+	// CheckoutParents hold checkouts of the repository that are gone, each
+	// in a directory of its own, whose sessions started at the top of their
+	// checkout (collector.FindOptions.CheckoutParents): baum's fixes.
+	CheckoutParents []string
 	// Sources restricts the stores read; empty means Sources.
 	Sources []vendors.Slug
 	// Since drops sessions last modified before it.
@@ -207,7 +211,7 @@ type Discovery struct {
 // Discover finds what Load would read for the repository containing dir.
 func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error) {
 	d := &Discovery{dir: dir, opts: opts}
-	// A clone whose worktrees git cannot list (git older than 2.36) is read
+	// A clone whose worktrees git cannot list is read
 	// as the one checkout containing dir.
 	if listed, err := gitlocal.Worktrees(ctx, dir); err == nil {
 		for _, worktree := range listed {
@@ -219,6 +223,7 @@ func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error)
 		CodexSessionsDir:  opts.CodexSessionsDir,
 		CursorStorePaths:  opts.CursorStorePaths,
 		PreviousPaths:     opts.PreviousPaths,
+		CheckoutParents:   opts.CheckoutParents,
 		Worktrees:         d.worktrees,
 		Since:             opts.Since,
 	})

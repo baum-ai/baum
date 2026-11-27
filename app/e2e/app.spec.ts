@@ -27,6 +27,39 @@ async function launchURL(): Promise<string> {
   throw new Error("the daemon did not publish its credential");
 }
 
+test("the short report dialog shows its actions and restores focus to Diagnostics", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto(await launchURL());
+  await openSettings(page, "This computer");
+
+  const check = page.getByRole("button", { name: "Check this computer", exact: true });
+  await check.focus();
+  await check.press("Enter");
+  const diagnostics = page.getByRole("dialog", { name: "Check this computer" });
+  const report = diagnostics.getByRole("button", { name: "Report a problem" });
+  await report.focus();
+  await report.press("Enter");
+
+  const dialog = page.getByRole("dialog", { name: "Report a problem" });
+  await expect(dialog.getByRole("textbox", { name: "What happened?" })).toBeFocused();
+  await expect(page.locator("dialog[open]")).toHaveCount(1);
+  const { y, height } = (await dialog.boundingBox())!;
+  expect(y).toBeGreaterThan(0);
+  expect(y + height / 2).toBeCloseTo(240, 0);
+  await dialog.getByRole("button", { name: "All diagnostics" }).click();
+  await expect(dialog.getByLabel("What is attached")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeInViewport({ ratio: 1 });
+  await expect(dialog.getByRole("button", { name: "Open issue" })).toBeInViewport({ ratio: 1 });
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(report).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(check).toBeFocused();
+});
+
 test("PR decisions share filtered results and distinguish pending relevance from an empty result", async ({
   page,
 }) => {
@@ -180,7 +213,7 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   await expect(page.getByText("Source screenshot request", { exact: true })).toBeVisible();
   await expect(page.locator('[aria-current="step"]')).toContainText("Source screenshot request");
   await page.goBack();
-  await page.getByRole("button", { name: "Summary", exact: true }).click();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
@@ -341,6 +374,68 @@ test("review JSON stays folded and scrollable in an existing job transcript", as
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test("a long job transcript scrolls in the panel, never the window", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.route("**/api/jobs", (route) =>
+    route.fulfill({
+      json: {
+        jobs: [
+          {
+            id: "long-run",
+            clone: "fixture",
+            repository: "acme/demo",
+            pr: 7,
+            state: "completed",
+            phase: "finished",
+            calls: 1,
+            tokens: 10,
+            repairs: 0,
+            actual_cost_usd: null,
+            has_transcript: true,
+          },
+        ],
+      },
+    }),
+  );
+  // Each tool call carries a screen-reader label for its state; placed
+  // against the window, those labels lengthened it past the panel.
+  const entries = Array.from({ length: 30 }, (_, i) => [
+    { kind: "message", text: `Part ${i}. ${"Reading the code. ".repeat(12)}` },
+    ...[1, 2, 3].map((n) => ({
+      kind: "tool",
+      tool: "Read",
+      title: `file-${n}.go`,
+      text: "ok",
+      status: "completed",
+    })),
+  ])
+    .flat()
+    .map((entry, i) => ({ seq: i + 1, time: "2026-11-02T12:00:00Z", ...entry }));
+  await page.route("**/api/jobs/long-run/transcript?*", (route) =>
+    route.fulfill({ json: { entries, next: entries.length, more: false, done: true } }),
+  );
+  await page.goto(await launchURL());
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
+  const url = new URL(page.url());
+  url.search = "?page=jobs&job=long-run";
+  await page.goto(url.href);
+  await expect(page.getByText("Part 29.", { exact: false })).toBeAttached();
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(
+    true,
+  );
+  await page.mouse.move(640, 300);
+  for (let i = 0; i < 30; i++) await page.mouse.wheel(0, 400);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const main = document.querySelector(".local-main")!;
+        return main.scrollTop + main.clientHeight >= main.scrollHeight - 1;
+      }),
+    )
+    .toBe(true);
+  expect(await page.evaluate(() => scrollY)).toBe(0);
+});
+
 test("automatic review of a new head, shown as started automatically", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -350,12 +445,25 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(pr).toBeVisible();
   await pr.click();
   await expect(page.getByText("No review yet", { exact: true })).toBeVisible();
+  // With no review yet the page is the review's own rail: the Overview says
+  // so, How it works has no sections yet, and the viewer's Summary and
+  // Changes are not drawn.
+  const rail = page.locator("#review-rail");
+  const railButton = (name: string) => rail.getByRole("button", { name: new RegExp(`^${name}`) });
+  await expect(railButton("Overview")).toHaveAttribute("aria-pressed", "true");
+  await expect(railButton("How it works")).toBeDisabled();
+  await expect(rail).toContainText("No sections yet.");
+  await expect(railButton("Summary")).toHaveCount(0);
+  await expect(railButton("Changes")).toHaveCount(0);
   // The fixture's discovery reports PR 10's new head once this marker exists.
   await writeFile(join(process.env.BAUM_APP_STATE_DIR ?? "", "push-10"), "");
   const progress = page.getByRole("region", { name: "Review generation", exact: true });
   await expect(
     progress.getByText(/Started automatically because new commits were pushed/),
   ).toBeVisible({ timeout: 15000 });
+  // Generating, the page keeps that rail.
+  await expect(railButton("Overview")).toHaveAttribute("aria-pressed", "true");
+  await expect(railButton("Changes")).toHaveCount(0);
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
@@ -366,17 +474,17 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   ).toHaveCount(1);
   await openSettings(page, "Reviews");
   const automatic = page.getByRole("region", { name: "Reviews", exact: true });
-  const toggle = automatic.getByRole("switch", { name: /Review pull requests automatically/ });
-  // The switch saves as it changes.
-  await toggle.click();
+  const toggle = automatic.getByRole("combobox", { name: /Review pull requests automatically/ });
+  // The choice saves as it changes.
+  await toggle.selectOption("never");
   await expect(automatic.getByRole("status")).toHaveText("Saved");
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveValue("never");
   // The section is in the address, so a reload stays on it.
   await page.reload();
   // After a reload the section renders once the settings requests answer,
   // which can take a while on a busy CI runner.
   await expect(automatic).toBeVisible({ timeout: 15000 });
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveValue("never");
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
   await page.getByRole("link", { name: "Settings for acme/demo" }).click();
   const repository = page.getByRole("region", { name: "Repository acme/demo", exact: true });
@@ -385,9 +493,9 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("link", { name: "Settings for acme/demo" })).toBeVisible();
   await openSettings(page, "Reviews");
-  await toggle.click();
+  await toggle.selectOption("always");
   await expect(automatic.getByRole("status")).toHaveText("Saved");
-  await expect(toggle).toBeChecked();
+  await expect(toggle).toHaveValue("always");
   expect(errors).toEqual([]);
 });
 
@@ -446,6 +554,60 @@ test("a session's transcript opens from the Sessions page and grows without a re
   expect(errors).toEqual([]);
 });
 
+test("a long session's transcript renders its earlier turns as the reader scrolls up to them", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-transcript");
+  const turns = Array.from({ length: 400 }, (_, i) => `Long session turn ${i + 1}`);
+  await writeFile(marker, `running\n${turns.join("\n")}\n`);
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const runningNow = page.getByRole("region", { name: "Running now", exact: true });
+  const title = runningNow.getByRole("link", { name: /^Open transcript/ });
+  await expect(title).toBeVisible({ timeout: 10000 });
+  // Opened at its address: the card may still show the session's last reply.
+  await page.goto(new URL((await title.getAttribute("href")) ?? "", page.url()).href);
+  const transcript = page.getByRole("region", { name: "Transcript", exact: true });
+  const turn = (n: number) => transcript.getByText(`Long session turn ${n}`, { exact: true });
+  // Opened at its end, it has its latest turns and not its first.
+  await expect(turn(400)).toBeVisible();
+  const earlier = transcript.getByRole("button", { name: /^Show \d+ earlier turns$/ });
+  await expect(earlier).toBeVisible();
+  await expect(turn(1)).toHaveCount(0);
+  // Scrolled to the top of what it has, the turns above come in and the
+  // turn the reader was at stays where it was.
+  const main = page.locator(".local-main");
+  for (let i = 0; i < 10 && (await earlier.count()); i++) {
+    const before = await earlier.textContent();
+    // In one task, so the turns above cannot come in between: scrolled to
+    // the top, where its first turn is.
+    const top = await main.evaluate((m) => {
+      m.scrollTop = 0;
+      const first = m.querySelector('[aria-label="Transcript"] ol > li');
+      first?.setAttribute("data-kept", "");
+      // Its content: a turn's padding changes once it is no longer first.
+      return (first?.firstElementChild ?? first)?.getBoundingClientRect().top ?? Number.NaN;
+    });
+    // The button names the turns still to come, and goes with the last.
+    // Read at once: the button may go between a count and a read of it.
+    await expect
+      .poll(() => earlier.evaluateAll((buttons) => buttons[0]?.textContent ?? null))
+      .not.toBe(before);
+    const kept = transcript.locator("ol > li[data-kept]");
+    const now = await kept.evaluate(
+      (li) => (li.firstElementChild ?? li).getBoundingClientRect().top,
+    );
+    expect(Math.abs(now - top)).toBeLessThan(4);
+    await kept.evaluate((li) => li.removeAttribute("data-kept"));
+  }
+  await expect(turn(1)).toBeAttached();
+  await expect(earlier).toHaveCount(0);
+  await writeFile(marker, `ended\n${turns.join("\n")}\n`);
+  expect(errors).toEqual([]);
+});
+
 // The fake GitHub drops PR 7 from the open list once merged; removing its
 // marker afterwards gives it back to the specs that run after this one.
 test("merges a ready pull request from the inbox after choosing a method", async ({ page }) => {
@@ -475,7 +637,7 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
 });
 
-test("walks through a review, comments on a behaviour and submits the review", async ({
+test("comments on a review, keeps the draft in the daemon and submits the review", async ({
   page,
   browser,
 }) => {
@@ -497,23 +659,13 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
-  // The PR page has no Walk through button for now; the walkthrough still
-  // opens from its address.
-  await expect(page).toHaveURL(/pr=/);
-  await page.goto(`${page.url()}&walk=landing`);
-  const walk = page.getByRole("region", { name: "Walkthrough" });
-  await expect(walk.getByText("The tour · riskiest first")).toBeVisible();
-  await walk.getByRole("button", { name: "Start the review", exact: true }).click();
-  await expect(page).toHaveURL(/walk=tour/);
-  await expect(walk.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(
-    "Operator-only dead-letter endpoints",
-  );
-  await walk.getByRole("button", { name: /Something looks off/ }).click();
+  await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
+  const count = page.locator("[data-review-button] .review-count").first();
+  await page.keyboard.press("c");
   await page.keyboard.type("Trusts a client-supplied header");
-  await walk.getByRole("button", { name: "Save comment", exact: true }).click();
-  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  await page.keyboard.press("Control+Enter");
+  await expect(count).toHaveText("1");
   // Drafts are stored by the daemon and survive another browser context.
-  await expect(walk.getByText("Saving review draft…", { exact: true })).toHaveCount(0);
   const retainedURL = page.url();
   await page.evaluate(() => localStorage.clear());
   const freshContext = await browser.newContext();
@@ -522,44 +674,54 @@ test("walks through a review, comments on a behaviour and submits the review", a
     await freshPage.goto(await launchURL());
     await expect(freshPage.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
     await freshPage.goto(retainedURL);
-    await expect(
-      freshPage
-        .getByRole("region", { name: "Walkthrough" })
-        .getByText("1 comment", { exact: true }),
-    ).toBeVisible();
+    await expect(freshPage.locator("[data-review-button] .review-count").first()).toHaveText("1");
   } finally {
     await freshContext.close();
   }
-  // A reload keeps the walkthrough, what was looked at and the comment.
   await page.reload();
-  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/walk=tour/);
-  await walk.getByRole("button", { name: "Send review", exact: true }).click();
-  await walk.getByRole("radio", { name: /Request changes/ }).click();
-  await walk.getByRole("button", { name: "Request changes", exact: true }).click();
-  await expect(walk.getByText("Your review is on GitHub.")).toBeVisible();
+  await expect(count).toHaveText("1");
+  // A comment on a section goes on the first line its summary cites.
+  await page.goto(`${page.url()}&pane=section&section=sec_retry`);
+  await expect(
+    page.getByRole("heading", { name: "Retry policy and backoff" }).first(),
+  ).toBeVisible();
+  await page.keyboard.press("c");
+  await expect(page.getByLabel("Comment on Retry policy and backoff")).toBeFocused();
+  await page.keyboard.type("Why a fixed jitter?");
+  await page.keyboard.press("Control+Enter");
+  await expect(count).toHaveText("2");
+  await page.keyboard.press("v");
+  await page.getByRole("menuitem", { name: "Request changes", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /Review pull request #7/ });
+  await expect(dialog.getByText("Trusts a client-supplied header")).toBeVisible();
+  await dialog.getByRole("button", { name: "Request changes", exact: true }).click();
+  await expect(page.getByText("Changes requested on GitHub")).toBeVisible();
   expect(submitted).toEqual([
     expect.objectContaining({
       repository: "acme/demo",
       pr: 7,
       event: "REQUEST_CHANGES",
+      // The comment on the pull request as a whole has no line, so it goes in the body.
+      body: "Trusts a client-supplied header",
       comments: [
-        expect.objectContaining({ body: "Trusts a client-supplied header", side: "RIGHT" }),
+        {
+          body: "Why a fixed jitter?",
+          path: "queue/retry.go",
+          line: expect.any(Number),
+          side: "RIGHT",
+        },
       ],
     }),
   ]);
   // Narrow: no sideways scroll.
   await page.setViewportSize({ width: 390, height: 844 });
-  await walk.getByRole("button", { name: /^Retry policy and backoff,/ }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await walk.getByRole("button", { name: "Full review", exact: true }).click();
-  await expect(page).not.toHaveURL(/walk=/);
   expect(errors).toEqual([]);
 });
 
-test("asks the review's agent a question and reads the lines its answer cites", async ({
+test("Ask opens the session panel on the pull request and lists the earlier questions", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -568,40 +730,50 @@ test("asks the review's agent a question and reads the lines its answer cites", 
     if (m.type() === "error" && !m.text().includes("Failed to load resource"))
       errors.push(m.text());
   });
+  // The page context bodies the app sends to `PUT api/console/page`.
+  const reported: Record<string, unknown>[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().endsWith("/api/console/page"))
+      reported.push(request.postDataJSON() as Record<string, unknown>);
+  });
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
-  // The key opens the panel, with the cursor in its box.
+  // The key opens the session panel on the pull request, its composer empty
+  // and taking the keys; nothing goes in the address.
   await page.keyboard.press("a");
-  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  const panel = page.locator("section.session-panel");
   await expect(panel).toBeVisible();
-  expect(page.url()).toContain("ask=1");
-  await expect(panel.getByText("answers questions about the code")).toBeVisible();
-  await page.keyboard.type("Why is the delay capped?");
-  await page.keyboard.press("Enter");
-  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
-  await expect(panel.getByText("so a long outage cannot push retries out forever")).toBeVisible();
-  await expect(panel.locator("strong", { hasText: "capped" })).toBeVisible();
-  // Started from a saved review whose agent session was not kept.
-  await expect(panel.getByText("Started without the review's own context.")).toBeVisible();
-  // The citation opens the lines it names, from the review's own hunk.
-  await panel.getByRole("button", { name: "docs/guide.md:3–6" }).click();
-  await expect(panel.getByText("guide line six", { exact: true })).toBeVisible();
-  // A reload keeps the panel open and the conversation.
-  await page.reload();
-  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
-  // A second question goes to the same conversation.
-  await panel.locator("textarea").click();
-  await page.keyboard.type("Is this safe on retry?");
-  await page.keyboard.press("Enter");
-  await expect(panel.getByText("Is this safe on retry?")).toBeVisible();
-  await expect(panel.locator(".ask-answer")).toHaveCount(2);
-  // Escape in the panel closes it.
-  await panel.locator("textarea").focus();
-  await page.keyboard.press("Escape");
-  await expect(panel).toBeHidden();
+  await expect(page.getByTestId("session-panel-page")).toHaveText(
+    "Reuse the existing PR page · acme/demo #7",
+  );
+  const composer = panel.getByRole("textbox", { name: "Message to the agent" });
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("");
   expect(page.url()).not.toContain("ask=");
+  await expect
+    .poll(() => reported.at(-1))
+    .toMatchObject({ page: "pull_request", repository: "acme/demo", pull_request: 7 });
+  await composer.press("Control+`");
+  await expect(panel).toHaveCount(0);
+
+  // The questions asked of the review's agent before the panel stay
+  // readable, read-only.
+  await page.getByRole("button", { name: "Earlier questions", exact: true }).click();
+  const earlier = page.getByRole("complementary", { name: "Earlier questions" });
+  await expect(
+    earlier.getByLabel("Question 1").getByText("Why is the delay capped?"),
+  ).toBeVisible();
+  await expect(earlier.locator("strong", { hasText: "capped" })).toBeVisible();
+  // The citation opens the lines it names, from the review's own hunk.
+  await earlier.getByRole("button", { name: "docs/guide.md:3–6" }).click();
+  await expect(earlier.getByText("guide line six", { exact: true })).toBeVisible();
+  await expect(earlier.locator("textarea")).toHaveCount(0);
+  await expect(earlier.getByRole("button", { name: /Fix this|Add as comment/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Earlier questions", exact: true }).click();
+  await expect(earlier).toHaveCount(0);
+
   expect(errors).toEqual([]);
 });
 
@@ -627,4 +799,33 @@ test("Settings warns about Codex hook approval and clears after verification", a
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(settings).not.toHaveAttribute("title", /Codex hooks need approval/);
   await expect(page.getByText(/Open \/hooks in Codex and trust baum/)).toHaveCount(0);
+});
+
+test("a narrow Analytics breakdown can scroll all the way to API prices by keyboard", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Analytics", exact: true }).click();
+
+  const breakdown = page.getByRole("region", { name: "Breakdown", exact: true });
+  const repository = breakdown.getByRole("button", { name: "Repository", exact: true });
+  const table = breakdown.locator(".analytics-scroll");
+  const prices = breakdown.getByRole("columnheader", { name: "At API prices" });
+  await expect(prices).toBeVisible();
+  await expect
+    .poll(() => table.evaluate((element) => element.scrollWidth > element.clientWidth))
+    .toBe(true);
+  await expect(table).toHaveAttribute("tabindex", "0");
+  await repository.focus();
+  await page.keyboard.press("Tab");
+  await expect(table).toBeFocused();
+
+  await expect(prices).not.toBeInViewport();
+  for (let step = 0; step < 10; step++) await page.keyboard.press("ArrowRight");
+  await expect(prices).toBeInViewport({ ratio: 0.95 });
+
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await expect(table).not.toHaveAttribute("tabindex", "0");
 });

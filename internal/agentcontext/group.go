@@ -18,14 +18,14 @@ func (s *Server) groupTools() []Tool {
 		`"id":{"type":"string","description":"The group's id. Defaults to the open group page's, or for an action the one group its pull request is in."}},"additionalProperties":false}`)
 	return []Tool{{
 		Name:        "group",
-		Description: "A review group as the app's group page shows it: its name, the pull requests that are its members, whether baum made it for a stack, the members that landed, and whether its review is outdated.",
+		Description: "A review group as the app's group page shows it: its name, the pull requests that are its members, whether baum made it for a stack, the members that landed, and whether its review is outdated. A stack has no combined review: its overview names its riskiest pull request, with that review's risk score, and the summary of the whole stack written from its members' reviews.",
 		InputSchema: schema,
 		Scope:       ScopeRepository,
 		Reads:       []string{"/api/groups"},
 		Call:        callGroup,
 	}, {
 		Name:        "group_versions",
-		Description: "The saved combined reviews of a review group.",
+		Description: "The saved combined reviews of a review group a person made. A stack has none.",
 		InputSchema: schema,
 		Scope:       ScopeRepository,
 		Reads:       []string{"/api/groups"},
@@ -54,10 +54,10 @@ func groupFor(ctx context.Context, c CallContext, repository, id string) (string
 	if err != nil {
 		return "", nil, err
 	}
-	if id == "" && c.Consumer.Kind != Action && c.HasPage {
+	if id == "" && !c.bound() && c.HasPage {
 		id = c.Page.Group
 	}
-	if id == "" && c.Consumer.Kind == Action {
+	if id == "" && c.bound() {
 		// An action's group is the one its pull request is in, when it is in
 		// exactly one.
 		groups, err := c.groupsOf(ctx, repository, c.Consumer.PullRequest)
