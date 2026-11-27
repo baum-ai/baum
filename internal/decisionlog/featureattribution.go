@@ -25,7 +25,7 @@ const attributionSchema = `CREATE TABLE IF NOT EXISTS feature_decision(
  CREATE INDEX IF NOT EXISTS feature_decision_feature ON feature_decision(version_id,repository,feature_id);`
 
 const attributionPrompt = `Classify each supplied captured decision against the eligible feature candidates using its meaning, explicit human/agent choice, quoted evidence, cited turns and linked commit/PR evidence. Read the pinned repository source where relevant. Feature scopes describe purpose and exclusions at their recorded map revision. Commit links and shared files are supporting evidence, not proof that unrelated choices share an outcome.
-Return each supplied decision_id exactly once. Choose only a supplied feature_id, or empty feature_id with a reason when irrelevant, ambiguous or unsupported. In particular, a Settings choice does not belong to packaging/AppImage merely because that feature dominates a shared session. A unique purpose may support an assignment even without a cited file; equal file overlap between independent outcomes does not decide it. Never guess the dominant, earliest or most recent feature. pull_number is 0 unless a supplied PR of the chosen feature is supported by the decision's evidence.
+Return each supplied decision_id exactly once. Choose only a supplied feature_id, or empty feature_id with a reason when irrelevant, ambiguous or unsupported. In particular, a choice about one outcome does not belong to another feature merely because that feature dominates a shared session. A unique purpose may support an assignment even without a cited file; equal file overlap between independent outcomes does not decide it. Never guess the dominant, earliest or most recent feature. pull_number is 0 unless a supplied PR of the chosen feature is supported by the decision's evidence.
 key_eligible is true only for a consequential choice directly relevant to that feature: product behavior, interface, architecture, data model, a substantive implementation tradeoff or deliberate repository policy. Preserve explicit human choices. Routine agent housekeeping, publishing/running tests, lint/build checks, preparing PRs, bookkeeping and completion reports are not highlights. Distinguish performing tests from deliberately choosing a new testing policy. Unresolved or superseded decisions are never key eligible. Zero eligible decisions is valid. Explain both relevance and significance in reason. Do not change decision IDs or citations.`
 
 type decisionResolution struct {
@@ -132,7 +132,7 @@ func (s *Store) attributionSet(ctx context.Context, version int64, repository st
 				_ = rows.Close()
 				return out, err
 			}
-			sources[key] = &source
+			sources[key] = source.provenance()
 		}
 		err = errors.Join(rows.Err(), rows.Close())
 		if err != nil {
@@ -162,7 +162,7 @@ func (s *Store) attributionSet(ctx context.Context, version int64, repository st
 				_ = rows.Close()
 				return out, err
 			}
-			decisionSources[id] = &source
+			decisionSources[id] = source.provenance()
 		}
 		err = errors.Join(rows.Err(), rows.Close())
 		if err != nil {
@@ -488,7 +488,15 @@ func parseAttribution(data []byte, input attributionInput) ([]decisionResolution
 		byID[r.DecisionID] = r
 	}
 	if len(byID) != len(input.Decisions) {
-		return nil, errors.New("attribution must resolve every supplied decision exactly once")
+		// The repair is told which ones, so it does not have to find them.
+		missing := []string{}
+		for _, d := range input.Decisions {
+			if _, ok := byID[d.ID]; !ok && len(missing) < 10 {
+				missing = append(missing, d.ID)
+			}
+		}
+		return nil, fmt.Errorf("attribution must resolve every supplied decision exactly once: %d of %d are missing, among them %s",
+			len(input.Decisions)-len(byID), len(input.Decisions), strings.Join(missing, ", "))
 	}
 	out := make([]decisionResolution, len(input.Decisions))
 	for i, d := range input.Decisions {
@@ -501,7 +509,7 @@ func parseAttribution(data []byte, input attributionInput) ([]decisionResolution
 }
 
 func (s *Store) saveAttribution(ctx context.Context, version int64, repository string, resolutions []decisionResolution, fresh attributionInput, source *SourceContext, now time.Time, revision int64) error {
-	data, err := json.Marshal(source)
+	data, err := json.Marshal(source.provenance())
 	if err != nil {
 		return err
 	}

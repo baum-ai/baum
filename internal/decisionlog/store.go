@@ -427,12 +427,16 @@ decided_at=excluded.decided_at, branch=excluded.branch, obsolete_at=NULL`,
 ON CONFLICT(agent,session_id) DO UPDATE SET source_json=excluded.source_json`, e.Agent, e.ID, string(data)); err != nil {
 				return err
 			}
+			provenance, err := json.Marshal(e.Source.provenance())
+			if err != nil {
+				return err
+			}
 			for _, d := range e.Decisions {
 				if _, existed := previous[d.ID]; existed {
 					continue
 				}
 				if _, err := tx.ExecContext(ctx, `INSERT INTO decision_source(decision_id,source_json) VALUES (?,?)
-ON CONFLICT(decision_id) DO NOTHING`, d.ID, string(data)); err != nil {
+ON CONFLICT(decision_id) DO NOTHING`, d.ID, string(provenance)); err != nil {
 					return err
 				}
 			}

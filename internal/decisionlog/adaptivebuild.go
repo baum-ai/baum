@@ -1,6 +1,7 @@
 package decisionlog
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -30,6 +31,9 @@ const (
 	ReasonBuildNoProgress = "no_progress"
 	ReasonBuildIncomplete = "selected_work_incomplete"
 	adaptiveExploreSteps  = 12
+	// adaptiveCoverageAsk is how many unselected catalogued pull requests make
+	// a first finish ask whether the rest was meant to be left out.
+	adaptiveCoverageAsk = 40
 )
 
 type adaptiveRun struct {
@@ -39,6 +43,10 @@ type adaptiveRun struct {
 	options BuildOptions
 	spent   buildSpend
 	started time.Time
+	// notes say what of the last evidence request the host could not serve
+	// and why, for the agent: such a request is served as far as it can be
+	// rather than failed, since repeating it on a resume could never succeed.
+	notes []string
 }
 
 func (w *FeatureWorker) buildAdaptive(ctx context.Context, repository, dir string, o BuildOptions) (report BuildReport, err error) {
@@ -76,6 +84,9 @@ func (w *FeatureWorker) buildAdaptive(ctx context.Context, repository, dir strin
 		report.Stopped = FeatureDryRun
 		return report, nil
 	}
+	// Each run has its own no-progress allowance: a resume after a stop for no
+	// progress is not stopped again by the first step that settles nothing.
+	a.NoProgress = 0
 	b := &adaptiveRun{featureRun: r, state: a, options: o, started: time.Now()}
 	b.spent.version = r.version
 	defer func() {
@@ -173,16 +184,19 @@ func (w *FeatureWorker) buildAdaptive(ctx context.Context, repository, dir strin
 			return report, nil
 		}
 		reply, e := b.step(ctx)
-		if e != nil {
+		progress := false
+		if rejected, ok := errors.AsType[*adaptiveRejection](e); ok {
+			// A reply the validator refused after its repairs saved nothing.
+			// The agent is told why and takes another step from the last
+			// accepted checkpoint; repeated refusals stop as no progress.
+			a.Feedback = "The host refused the last reply after its repairs and saved nothing of it: " + rejected.Findings + " Reply with a valid step; a smaller one is fine."
+		} else if e != nil {
 			err = e
 			return report, err
-		}
-		progress, e := b.apply(ctx, reply)
-		if e != nil {
+		} else if progress, e = b.apply(ctx, reply); e != nil {
 			err = e
 			return report, err
-		}
-		if reply.Action == "finish" {
+		} else if a.Complete {
 			report.Current = true
 			_ = w.Store.db.QueryRowContext(ctx, `SELECT count(*) FROM feature WHERE version_id=?`, r.version).Scan(&report.Features)
 			return report, nil
@@ -239,38 +253,63 @@ func (b *adaptiveRun) prepareSource(ctx context.Context) (repositorySource, erro
 	return prepareRepositorySource(ctx, b.dir, b.repository, revision, branch, b.prefs.Resolve(b.w.Config))
 }
 
+// adaptiveCatalogRow is one line of catalog.jsonl. Scope is the scope the pull
+// request is assigned to, "" once it is skipped and absent until it is settled,
+// so unsettled work is found by searching rather than by comparing maps.
 type adaptiveCatalogRow struct {
-	Number  int        `json:"number"`
-	Title   string     `json:"title"`
-	State   string     `json:"state"`
-	Opened  time.Time  `json:"opened"`
-	Updated time.Time  `json:"updated"`
-	Merged  *time.Time `json:"merged"`
+	Number   int     `json:"number"`
+	State    string  `json:"state"`
+	Opened   string  `json:"opened"`
+	Merged   string  `json:"merged,omitempty"`
+	Selected bool    `json:"selected,omitempty"`
+	Scope    *string `json:"scope,omitempty"`
+	Title    string  `json:"title"`
 }
 
-func (b *adaptiveRun) taskInput(details, code, decisions map[int]string) any {
+// adaptiveCatalogFile names the catalog beside state.json. It is one compact
+// line per pull request: a month of a busy repository is hundreds of rows, too
+// many to read as indented JSON inside the state.
+const adaptiveCatalogFile = "catalog.jsonl"
+
+func (b *adaptiveRun) catalogLines() ([]byte, map[string]int, error) {
 	a := b.state
-	catalog := make([]adaptiveCatalogRow, 0, len(a.Catalog))
+	var out bytes.Buffer
 	weeks := map[string]int{}
 	for _, n := range adaptiveScopeNumbers(a) {
 		p := a.Catalog[n]
-		catalog = append(catalog, adaptiveCatalogRow{Number: n, Title: p.Title, State: p.State, Opened: p.CreatedAt, Updated: p.UpdatedAt, Merged: p.MergedAt})
+		row := adaptiveCatalogRow{Number: n, Title: p.Title, State: p.State, Opened: p.CreatedAt.UTC().Format(time.DateOnly), Selected: a.Selected[n]}
+		if p.MergedAt != nil {
+			row.State, row.Merged = "merged", p.MergedAt.UTC().Format(time.DateOnly)
+		}
+		if assignment, ok := a.Assignments[n]; ok {
+			row.Scope = &assignment.Scope
+		}
+		line, err := json.Marshal(row)
+		if err != nil {
+			return nil, nil, err
+		}
+		out.Write(line)
+		out.WriteByte('\n')
 		y, w := p.UpdatedAt.ISOWeek()
 		weeks[fmt.Sprintf("%d-W%02d", y, w)]++
 	}
+	return out.Bytes(), weeks, nil
+}
+
+func (b *adaptiveRun) taskInput(weeks map[string]int, details, code, decisions map[int]string) any {
+	a := b.state
 	return struct {
 		Decisions         map[int]string              `json:"decisions"`
 		Coverage          *BuildCoverage              `json:"coverage"`
-		Catalog           []adaptiveCatalogRow        `json:"catalog"`
+		Catalog           string                      `json:"catalog"`
 		Weeks             map[string]int              `json:"counts_by_week"`
 		Details           map[int]string              `json:"details"`
 		Code              map[int]string              `json:"code"`
-		Selected          map[int]bool                `json:"selected"`
 		Scopes            map[string]adaptive.Scope   `json:"scopes"`
 		Assignments       map[int]adaptive.Assignment `json:"assignments"`
 		ExplorationClosed bool                        `json:"exploration_closed"`
 		Feedback          string                      `json:"feedback"`
-	}{decisions, a.coverage(), catalog, weeks, details, code, a.Selected, a.Scopes, a.Assignments, a.ExplorationClosed, a.Feedback}
+	}{decisions, a.coverage(), adaptiveCatalogFile, weeks, details, code, a.Scopes, a.Assignments, a.ExplorationClosed, a.Feedback}
 }
 
 func (b *adaptiveRun) step(ctx context.Context) (adaptive.Reply, error) {
@@ -278,17 +317,23 @@ func (b *adaptiveRun) step(ctx context.Context) (adaptive.Reply, error) {
 	if err != nil {
 		return adaptive.Reply{}, err
 	}
-	data, err := json.MarshalIndent(b.taskInput(details, code, decisions), "", "  ")
+	catalog, weeks, err := b.catalogLines()
+	if err != nil {
+		return adaptive.Reply{}, err
+	}
+	data, err := json.MarshalIndent(b.taskInput(weeks, details, code, decisions), "", "  ")
 	if err != nil {
 		return adaptive.Reply{}, err
 	}
 	// Redact external PR text before an agent can read it, as for extraction.
-	masked, err := agent.RedactTaskOutput(ctx, b.w.redactor, data, &agent.Outcome{})
-	if err != nil {
-		return adaptive.Reply{}, err
-	}
-	if err = writeAdaptiveInput(b.source.Directory, masked); err != nil {
-		return adaptive.Reply{}, err
+	for name, input := range map[string][]byte{"state.json": data, adaptiveCatalogFile: catalog} {
+		masked, err := agent.RedactTaskOutput(ctx, b.w.redactor, input, &agent.Outcome{})
+		if err != nil {
+			return adaptive.Reply{}, err
+		}
+		if err = writeAdaptiveInput(b.source.Directory, name, masked); err != nil {
+			return adaptive.Reply{}, err
+		}
 	}
 	p, reason := b.calls.plan(ctx, b.prefs, b.options.Backend, b.options.Model, 1, FeatureConsolidateOutputTokens)
 	if reason != "" {
@@ -322,6 +367,9 @@ func (b *adaptiveRun) step(ctx context.Context) (adaptive.Reply, error) {
 	state, why := AttemptSucceeded, ""
 	if runErr != nil {
 		state, why = AttemptFailed, "task_failed"
+		if out.Reason == agent.ReasonValidationRejected {
+			why = "unusable_reply"
+		}
 		if ctx.Err() != nil {
 			state, why = AttemptAbandoned, "cancelled"
 		}
@@ -330,6 +378,10 @@ func (b *adaptiveRun) step(ctx context.Context) (adaptive.Reply, error) {
 	settleErr := b.w.Store.settle(write, attempt, state, why, cost, decisionUsage(out.Usage), out.StructuredOutputRejections+out.ValidationRepairs)
 	b.spent.add(write, b.w.Store, b.w.logger(), cost)
 	b.notify(BuildDiscovering)
+	if runErr != nil && out.Reason == agent.ReasonValidationRejected && ctx.Err() == nil && settleErr == nil {
+		findings := []rune(out.Findings)
+		return adaptive.Reply{}, &adaptiveRejection{Findings: string(findings[:min(len(findings), 1000)])}
+	}
 	if runErr != nil {
 		return adaptive.Reply{}, errors.Join(runErr, settleErr)
 	}
@@ -391,14 +443,22 @@ func (b *adaptiveRun) validate(reply adaptive.Reply) error {
 		return errors.New("the source map exceeds its scope bound; reconcile duplicate scopes")
 	}
 	for _, assignment := range reply.Assignments {
-		if !selected[assignment.Number] {
-			return fmt.Errorf("PR %d was not selected", assignment.Number)
+		if _, ok := a.Catalog[assignment.Number]; !ok {
+			return fmt.Errorf("assigned PR %d is not in the pinned catalog", assignment.Number)
 		}
+		// An assignment selects its pull request. In a checkpoint, one that
+		// names a scope nobody defined is left out when the reply is applied,
+		// and reported: a large batch is not refused whole for it. A finish
+		// has no later step to repair it in.
 		if assignment.Scope != "" {
 			if _, ok := scopes[assignment.Scope]; !ok {
-				return fmt.Errorf("unknown scope %q", assignment.Scope)
+				if reply.Action == "finish" {
+					return fmt.Errorf("unknown scope %q", assignment.Scope)
+				}
+				continue
 			}
 		}
+		selected[assignment.Number] = true
 		assignments[assignment.Number] = assignment
 	}
 	switch reply.Action {
@@ -445,12 +505,32 @@ func (b *adaptiveRun) apply(ctx context.Context, reply adaptive.Reply) (bool, er
 	for _, scope := range reply.Scopes {
 		a.Scopes[scope.Key] = scope
 	}
+	undefined, unsaved := []string{}, []string{}
 	for _, v := range reply.Assignments {
+		if _, ok := a.Scopes[v.Scope]; v.Scope != "" && !ok {
+			undefined, unsaved = append(undefined, v.Scope), append(unsaved, strconv.Itoa(v.Number))
+			continue
+		}
+		a.Selected[v.Number] = true
 		a.Assignments[v.Number] = v
 	}
 	changed := before != adaptiveProgress(a)
 	a.Feedback = reply.Reason
+	if len(unsaved) > 0 {
+		slices.Sort(undefined)
+		a.Feedback += " Host note: the assignments of pull requests " + strings.Join(unsaved, ", ") + " were not saved, because no scope has the key " +
+			strings.Join(slices.Compact(undefined), ", ") + ". Define the scope in the same reply, or use an existing key."
+	}
 	if reply.Action == "finish" {
+		// A result that leaves most of a sizeable catalog unselected replaces
+		// the whole feature history with a sample of it. The agent is asked
+		// once whether that is meant; its changes are kept as a checkpoint and
+		// a second finish stands.
+		if unselected := len(a.Catalog) - len(a.Selected); !a.CoverageAsked && unselected >= adaptiveCoverageAsk && unselected*2 > len(a.Catalog) {
+			a.CoverageAsked = true
+			a.Feedback += fmt.Sprintf(" Host note: this finish was saved as a checkpoint, not promoted: %d of the %d catalogued pull requests are unselected, and the result replaces the repository's whole feature history. Lines of catalog.jsonl without \"selected\" are the unselected ones. Select and assign those that belong to substantial outcomes, in large checkpoints, then finish. If every one of them is small unrelated maintenance, finish again and the result stands.", unselected, len(a.Catalog))
+			return true, b.w.Store.saveAdaptive(ctx, b.version, b.repository, a, false, b.w.now())
+		}
 		a.Complete = true
 		return true, b.w.Store.saveAdaptive(ctx, b.version, b.repository, a, true, b.w.now())
 	}
@@ -474,7 +554,13 @@ func (b *adaptiveRun) apply(ctx context.Context, reply adaptive.Reply) (bool, er
 	for _, c := range a.Code {
 		patches += len(c.Patches)
 	}
-	return changed || oldDecisions != len(a.Decisions) || oldDetails != len(a.Details) || oldCode != len(a.Code) || oldCatalog != len(a.Catalog) || patches != oldPatches, nil
+	if fresh := oldDecisions != len(a.Decisions) || oldDetails != len(a.Details) || oldCode != len(a.Code) || oldCatalog != len(a.Catalog) || patches != oldPatches; fresh || changed {
+		return true, nil
+	}
+	// An agent that asks again for what it has is told so, rather than left
+	// to repeat itself until the run stops for no progress.
+	a.Feedback = strings.TrimSpace(a.Feedback + " Host note: this request added nothing, because all of it was supplied before: catalog.jsonl holds the window, and the details, code and decisions maps of state.json name the evidence files. Do not ask for it again; settle the selected work with a checkpoint.")
+	return false, b.w.Store.saveAdaptive(ctx, b.version, b.repository, a, false, b.w.now())
 }
 
 func (b *adaptiveRun) notify(phase string) {
@@ -487,7 +573,7 @@ func (b *adaptiveRun) notify(phase string) {
 // the exact evidence request remains pending for a future resume.
 func (b *adaptiveRun) request(ctx context.Context, reply adaptive.Reply) error {
 	a := b.state
-
+	b.notes = nil
 	a.Pending = &reply
 	if err := b.w.Store.saveAdaptive(ctx, b.version, b.repository, a, false, b.w.now()); err != nil {
 		return err
@@ -528,7 +614,15 @@ func (b *adaptiveRun) request(ctx context.Context, reply adaptive.Reply) error {
 	}
 	a.Pending = nil
 	a.RetryAt = time.Time{}
+	if a.Failures > 0 {
+		// The failure the feedback reported is over.
+		a.Feedback = "The evidence request that failed earlier has now been served."
+	}
 	a.Failures = 0
+	if len(b.notes) > 0 {
+		a.Feedback = strings.TrimSpace(a.Feedback + " Host note: " + strings.Join(b.notes, " "))
+		b.notes = nil
+	}
 	return b.w.Store.saveAdaptive(ctx, b.version, b.repository, a, false, b.w.now())
 }
 
@@ -585,6 +679,12 @@ func (b *adaptiveRun) code(ctx context.Context, numbers []int, paths []string) e
 		return err
 	}
 	defer func() { _ = clone.Close() }()
+	matched := map[string]bool{}
+	defer func() {
+		if unmatched := slices.DeleteFunc(slices.Clone(paths), func(path string) bool { return matched[path] }); len(unmatched) > 0 {
+			b.notes = append(b.notes, "no requested pull request changes "+strings.Join(unmatched, ", ")+", so no patch was supplied for those paths.")
+		}
+	}()
 	for _, n := range numbers {
 		p := b.state.Catalog[n]
 		if err := b.w.Store.savePulls(ctx, b.repository, []github.ListedPull{p}, true, func(*sql.Tx) error { return nil }); err != nil {
@@ -612,10 +712,13 @@ func (b *adaptiveRun) code(ctx context.Context, numbers []int, paths []string) e
 			}
 			slices.Sort(known.Paths)
 		}
+		// One request names the paths of all its pull requests together, so
+		// each gets the patches of those it changes.
 		for _, path := range paths {
 			if !slices.Contains(known.Paths, path) {
-				return fmt.Errorf("requested path %q is not changed by selected PR %d", path, n)
+				continue
 			}
+			matched[path] = true
 			if _, ok := known.Patches[path]; ok {
 				continue
 			}
@@ -640,8 +743,8 @@ func (b *adaptiveRun) code(ctx context.Context, numbers []int, paths []string) e
 
 // Inputs remain read-only to the agent. Replace atomically between work steps
 // instead of opening the previous read-only file for writing.
-func writeAdaptiveInput(dir string, data []byte) error {
-	f, err := os.CreateTemp(dir, "state-*.json")
+func writeAdaptiveInput(dir, file string, data []byte) error {
+	f, err := os.CreateTemp(dir, "input-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -658,12 +761,18 @@ func writeAdaptiveInput(dir string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	target := filepath.Join(dir, "state.json")
+	target := filepath.Join(dir, file)
 	if err := os.Chmod(target, 0600); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return os.Rename(name, target)
 }
+
+// adaptiveRejection is a work step whose reply the validator refused after its
+// repairs. It is the step's failure, not the build's.
+type adaptiveRejection struct{ Findings string }
+
+func (e *adaptiveRejection) Error() string { return "feature build reply refused: " + e.Findings }
 
 // A rate-limit response preserves a recoverable wait instead of immediately
 // consuming the second evidence attempt. A later resume observes RetryAt.
@@ -694,6 +803,18 @@ func (r adaptiveReadGuard) Read(ctx context.Context, path, etag string) (int, ht
 	return status, headers, data, err
 }
 
+// adaptiveMissingGuard reports a number GitHub has no pull request for as
+// github.ErrNotFound: an agent may ask for a reference that is an issue.
+type adaptiveMissingGuard struct{ github.Reader }
+
+func (r adaptiveMissingGuard) Read(ctx context.Context, path, etag string) (int, http.Header, []byte, error) {
+	status, headers, data, err := r.Reader.Read(ctx, path, etag)
+	if err == nil && status == http.StatusNotFound {
+		return status, headers, nil, github.ErrNotFound
+	}
+	return status, headers, data, err
+}
+
 func (b *adaptiveRun) details(ctx context.Context, numbers []int) error {
 	for _, n := range numbers {
 		if _, known := b.state.Catalog[n]; !known {
@@ -708,12 +829,17 @@ func (b *adaptiveRun) details(ctx context.Context, numbers []int) error {
 			if err != nil {
 				return err
 			}
-			p, err := github.ReadPullRequest(ctx, adaptiveReadGuard{Reader: reader, now: b.w.now()}, repository, n)
+			p, err := github.ReadPullRequest(ctx, adaptiveMissingGuard{adaptiveReadGuard{Reader: reader, now: b.w.now()}}, repository, n)
+			if errors.Is(err, github.ErrNotFound) {
+				b.notes = append(b.notes, fmt.Sprintf("#%d is not a pull request of this repository, so it has no details.", n))
+				continue
+			}
 			if err != nil {
 				return err
 			}
 			if p.Bot || (p.State != "open" && p.MergedAt == nil) {
-				return fmt.Errorf("PR %d is not eligible open or merged work", n)
+				b.notes = append(b.notes, fmt.Sprintf("#%d was opened by a bot or closed without merging, so it is not catalogued and has no details.", n))
+				continue
 			}
 			b.state.Catalog[n] = p
 		}

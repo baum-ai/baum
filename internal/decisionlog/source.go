@@ -24,14 +24,30 @@ const sourceContextVersion = "repository-decisions-v1"
 // SourceContext records the exact code available to an extraction. The
 // transcript remains the evidence for the choice and its stated reason.
 type SourceContext struct {
-	Version     string                    `json:"version"`
-	Repository  string                    `json:"repository"`
-	Revision    string                    `json:"revision"`
-	Branch      string                    `json:"branch,omitempty"`
-	Resolution  string                    `json:"resolution"`
-	Omissions   []bundle.CheckoutOmission `json:"omissions"`
-	Limitations []string                  `json:"limitations"`
-	References  []string                  `json:"references"`
+	Version    string                    `json:"version"`
+	Repository string                    `json:"repository"`
+	Revision   string                    `json:"revision"`
+	Branch     string                    `json:"branch,omitempty"`
+	Resolution string                    `json:"resolution"`
+	Omissions  []bundle.CheckoutOmission `json:"omissions"`
+	// Omitted counts the omissions where their list is left out (provenance).
+	Omitted     int      `json:"omitted,omitempty"`
+	Limitations []string `json:"limitations"`
+	References  []string `json:"references"`
+}
+
+// provenance is the copy kept with each decision and judgment, and shown to a
+// model beside them: the omissions as a count. A checkout leaves out every
+// binary file, so the list is long and the same for every decision of an
+// extraction; it stays in the capture's own row and in the source.json of the
+// task that read the source.
+func (c *SourceContext) provenance() *SourceContext {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.Omitted, out.Omissions = out.Omitted+len(out.Omissions), nil
+	return &out
 }
 
 type repositorySource struct {

@@ -396,7 +396,7 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 		return out, err
 	}
 	out.ContextVersion, out.Source, out.Reason = placementContextVersion, result.Source, choice.Reason
-	out.judgment = &placementContext{Version: placementContextVersion, Reason: choice.Reason, Source: result.Source, Scopes: scopes}
+	out.judgment = &placementContext{Version: placementContextVersion, Reason: choice.Reason, Source: result.Source.provenance(), Scopes: scopes}
 	if item.Kind == kindSession && (choice.New != nil || choice.Skip) {
 		// A session never starts a feature.
 		return r.settle(ctx, item, out, "no_fit")

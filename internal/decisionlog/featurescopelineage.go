@@ -144,7 +144,7 @@ func rehomeSplitScopes(ctx context.Context, tx *sql.Tx, version int64, repositor
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(source)
+	data, err := json.Marshal(source.provenance())
 	if err != nil {
 		return err
 	}

@@ -87,7 +87,9 @@ the path.
 
 `adaptive` defines the published `feature-build-public-v1` agent protocol for
 local requested builds. The host supplies a pinned browsable checkout and a
-cheap PR catalog. Valid task replies request catalog expansion, descriptions or
+cheap PR catalog, one line per pull request with its selection and scope once
+settled. The prompt asks for the catalogued work to be covered, in large
+batches, rather than sampled. Valid task replies request catalog expansion, descriptions or
 selected code; checkpoint persistent scopes and memberships; or finish the
 selected work. Ordinary work steps are not structured-output repairs. There is
 no fixed PR-count default. Scopes keep purpose, boundaries, source paths,
