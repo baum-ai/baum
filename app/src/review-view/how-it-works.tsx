@@ -58,9 +58,12 @@ export function HowItWorks({
     sectionView ? { [section]: sectionView } : {},
   );
   useEffect(() => {
-    if (sectionView)
-      setViews((was) => (was[section] === sectionView ? was : { ...was, [section]: sectionView }));
-  }, [section, sectionView]);
+    // A link to an item of the section (a risk, a tile) is to its Overview,
+    // which holds it, whatever view the reader left the section on: as the
+    // section's own page opens on its Overview for such a link.
+    const want = sectionView ?? (item ? "overview" : undefined);
+    if (want) setViews((was) => (was[section] === want ? was : { ...was, [section]: want }));
+  }, [section, sectionView, item]);
   const latest = useRef({ section, views });
   latest.current = { section, views };
   // The sections the spy wrote to the address that it has not shown yet.

@@ -93,8 +93,11 @@ function Host({ initial = "", children }: { initial?: string; children: ReactNod
       search = next;
       return next;
     });
+  navigate = (query) => setState(new URLSearchParams(query));
   return <UrlStateProvider value={{ search: state, update }}>{children}</UrlStateProvider>;
 }
+/** Takes the page to another address, as a link followed on it does. */
+let navigate: (query: string) => void = () => {};
 
 let steps: { current: ReviewSteps | null } = { current: null };
 
@@ -611,6 +614,26 @@ describe("How it works as one page", () => {
         .querySelector('[role="tab"][aria-selected="true"]')
         ?.textContent?.startsWith("Overview"),
     ).toBe(true);
+  });
+
+  it("shows a section's Overview for a link to one of its items, whatever view it was left on", async () => {
+    const container = await page("pane=section&section=sec_allowlist");
+    const allowlist = () =>
+      pane(container).querySelector<HTMLElement>('article[data-part="sec_allowlist"]')!;
+    const shown = () =>
+      allowlist().querySelector('[role="tab"][aria-selected="true"]')?.textContent ?? "";
+    await click(viewTab(container, "Tests"));
+    expect(shown().startsWith("Tests")).toBe(true);
+    // The reader goes on to another section and follows a link to a risk of
+    // this one: the risk is in its Overview, which shows again.
+    await act(async () => navigate("pane=section&section=sec_relay"));
+    expect(shown().startsWith("Tests")).toBe(true);
+    await act(async () =>
+      navigate("pane=risk&risk_section=sec_allowlist&risk_id=rsk_always_allow"),
+    );
+    await frame();
+    expect(shown().startsWith("Overview")).toBe(true);
+    expect(window.document.getElementById("sec_allowlist-rsk_always_allow")).not.toBeNull();
   });
 
   it("names the section being read in the address as the page scrolls, and ticks the one left", async () => {
