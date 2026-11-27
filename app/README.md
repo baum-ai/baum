@@ -3010,6 +3010,7 @@ lists, in order:
   nested under it (the group's own row opens the first real section; an
   obsolete section is muted), then **Files changed** with the number of changed
   files. These are the page's places; the rail's other rows are the viewer's.
+  A brief (below) has no How it works.
 - **Decisions**, **Sessions** and **Commits** are plain rows, with no
   disclosure and nothing nested under them (`flatRail`; the group page keeps
   the viewer's disclosures). Each has its count and a live or waiting dot, and opens a
@@ -3060,6 +3061,21 @@ builds the rail's model (the sections and the file list) from it.
   Overview (owner `overview`, with their pending cards), and what was asked (`overview.intent`,
   else each linked session's first prompt), each linking to the prompt in its
   session.
+- **A brief** is the review of a small change, read whole on the Overview, so
+  a five-line change is not spread over four places with its diff on none of
+  them. A review is a brief (`isBrief` in `review-view/model.ts`) when it has
+  one section and none left from earlier commits, changes at most 60 lines
+  (`BRIEF_LINES`, added and removed), has an assessed risk of 1 or 2, and has
+  nothing placed on "Where this fits". The rail then has no How it works:
+  Overview, Files changed and the viewer's rows. Under the risk card (which
+  leads with the verdict's own line, though it has no points) the Overview
+  shows **The change** (every changed file's diff, as a section's Code view
+  draws it) and what the one section says (its body and risks, without its
+  gist, which would restate the summary), then the Overview's usual parts, and
+  last "Where this fits" in a fold that starts closed, its files opening in
+  the dialog. An address that names the section, a risk or a tile of it shows
+  the Overview. There is no setting: a review that stops qualifying (a second
+  section, a higher risk, more lines) reads in the full layout again.
 - **How it works** lists "Where this fits" first in the rail (the review's
   context, its files as chips, and the tiles `context` owns) and opens on the
   first real section. A file chip there opens the whole file at the review's

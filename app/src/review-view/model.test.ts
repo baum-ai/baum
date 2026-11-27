@@ -5,6 +5,7 @@ import { parseReviewV2, type ReviewV2, type V2Section } from "./document";
 import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { bodyOfSteps } from "./from-v1";
 import {
+  BRIEF_LINES,
   CODE_PLACE,
   commentSelection,
   CONTEXT_ID,
@@ -12,6 +13,7 @@ import {
   detailsOf,
   groupFiles,
   intentRows,
+  isBrief,
   listedSections,
   placeOf,
   reviewOf,
@@ -1071,5 +1073,60 @@ describe("grouping the changed files", () => {
     const rows = groupFiles(real, "feature", listedSections(REVIEW));
     const listed = new Set(rows.flatMap((row) => row.files.map((each) => each.path)));
     expect([...listed].toSorted()).toEqual(real.map((each) => each.path).toSorted());
+  });
+});
+
+describe("isBrief", () => {
+  const section = REVIEW.sections.find((each) => each.hunks.includes("h_routes"))!;
+  const small: ReviewV2 = {
+    ...REVIEW,
+    summary: { ...REVIEW.summary, risk_score: { ...REVIEW.summary.risk_score!, score: 2 } },
+    sections: [{ ...section, hunks: ["h_routes"] }],
+    tiles: [],
+    index: { ...REVIEW.index, hunks: REVIEW.index.hunks.filter((hunk) => hunk.id === "h_routes") },
+  };
+  const hunk = small.index.hunks[0]!;
+
+  it("is a one-section, low-risk change of at most BRIEF_LINES lines", () => {
+    expect(isBrief(small)).toBe(true);
+    expect(listedSections(small)).toEqual([]);
+    expect(placeOf({ kind: "section", id: section.id }, small)).toEqual({ tab: "overview" });
+    expect(isBrief(REVIEW)).toBe(false);
+  });
+
+  it("counts added and removed lines against the limit", () => {
+    const sized = (additions: number, deletions: number): ReviewV2 => ({
+      ...small,
+      index: { ...small.index, hunks: [{ ...hunk, additions, deletions }] },
+    });
+    expect(isBrief(sized(BRIEF_LINES - 10, 10))).toBe(true);
+    expect(isBrief(sized(BRIEF_LINES - 10, 11))).toBe(false);
+    expect(isBrief({ ...small, index: { ...small.index, hunks: [] } })).toBe(false);
+  });
+
+  it("is not a change rated 3 or more, unrated, or only a lower bound", () => {
+    const scored = (risk_score: ReviewV2["summary"]["risk_score"]): ReviewV2 => ({
+      ...small,
+      summary: { ...small.summary, risk_score },
+    });
+    const score = small.summary.risk_score!;
+    expect(isBrief(scored({ ...score, score: 3 }))).toBe(false);
+    expect(isBrief(scored({ ...score, status: "lower_bound" }))).toBe(false);
+    expect(isBrief(scored({ ...score, status: "not_assessed", score: null }))).toBe(false);
+    expect(isBrief(scored(undefined))).toBe(false);
+  });
+
+  it("is not a change with a second or a stale section, or tiles on Where this fits", () => {
+    expect(isBrief({ ...small, sections: [...small.sections, { ...section, id: "sec_b" }] })).toBe(
+      false,
+    );
+    expect(
+      isBrief({
+        ...small,
+        sections: [{ ...small.sections[0]!, derived: { ...section.derived, state: "stale" } }],
+      }),
+    ).toBe(false);
+    const tile = REVIEW.tiles.find((each) => each.id !== REVIEW.overview.diagram)!;
+    expect(isBrief({ ...small, tiles: [{ ...tile, owner: CONTEXT_ID }] })).toBe(false);
   });
 });

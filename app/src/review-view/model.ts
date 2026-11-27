@@ -139,6 +139,31 @@ export function detailsOf(section: V2Section): "complete" | "pending" | "failed"
   return section.details === "failed" ? "failed" : "complete";
 }
 
+// ---------- the brief ----------
+
+/** The most lines a change may add and remove and still read as a brief. */
+export const BRIEF_LINES = 60;
+
+/** Whether the review is drawn as a brief: one page that holds the summary,
+ *  the change's own diff, what its one section says and where it fits, with
+ *  no How it works. A change qualifies when it is small enough to read whole
+ *  and nothing in the review asks for a closer look: one section, none left
+ *  over from earlier commits, at most BRIEF_LINES changed lines, an assessed
+ *  risk of 1 or 2, and nothing placed on "Where this fits". */
+export function isBrief(review: ReviewV2): boolean {
+  if (review.sections.length !== 1 || review.sections[0]!.derived.state === "stale") return false;
+  const score = review.summary.risk_score;
+  if (!score || score.status !== "assessed" || score.score === null || score.score > 2)
+    return false;
+  if (review.index.hunks.length === 0) return false;
+  const lines = review.index.hunks.reduce((sum, hunk) => sum + hunk.additions + hunk.deletions, 0);
+  if (lines > BRIEF_LINES) return false;
+  return (
+    tilesOn(review, CONTEXT_ID).length === 0 &&
+    !review.drafts?.some((draft) => draft.section === CONTEXT_ID)
+  );
+}
+
 // ---------- the sections list ----------
 
 export type ListedSection = {
@@ -153,8 +178,10 @@ export type ListedSection = {
 /** How it works lists "Where this fits" first (when the review has a context,
  *  or tiles or pending cards stand on it), then the review's sections in its
  *  order, the ones no longer in the code last. A section's line is its gist
- *  (else its summary's first sentence). */
+ *  (else its summary's first sentence). A brief lists none: its Overview
+ *  holds what they would say. */
 export function listedSections(review: ReviewV2): ListedSection[] {
+  if (isBrief(review)) return [];
   const context = review.context;
   const contextLine = context
     ? (context.area ?? context.reached_by ?? context.contracts ?? context.related)?.text

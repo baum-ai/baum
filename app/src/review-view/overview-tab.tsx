@@ -15,18 +15,22 @@ import {
 import { withSelection } from "@baum/viewer/review-selection";
 import { draftsOn } from "../tiles/drafts";
 import type { TileContext } from "../tiles/types";
+import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import {
   intentRows,
+  isBrief,
   OVERVIEW_OWNER,
   riskSummary,
   tilesOn,
+  viewFiles,
   viewTile,
   type IntentRow,
   type ListedSection,
   type ReviewV2,
   type ViewPlace,
 } from "./model";
-import { SectionTiles } from "./sections-tab";
+import { SectionFiles } from "./section-views";
+import { SectionOverview, SectionTiles, WhereThisFits } from "./sections-tab";
 import { ViewTileCard } from "./view-tile";
 
 const SCORE_INK: Record<Tone, string> = {
@@ -47,7 +51,11 @@ const STOP =
  *  looks like, the main diagram, the tiles the person added here (and the
  *  pending cards of those being made in the session panel) and what was
  *  asked. It reads the baum.review/2 `review`; `document` is what the
- *  viewer's parts read. */
+ *  viewer's parts read.
+ *
+ *  A brief (a small, low-risk change with one section; see `isBrief`) is the
+ *  whole review on this page: under the risk come the change's own diff and
+ *  what its section says, and "Where this fits" closes the page, folded. */
 export function OverviewTab({
   document,
   review,
@@ -56,6 +64,7 @@ export function OverviewTab({
   idPrefix,
   historical,
   go,
+  context,
 }: {
   document: ReviewDocument;
   review: ReviewV2;
@@ -64,7 +73,10 @@ export function OverviewTab({
   idPrefix: string;
   historical: boolean;
   go: (place: ViewPlace) => void;
+  context: ReviewPlaceContext;
 }) {
+  const brief = isBrief(review);
+  const section = brief ? review.sections[0]! : null;
   const diagram = viewTile(review, review.overview.diagram);
   const added = tilesOn(review, OVERVIEW_OWNER);
   // Pending cards stand on the latest version only, as on the sections.
@@ -87,7 +99,34 @@ export function OverviewTab({
           <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{review.summary.text}</Markdown>
         </div>
       ) : null}
-      <RiskPart review={review} titleOf={titleOf} go={go} />
+      <RiskPart review={review} titleOf={titleOf} go={go} brief={brief} />
+      {section ? (
+        <>
+          <Part label="The change">
+            <SectionFiles document={document} files={viewFiles(review)} context={context} />
+          </Part>
+          <div data-brief-section="">
+            <SectionOverview
+              bare
+              document={document}
+              review={review}
+              section={section}
+              ctx={ctx}
+              idPrefix={idPrefix}
+              // Every pending card that names a section stands here: the
+              // brief has the one.
+              drafts={
+                historical
+                  ? []
+                  : (review.drafts ?? []).filter(
+                      (draft) => draft.section && draft.section !== OVERVIEW_OWNER,
+                    )
+              }
+              onRetryDetails={historical ? undefined : context.onRetryDetails}
+            />
+          </div>
+        </>
+      ) : null}
       {videos.length > 0 ? (
         <div data-review-block="" className={STOP}>
           <ReviewImages
@@ -125,6 +164,24 @@ export function OverviewTab({
         idPrefix={idPrefix}
       />
       {intent.length > 0 ? <AskedPart document={document} rows={intent} /> : null}
+      {brief && (review.context || context.contextPending) ? (
+        <details data-brief-context="" className="border-t border-subtle pt-4">
+          <summary className="cursor-pointer text-base text-link hover:underline">
+            Where this fits
+          </summary>
+          <div className="mt-5">
+            <WhereThisFits
+              plain
+              document={document}
+              review={review}
+              ctx={ctx}
+              idPrefix={idPrefix}
+              drafts={[]}
+              pending={context.contextPending && !historical}
+            />
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -132,15 +189,18 @@ export function OverviewTab({
 /** The score, what it means and why it is what it is, in two sentences,
  *  and below them, when the review asks for something before merging (a
  *  verdict with points), what that is: the verdict belongs to the risk it
- *  answers. */
+ *  answers. A brief leads the two sentences with the verdict's own line even
+ *  when it has no points, since the page is all there is to decide on. */
 function RiskPart({
   review,
   titleOf,
   go,
+  brief,
 }: {
   review: ReviewV2;
   titleOf: (id: string) => string | undefined;
   go: (place: ViewPlace) => void;
+  brief: boolean;
 }) {
   const score = riskScoreView({
     summary: { risk_score: review.summary.risk_score },
@@ -148,6 +208,7 @@ function RiskPart({
   } as unknown as Pick<ReviewDocument, "summary" | "sections">);
   const why = riskSummary(review);
   const verdict = review.summary.verdict?.points.length ? review.summary.verdict : null;
+  const lead = brief && !verdict ? (review.summary.verdict?.text.trim() ?? "") : "";
   return (
     <section
       aria-label="Risk"
@@ -183,10 +244,24 @@ function RiskPart({
             <p className="text-base font-medium text-primary">Not assessed</p>
           )}
         </div>
-        {why ? (
-          <Markdown className="max-w-[72ch] self-center text-base leading-[1.6] text-primary">
-            {why}
-          </Markdown>
+        {why || lead ? (
+          <div className="max-w-[72ch] space-y-1 self-center">
+            {lead ? (
+              <p
+                data-brief-verdict=""
+                className="text-base leading-[1.6] font-semibold text-primary"
+              >
+                <InlineMarkdown>{lead}</InlineMarkdown>
+              </p>
+            ) : null}
+            {why ? (
+              <Markdown
+                className={cn("text-base leading-[1.6]", lead ? "text-secondary" : "text-primary")}
+              >
+                {why}
+              </Markdown>
+            ) : null}
+          </div>
         ) : !score.assessed ? (
           <p className="self-center text-base text-secondary">
             {score.legacy
