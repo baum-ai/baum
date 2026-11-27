@@ -320,7 +320,9 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 
 func TestConcurrencyIsBounded(t *testing.T) {
 	f := fullFake()
-	f.delay = 20 * time.Millisecond
+	// Keep the first section in flight until the other enters the backend.
+	f.holdUntil["section-sec-retry"] = "section-sec-api"
+	f.holdUntil["section-sec-api"] = "section-sec-retry"
 	run := testRun(t, f)
 	run.Concurrency = 2
 	if _, _, err := Generate(context.Background(), run); err != nil {

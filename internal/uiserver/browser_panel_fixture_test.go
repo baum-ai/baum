@@ -31,7 +31,7 @@ import (
 // repository". A request about the tiles' layout
 // ("move the risks to the top", "make this wider", "remove this", "undo",
 // "reset") runs the layout tools over HTTP as the agent CLI would (layout).
-// One that says "take your time" takes four times as long.
+// A queue test can hold its turn open until the messages have been edited.
 type panelAgent struct {
 	events *hookevents.Store
 	home   string
@@ -75,17 +75,26 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	// The prompt is in the transcript at once, its answer once the turn ends.
 	writePanelTranscript(path, id, r.Directory, prompts, answers, false)
 	a.hook(id, r.Directory, path, "user-prompt-submit")
-	// A message that asks it to take its time gets a slower turn, long
-	// enough to queue and remove messages while it runs.
-	step := panelStep
-	if strings.Contains(strings.ToLower(r.Prompt), "take your time") {
-		step = 4 * panelStep
+	if strings.Contains(r.Prompt, "Wait for the queue.") {
+		hold := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "hold-panel-turn")
+		for {
+			if _, err := os.Stat(hold); errors.Is(err, os.ErrNotExist) {
+				break
+			} else if err != nil {
+				return agent.Result{SessionID: id}, err
+			}
+			select {
+			case <-ctx.Done():
+				return agent.Result{SessionID: id}, ctx.Err()
+			case <-time.After(25 * time.Millisecond):
+			}
+		}
 	}
 	wait := func() error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(step):
+		case <-time.After(panelStep):
 			return nil
 		}
 	}

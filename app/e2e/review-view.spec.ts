@@ -476,13 +476,15 @@ test("a flow tile lays out across, then with its labels, as the page widens", as
   expect(seen).toContain("true/true");
 });
 
-for (const width of [390, 900, 1440]) {
-  test(`at ${width}px no place scrolls the page sideways`, async ({ page }) => {
-    // A picture shows more of the page than the check needs.
-    if (SHOTS) test.setTimeout(120_000);
-    await page.setViewportSize({ width, height: SHOTS ? 1800 : 900 });
-    for (const [name, place] of PLACES) {
-      await open(page, `${PR7}${place}`);
+test("every review place fits the page at phone, tablet and desktop widths", async ({ page }) => {
+  // A picture shows more of the page than the check needs.
+  if (SHOTS) test.setTimeout(120_000);
+  for (const [name, place] of PLACES) {
+    const search = `${PR7}${place}`;
+    if (place === "") await open(page, search);
+    else await signedIn(page, search);
+    for (const width of [390, 900, 1440]) {
+      await page.setViewportSize({ width, height: SHOTS ? 1800 : 900 });
       await expect(page.locator("#review-section")).toBeVisible();
       await expect(page.locator('[role="tablist"][aria-label="Review"]')).toHaveCount(0);
       expect(await overflows(page), `${name} at ${width}px`).toBe(false);
@@ -499,8 +501,8 @@ for (const width of [390, 900, 1440]) {
       }
       await page.emulateMedia({ colorScheme: "light" });
     }
-  });
-}
+  }
+});
 
 test("a tile the person added is removed from its menu, and Undo puts it back", async ({
   page,

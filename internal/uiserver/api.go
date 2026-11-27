@@ -27,6 +27,7 @@ import (
 	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
+	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -298,7 +299,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
 	var decisions http.Handler
 	if a.Decisions != nil {
-		decisions = a.Decisions(a.linkedSessions(cache))
+		decisions = a.Decisions(a.linkedSessions(cache, viewserver.MaxDocumentBytes))
 	}
 	mux.Handle("/api/decisions", provider(decisions, "decisions_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))

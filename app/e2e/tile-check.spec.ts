@@ -7,9 +7,8 @@ import { launchURL } from "./inbox-helpers";
 // app's runner drawing inside the page, as it does in a browser. Candidates
 // are submitted through a route only the fixture has (the agent tools that
 // will submit them come later). Each file in e2e/tile-check is a tile that
-// shows one problem; the busy one is checked with a runner that claims it
-// and never answers, so the daemon's hang timer, not a frozen page, is
-// what is tested.
+// exercises the browser runner. The daemon watchdog is covered by
+// TestHangBlocksTheDigest in internal/tilechecks.
 
 const CORPUS = "e2e/tile-check";
 const SCHEMA = {
@@ -181,46 +180,3 @@ for (const [name, dir] of [
     expect(result.errors).toEqual([]);
     expect(result.verdict).toBe("pass");
   });
-
-test("a candidate that never finishes drawing hangs and is blocked", async ({ request }) => {
-  // This page's runner stands aside; a runner that claims the job and never
-  // answers takes its place, as a frozen check window would.
-  await page.route("**/api/tile-checks/next*", (route) => route.abort());
-  try {
-    const launch = new URL(await launchURL());
-    const token = new URLSearchParams(launch.hash.slice(1)).get("token");
-    const pending = submit(page, candidate("busy"));
-    let job: { id: string; digest: string } | null = null;
-    for (let attempt = 0; attempt < 20 && !job; attempt++) {
-      const claimed = await request.get(`${launch.origin}/api/tile-checks/next?wait=5`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (claimed.status() === 200) job = await claimed.json();
-    }
-    expect(job).not.toBeNull();
-    const result = await pending;
-    expect(result.verdict).toBe("hang");
-    expect(codes(result.errors)).toEqual(["hang"]);
-    expect(result.check).toBe(job!.id);
-    // The frame route refuses the type from now on: the page's frame of it
-    // never says hello.
-    const again = await page.evaluate(async (digest) => {
-      const frame = document.createElement("iframe");
-      frame.setAttribute("sandbox", "allow-scripts");
-      document.body.append(frame);
-      const heard = new Promise<boolean>((resolve) => {
-        window.addEventListener("message", (event) => {
-          if (event.source === frame.contentWindow) resolve(true);
-        });
-        setTimeout(() => resolve(false), 3000);
-      });
-      frame.src = `/tile-frames/${digest.slice("sha256:".length)}`;
-      const answer = await heard;
-      frame.remove();
-      return answer;
-    }, job!.digest);
-    expect(again).toBe(false);
-  } finally {
-    await page.unroute("**/api/tile-checks/next*");
-  }
-});

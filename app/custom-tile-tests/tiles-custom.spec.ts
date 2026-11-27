@@ -12,25 +12,24 @@ import {
   servePatch,
   showOnly,
   SHOTS,
+  TILE_WIDTHS,
+  tileColorSchemes,
   tileOn,
   watchErrors,
 } from "./helpers";
 
 // The well-behaved custom tile (widget_health) on the review page: drawn by
 // the host in a sandboxed frame from the daemon's frame route, on the How it
-// works section the view places it on, at three widths in both themes, sized
+// works section the view places it on, across three widths and both themes, sized
 // by the frame, its citations leading to the page's own places, and the
 // unavailable tile made for a newer kit. The escape probes share its section;
 // these tests serve the view without them.
 
-const WIDTHS = [1440, 900, 390] as const;
-const SCHEMES = ["light", "dark"] as const;
-
 const widget = (page: import("@playwright/test").Page) =>
   page.frameLocator('[data-custom-tile="widget_health"] iframe');
 
-for (const width of WIDTHS)
-  for (const scheme of SCHEMES)
+for (const width of TILE_WIDTHS)
+  for (const scheme of tileColorSchemes(width))
     test(`the custom tile on its section at ${width} in ${scheme}`, async ({ page }) => {
       const errors = watchErrors(page);
       await servePatch(page);

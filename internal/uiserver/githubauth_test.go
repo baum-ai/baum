@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/baum-ai/baum/internal/config"
@@ -324,21 +325,23 @@ func TestWorkflowAccessIsRequestedOnlyWhenAsked(t *testing.T) {
 		workflow bool
 	}{{"", false}, {"{}", false}, {`{"workflow":false}`, false}, {`{"workflow":true}`, true}} {
 		t.Run(c.body, func(t *testing.T) {
-			store := &connectionStore{}
-			a, _, s, _ := connectionFixture(t, store, func(*http.Request) (string, error) { return connectionGrant, nil })
-			connectStatus(t, a, "disconnected")
-			w := request(t, s, "POST", "/api/github-auth/start", "", s.Origin(), "application/json", "Bearer "+s.launch, c.body)
-			var started GitHubConnection
-			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &started) != nil || started.Pending == nil || started.Pending.Workflow != c.workflow {
-				t.Fatalf("start: %d %s", w.Code, w.Body)
-			}
-			got := connectStatus(t, a, "connected")
-			store.mu.Lock()
-			saved := store.credential.Workflow
-			store.mu.Unlock()
-			if got.Workflow != c.workflow || saved != c.workflow {
-				t.Fatalf("connection workflow=%v saved=%v, want %v", got.Workflow, saved, c.workflow)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				store := &connectionStore{}
+				a, _, s, _ := connectionFixture(t, store, func(*http.Request) (string, error) { return connectionGrant, nil })
+				connectStatus(t, a, "disconnected")
+				w := request(t, s, "POST", "/api/github-auth/start", "", s.Origin(), "application/json", "Bearer "+s.launch, c.body)
+				var started GitHubConnection
+				if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &started) != nil || started.Pending == nil || started.Pending.Workflow != c.workflow {
+					t.Fatalf("start: %d %s", w.Code, w.Body)
+				}
+				got := connectStatus(t, a, "connected")
+				store.mu.Lock()
+				saved := store.credential.Workflow
+				store.mu.Unlock()
+				if got.Workflow != c.workflow || saved != c.workflow {
+					t.Fatalf("connection workflow=%v saved=%v, want %v", got.Workflow, saved, c.workflow)
+				}
+			})
 		})
 	}
 	a, _, s, _ := connectionFixture(t, &connectionStore{}, func(*http.Request) (string, error) { return connectionGrant, nil })
