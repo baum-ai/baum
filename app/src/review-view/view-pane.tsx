@@ -14,7 +14,6 @@ import {
   shownFile,
   viewFiles,
   type ReviewV2,
-  type ViewPlace,
 } from "./model";
 import { OverviewTab } from "./overview-tab";
 import { SectionsTab } from "./sections-tab";
@@ -40,7 +39,6 @@ export function ViewPane({
   const files = useMemo(() => viewFiles(review), [review]);
   const file = place.tab === "code" ? shownFile(files, place.file) : undefined;
   const ctx = useViewTileContext(snapshot, review, historical, context);
-  const go = (next: ViewPlace) => context.select(selectionOf(next));
   // A code link on the page (a hunk chip, a file in "Where this fits", a
   // diff's file name) opens the file in Files changed rather than the viewer's
   // Files pane.
@@ -76,7 +74,6 @@ export function ViewPane({
             ctx={ctx}
             idPrefix={prefix}
             historical={historical}
-            go={go}
             context={context}
           />
         ) : place.tab === "sections" ? (

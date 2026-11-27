@@ -6,7 +6,14 @@ import type {
   ReviewDocument,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
-import { firstSentence, leadProse, type ReviewV2, type V2Section, type ViewTile } from "./document";
+import {
+  firstSentence,
+  leadProse,
+  type ReviewV2,
+  type V2Risk,
+  type V2Section,
+  type ViewTile,
+} from "./document";
 import { isRecord, isString } from "../tiles/types";
 import { fromV1 } from "./from-v1";
 
@@ -169,6 +176,41 @@ export function isBrief(review: ReviewV2): boolean {
     tilesOn(review, CONTEXT_ID).length === 0 &&
     !review.drafts?.some((draft) => draft.section === CONTEXT_ID)
   );
+}
+
+// ---------- what to check ----------
+
+/** A risk with the section it stands on. */
+export type CheckedRisk = { risk: V2Risk; section: string };
+
+const TIER_ORDER = ["critical", "high", "medium", "low"];
+
+/** What the Overview lists under the verdict: the verdict's points, then the
+ *  open risks of the sections still in the code, the most severe first (a
+ *  tier's risks in the review's order), the low ones apart, since most risks
+ *  are low and the list is for what needs a look. */
+export function decisionChecks(review: ReviewV2): {
+  points: { text: string; section?: string }[];
+  risks: CheckedRisk[];
+  low: CheckedRisk[];
+} {
+  const open = review.sections
+    .filter((section) => section.derived.state !== "stale")
+    .flatMap((section) =>
+      section.risks
+        .filter((risk) => risk.state !== "mitigated")
+        .map((risk): CheckedRisk => ({ risk, section: section.id })),
+    );
+  const rank = (each: CheckedRisk) => {
+    const at = TIER_ORDER.indexOf(each.risk.tier);
+    return at < 0 ? TIER_ORDER.length : at;
+  };
+  const sorted = open.toSorted((a, b) => rank(a) - rank(b));
+  return {
+    points: review.summary.verdict?.points ?? [],
+    risks: sorted.filter((each) => each.risk.tier !== "low"),
+    low: sorted.filter((each) => each.risk.tier === "low"),
+  };
 }
 
 // ---------- the sections list ----------

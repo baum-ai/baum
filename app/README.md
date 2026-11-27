@@ -3052,23 +3052,32 @@ builds the rail's model (the sections and the file list) from it.
   section), and Files changed is `pane=tile&tile=code&tile_item=<path>` (the
   address keeps `code`). A link to a tile opens the section it is placed on.
   The Files changed row opens the first file that is not generated.
-- **Overview**, always in this order: the summary (`summary.text`), the risk
-  (score, level and why: `risk_why`, or else the score's first reason) with
-  the verdict inside its card when it has points (each linking to its
-  section), the description's clips of the change (`overview.videos`, under
+- **Overview**, always in this order: the summary (`summary.text`), what to
+  decide (`DecisionPart`, one card), the description's clips of the change (`overview.videos`, under
   Video), what it looks like (`overview.screenshots`), the main diagram
   (`overview.diagram`) under its title, the tiles the person added to the
   Overview (owner `overview`, with their pending cards), and what was asked (`overview.intent`,
   else each linked session's first prompt), each linking to the prompt in its
   session.
+- **What to decide** opens with the verdict: its decision as a pill (Safe to
+  merge, Look first or Changes needed for `approve`, `look_first` and
+  `request_changes`) and its sentence, on every review that has a verdict,
+  points or not, beside the risk score, its meter and its level. Under them is
+  the list of what to check (`decisionChecks` in `review-view/model.ts`): the
+  verdict's points (each linking to its section), then the open risks of the
+  sections still in the code that are above low, the most severe first, each
+  opening its section at the risk. The low risks are folded under their count
+  ("7 low risks in 5 sections"), since most risks are low and the list is for
+  what needs a look. Last comes why the score is what it is (`risk_why`, or
+  else the score's first reason). The risks still stand on their sections; a
+  brief lists none here, since its section is on the same page.
 - **A brief** is the review of a small change, read whole on the Overview, so
   a five-line change is not spread over four places with its diff on none of
   them. A review is a brief (`isBrief` in `review-view/model.ts`) when it has
   one section and none left from earlier commits, changes at most 60 lines
   (`BRIEF_LINES`, added and removed), has an assessed risk of 1 or 2, and has
   nothing placed on "Where this fits". The rail then has no How it works:
-  Overview, Files changed and the viewer's rows. Under the risk card (which
-  leads with the verdict's own line, though it has no points) the Overview
+  Overview, Files changed and the viewer's rows. Under what to decide the Overview
   shows **The change** (every changed file's diff, as a section's Code view
   draws it) and what the one section says (its body and risks, without its
   gist, which would restate the summary), then the Overview's usual parts, and
