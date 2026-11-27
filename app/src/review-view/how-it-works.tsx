@@ -282,6 +282,21 @@ function glide(
 
 const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
 
+/** Names the part the item keys (j and k) go on from: the one the reader was
+ *  just taken to. The viewer reads `data-review-keys-from` on the first key
+ *  and starts in that part, so the block marked in another part is unmarked
+ *  here. With no part, the keys go on from their mark or from what is in
+ *  sight, as on any place. */
+export function keysFrom(root: Element | null, part: Element | null) {
+  if (!root) return;
+  for (const named of root.querySelectorAll("[data-review-keys-from]"))
+    named.removeAttribute("data-review-keys-from");
+  if (!part) return;
+  part.setAttribute("data-review-keys-from", "");
+  for (const marked of root.querySelectorAll("[data-review-block-active]"))
+    marked.removeAttribute("data-review-block-active");
+}
+
 /** Taking the reader to a part, and following where they scroll to.
  *
  *  The spy keeps an anchor: what stands at the reading line, or the part
@@ -341,6 +356,9 @@ function useJumps(
       cancelAnimationFrame(own.frame);
       own.pin = id;
       own.pinned = part(id);
+      // The item keys go on from the part the reader was taken to, not from
+      // the block they marked in another part.
+      keysFrom(root.current, item ? null : own.pinned);
       own.anchor = null;
       own.holding = false;
       own.moving = false;
@@ -354,6 +372,7 @@ function useJumps(
         if (taken) {
           own.pin = null;
           own.pinned = null;
+          keysFrom(root.current, null);
         }
         own.measure();
       };
@@ -430,10 +449,12 @@ function useJumps(
         const top = anchor.element.getBoundingClientRect().top;
         const reflowed = Math.abs(top + scroller.scrollTop - anchor.at) > 1;
         if (!reflowed && Math.abs(scroller.scrollTop - anchor.scrolled) > 1) {
-          // The reader scrolled: a pin, and a place held, let go.
+          // The reader scrolled: a pin, and a place held, let go, and the
+          // item keys go on from what is in sight again.
           own.pin = null;
           own.pinned = null;
           own.holding = false;
+          keysFrom(element, null);
         } else if (reflowed || own.holding) {
           const want = scroller.scrollTop + top - anchor.top;
           if (Math.abs(want - scroller.scrollTop) > 1)

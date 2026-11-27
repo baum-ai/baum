@@ -823,7 +823,13 @@ export function WhereThisFits({
             if (!part) return [];
             return [
               <Part key={key} label={label}>
-                <div data-review-block="" className="space-y-2 rounded-sm outline-none">
+                {/* A stop of j and k, washed while they are on it as a
+                    section's blocks are. */}
+                <div
+                  data-review-block=""
+                  data-context-part={key}
+                  className={cn(BLOCK, "space-y-2")}
+                >
                   <Markdown className={PROSE}>{part.text}</Markdown>
                   {part.files.length > 0 ? (
                     <ul className="flex flex-wrap gap-1.5" aria-label={`${label} files`}>

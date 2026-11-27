@@ -470,6 +470,15 @@ describe("How it works", () => {
     expect(body.querySelector('[role="figure"] h3')?.textContent).toBe(
       "Where the transport sits in the daemon",
     );
+    // Each part is a stop of j and k, washed while they are on it, and the
+    // stops run on into the sections below.
+    const parts = [...body.querySelectorAll<HTMLElement>("[data-review-block][data-context-part]")];
+    expect(parts.map((each) => each.dataset.contextPart)).toEqual(
+      Object.keys(REVIEW_1303.context!).filter(
+        (key) => REVIEW_1303.context![key as keyof typeof REVIEW_1303.context],
+      ),
+    );
+    for (const part of parts) expect(part.className).toContain("data-[review-block-active]:bg-");
     // baum.review/2's context names files, not symbols.
     await click(button(body, "remote.go"));
     expect(search.get("tile")).toBe("code");

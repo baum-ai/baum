@@ -1542,7 +1542,16 @@ function ReviewWorkspace<F extends ReviewFile>({
           !block.querySelector('[data-review-block], [data-message="human"], [data-agent-text]'),
       );
       const marked = blocks.findIndex((block) => block.hasAttribute("data-review-block-active"));
-      if (blocks.length === 0 || (marked < 0 && direction < 0)) return;
+      // A part of a long place the host just took the reader to (a section,
+      // by its rail row or the section keys) is where the keys go on from,
+      // whatever they marked before: j to its first block, k to the one
+      // above it. The host marks it with `data-review-keys-from`, which the
+      // first key uses up.
+      const from =
+        reviewPane.current?.querySelector<HTMLElement>("[data-review-keys-from]") ?? null;
+      const start = from ? blocks.findIndex((block) => from.contains(block)) : -1;
+      from?.removeAttribute("data-review-keys-from");
+      if (blocks.length === 0 || (marked < 0 && direction < 0 && start < 0)) return;
       // On a long place the reader may have scrolled away from the block the
       // keys are on, or never marked one: the keys then go on from what is in
       // sight, j to the first block that starts in it, k to the one above. A
@@ -1552,7 +1561,8 @@ function ReviewWorkspace<F extends ReviewFile>({
       const settled =
         marked >= 0 && performance.now() - (markedAt.get(blocks[marked]!) ?? 0) > MARK_SETTLES_MS;
       let at = marked;
-      if (
+      if (start >= 0) at = direction > 0 ? start - 1 : start;
+      else if (
         !markedBox ||
         (settled &&
           laidOut(markedBox) &&
@@ -1570,7 +1580,13 @@ function ReviewWorkspace<F extends ReviewFile>({
       const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
       // A block taller than the pane (a long file's diff) is read through
       // before the keys leave it.
-      if (at >= 0 && at === marked && readThrough(blocks[at]!, direction > 0, !reduced)) return;
+      if (
+        start < 0 &&
+        at >= 0 &&
+        at === marked &&
+        readThrough(blocks[at]!, direction > 0, !reduced)
+      )
+        return;
       const target = blocks[Math.max(0, Math.min(blocks.length - 1, at + direction))]!;
       for (const block of blocks) block.removeAttribute("data-review-block-active");
       target.setAttribute("data-review-block-active", "");
