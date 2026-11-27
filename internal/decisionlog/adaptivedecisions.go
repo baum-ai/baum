@@ -78,7 +78,7 @@ func (b *adaptiveRun) decisions(ctx context.Context, numbers []int) error {
 				} else if !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
-				evidence.Decisions = append(evidence.Decisions, adaptiveDecision{d, source})
+				evidence.Decisions = append(evidence.Decisions, adaptiveDecision{d, source.provenance()})
 			}
 		}
 		data, err := json.Marshal(evidence)
