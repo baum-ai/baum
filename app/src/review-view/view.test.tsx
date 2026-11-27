@@ -11,7 +11,7 @@ import type { TileContext } from "../tiles/types";
 import { parseReviewV2, type ReviewV2 } from "./document";
 import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
-import { reviewOf, type ViewTile } from "./model";
+import { decisionChecks, reviewOf, type ViewTile } from "./model";
 import { steppableViews, useSectionViewKeys, viewKeyStep } from "./section-views";
 import { COMPARED_PANE } from "@baum/viewer/components/review-history";
 import { useViewPlaces } from "./places";
@@ -247,17 +247,19 @@ describe("the Overview", () => {
     const text = view.textContent ?? "";
     const order = [
       "A paired phone can now reach the daemon",
-      "Risk",
-      "This adds a network entry point to the daemon",
+      // What to decide: the verdict first, then what to check, then why.
+      "Look first",
       "Approve into the mobile branch once you've decided on Always allow.",
+      "Before merging",
+      "This adds a network entry point to the daemon",
       "How a phone reaches the daemon",
       "What was asked",
     ].map((part) => text.indexOf(part));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect(order).toEqual(order.toSorted((a, b) => a - b));
     expect(view.querySelector('[aria-label="Risk"]')?.textContent).toContain("4 of 5");
-    // The verdict is part of the risk card, under the score and its reason.
-    expect(view.querySelector('[aria-label="Risk"] [aria-label="Before merging"]')).not.toBeNull();
+    // What to check is part of the same card as the verdict and the score.
+    expect(view.querySelector('[aria-label="Risk"] [aria-label="Check these"]')).not.toBeNull();
     // No check callouts and no line counts.
     for (const gone of ["Verify", "Fixed later", "Follow-up", "lines"])
       expect(text).not.toContain(gone);
@@ -265,11 +267,49 @@ describe("the Overview", () => {
 
   it("links each verdict point to its section", async () => {
     const container = await page();
-    const verdict = panel(container).querySelector<HTMLElement>('[aria-label="Before merging"]')!;
-    expect(verdict.querySelectorAll("li")).toHaveLength(2);
-    await click(button(verdict, "What a phone can do"));
+    const checks = panel(container).querySelector<HTMLElement>('[aria-label="Check these"]')!;
+    const points = [...checks.querySelectorAll<HTMLElement>('li[data-check="point"]')];
+    expect(points).toHaveLength(2);
+    await click(button(points[0]!, "What a phone can do"));
     expect(search.get("section")).toBe("sec_allowlist");
     expect(railRow(container, "What a phone can do").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("lists the open risks above low under the verdict's points, each opening its section at the risk", async () => {
+    const container = await page();
+    const view = panel(container);
+    const { risks, low } = decisionChecks(REVIEW_1303);
+    expect(risks.length).toBeGreaterThan(0);
+    const rows = [
+      ...view.querySelectorAll<HTMLElement>('[aria-label="Check these"] li[data-check="risk"]'),
+    ];
+    expect(rows).toHaveLength(risks.length);
+    // The low ones wait folded under their count.
+    const fold = view.querySelector<HTMLDetailsElement>("details[data-check-low]");
+    if (low.length > 0) {
+      expect(fold?.open).toBe(false);
+      expect(fold?.querySelector("summary")?.textContent).toContain(`${low.length} low risk`);
+      expect(fold?.querySelectorAll('li[data-check="risk"]')).toHaveLength(low.length);
+    } else expect(fold).toBeNull();
+    await click(rows[0]!.querySelector<HTMLElement>("button")!);
+    expect(search.get("pane")).toBe("risk");
+    const title = REVIEW_1303.sections.find((each) => each.id === risks[0]!.section)!.title;
+    expect(railRow(container, title).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("shows the verdict's line when it has no points, and a safe one by its name", async () => {
+    const safe: ReviewV2 = {
+      ...REVIEW_1303,
+      summary: {
+        ...REVIEW_1303.summary,
+        verdict: { decision: "approve", text: "Safe to merge as it is.", points: [] },
+      },
+    };
+    const container = await page("", review1303(safe));
+    const card = panel(container).querySelector<HTMLElement>('[aria-label="Risk"]')!;
+    expect(card.textContent).toContain("Safe to merge");
+    expect(card.querySelector("[data-verdict]")?.textContent).toBe("Safe to merge as it is.");
+    expect(card.querySelector('li[data-check="point"]')).toBeNull();
   });
 
   it("says what was asked against what the pull request does, linking the prompt", async () => {
@@ -295,7 +335,8 @@ describe("the Overview", () => {
     };
     const container = await page("", review1303(bare));
     const view = panel(container);
-    expect(view.querySelector('[aria-label="Before merging"]')).toBeNull();
+    expect(view.querySelector("[data-verdict]")).toBeNull();
+    expect(view.querySelector('li[data-check="point"]')).toBeNull();
     expect(view.querySelector('[aria-label="Risk"]')?.textContent).toContain(
       "Phones can approve pull requests and answer agents through a third-party relay.",
     );
@@ -1932,10 +1973,12 @@ describe("a brief, for a small change", () => {
     ].map((part) => text.indexOf(part));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect(order).toEqual(order.toSorted((a, b) => a - b));
-    // The verdict's line stands in the risk card though it has no points.
-    expect(view.querySelector('[aria-label="Risk"] [data-brief-verdict]')?.textContent).toBe(
+    // The verdict's line stands in the card; the section's risks are on the
+    // page itself, so the card lists none.
+    expect(view.querySelector('[aria-label="Risk"] [data-verdict]')?.textContent).toBe(
       "Safe to merge as it is.",
     );
+    expect(view.querySelector('[aria-label="Risk"] li[data-check="risk"]')).toBeNull();
     // What the section says follows the diff, without the gist that would
     // restate the summary above it.
     const section = view.querySelector<HTMLElement>("[data-brief-section]")!;
