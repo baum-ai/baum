@@ -232,7 +232,7 @@ func (s *Scheduler) work(ctx context.Context) {
 			continue
 		}
 		report, err := s.Worker.Capture(ctx, Target{Agent: k.agent, ID: k.id, Path: path, Repository: session.Repository,
-			Branch: session.Branch, Ended: session.State == livesessions.StateEnded}, Options{})
+			Branch: session.Branch, HeadSHA: session.HeadSHA, Ended: session.State == livesessions.StateEnded}, Options{})
 		// What the Timeline shows changes with saved decisions, a skip or a
 		// settled attempt; a capture that stopped before any is not one.
 		if s.Changed != nil && ctx.Err() == nil && (report.Outcome == OutcomeExtracted || report.Outcome == OutcomeSkipped ||

@@ -63,8 +63,18 @@ func (f *fakeBackend) Check(ctx context.Context) (string, error) {
 	}
 	return "1.0.0", f.checkErr
 }
-func (f *fakeBackend) Run(context.Context, agent.Request) (agent.Result, error) {
-	return agent.Result{}, errors.New("not used")
+func (f *fakeBackend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
+	user, err := os.ReadFile(filepath.Join(request.Directory, "transcript.txt"))
+	if err != nil {
+		return agent.Result{}, err
+	}
+	system, err := os.ReadFile(filepath.Join(request.Directory, "instructions.txt"))
+	if err != nil {
+		return agent.Result{}, err
+	}
+	completion, err := f.Complete(ctx, agent.CompleteRequest{System: string(system), User: string(user)})
+	document, marshalErr := json.Marshal(sourceReply{Extraction: completion.Document, References: []string{}})
+	return agent.Result{Document: document, Model: completion.Model, Usage: completion.Usage, Calls: 1}, errors.Join(err, marshalErr)
 }
 
 var turnPattern = regexp.MustCompile(`## Turn (\d+)`)
@@ -152,6 +162,16 @@ func newFixture(t *testing.T) *fixture {
 	build := func(string) generate.CheckedBackend { return f.backend }
 	f.capturer = &Capturer{Store: f.store, Registry: f.registry, Config: config.Config{Backend: config.BackendClaude}, Home: home, Now: f.clock.Now,
 		Backends: generate.Backends{Claude: build, Codex: build, Anthropic: build, CursorAgent: build}}
+	f.capturer.source = func(_ context.Context, target Target) (repositorySource, error) {
+		dir, err := os.MkdirTemp("", agent.RunDirPrefix+"*")
+		if err != nil {
+			return repositorySource{}, err
+		}
+		if err := os.Mkdir(filepath.Join(dir, "head"), 0700); err != nil {
+			return repositorySource{}, err
+		}
+		return repositorySource{Directory: dir, Context: SourceContext{Version: sourceContextVersion, Repository: target.Repository, Revision: "fixture"}}, nil
+	}
 	f.target = Target{Agent: "claude-code", ID: "s1", Path: f.path, Repository: "o/r", Branch: "feature"}
 	return f
 }

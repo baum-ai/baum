@@ -103,9 +103,12 @@ func decisionUsage(u agent.Usage) decisions.Usage {
 // secrets in the reply before the extractor reads it, and remembers whether a
 // call was made and what it reported, for the ledger.
 type completerModel struct {
-	completer agent.Completer
-	redactor  *bundle.Redactor
-	called    bool
+	completer   agent.Completer
+	taskBackend agent.Backend
+	source      repositorySource
+	taskBudgets agent.Budgets
+	redactor    *bundle.Redactor
+	called      bool
 	// raw is the last reply as the provider returned it.
 	raw   []byte
 	user  string
@@ -122,6 +125,9 @@ type completerModel struct {
 }
 
 func (m *completerModel) Complete(ctx context.Context, req decisions.ModelRequest) (decisions.ModelResponse, error) {
+	if m.taskBackend != nil {
+		return m.completeTask(ctx, req)
+	}
 	schema, err := json.Marshal(req.Schema)
 	if err != nil {
 		return decisions.ModelResponse{}, err
