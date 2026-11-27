@@ -107,6 +107,8 @@ type completerModel struct {
 	taskBackend agent.Backend
 	source      repositorySource
 	taskBudgets agent.Budgets
+	taskPrompt  string
+	taskCheck   func([]byte) error
 	redactor    *bundle.Redactor
 	called      bool
 	// raw is the last reply as the provider returned it.
@@ -426,7 +428,8 @@ func (c caller) finish(ctx context.Context, id int64, m *completerModel, callErr
 
 // callResult is one feature stage call: its reply, or why none was made.
 type callResult struct {
-	JSON []byte
+	JSON   []byte
+	Source *SourceContext
 	// Skip is the reason no call was made (a backend reason).
 	Skip string
 	// Called is set once the backend was called, so a failure may have been

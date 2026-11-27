@@ -7604,11 +7604,21 @@ clone's own objects (a failed read is retried after 15 minutes, and after 3
 failures at one head its paths are unknown until the daily re-link), and
 links commits to this machine's sessions with `locallink.LinkCommits`, the
 per-commit matching `Resolve` uses. It then places pending pull requests
-and sessions in features (`FeatureWorker.Assign`: hosted triggers, a Go port
-of the hosted weighted candidate ranking, `assign.Public`) and writes the
-text of features whose members changed (`FeatureWorker.Summarize`,
-`summary.Public`, reusing text and generated pull request summaries whose
-input hash is unchanged), and at most weekly, when the features'
+and sessions in features (`FeatureWorker.Assign`: existing triggers plus durable
+scope/path/example relevance). Local placement, decision attribution, feature
+text and consolidation use the repository task adapter in `taskmodel.go`, with
+pinned incoming source and separately recorded map revisions. `featurecontext.go`
+keeps source-only scopes and merged aliases valid candidates. `featureattribution.go`
+stores input-hashed semantic answers and key eligibility under a repository input
+revision guard inside the transaction. One attribution task precedes each default
+text pass, so backlog work yields to useful summaries. `feature_scope_target`
+reconciles live scope targets after a split without rewriting original map
+definitions; unsupported/conflicting lineage is inactive. Timeline and
+`summarySource` bulk-read the
+same resolver, never call models, and accept only single-feature positive file
+support while an answer is stale. Hosted attribution stays unchanged.
+`FeatureWorker.Summarize` refreshes attribution first, then writes dirty text
+without live per-PR summary fanout; explicit legacy builds retain that fallback, and at most weekly, when the features'
 fingerprint changed, consolidates them (`FeatureWorker.Consolidate`,
 `consolidate.Public`: one merge call, at most three split calls, every call
 made before a write, each write checked against the membership versions it

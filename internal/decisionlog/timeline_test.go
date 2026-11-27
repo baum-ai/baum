@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +129,8 @@ changed_at, created_at, updated_at) VALUES ('G1',?,?,'Gadget counts','About coun
 			}
 			return fakeClone{}
 		}}
+	f.resolveFixtureDecisions(repo, []SessionKey{{Agent: "claude-code", ID: "s1"}, {Agent: "claude-code", ID: "s2"}})
+	f.resolveFixtureDecisions(gadgets, []SessionKey{{Agent: "codex", ID: "g1"}})
 	f.handler = f.timeline.Handler()
 	return f
 }
@@ -970,5 +973,55 @@ func TestTimelineCurrentSince(t *testing.T) {
 	f.exec(`UPDATE feature_version SET state='retired'`)
 	if got := since(); got != nil {
 		t.Fatalf("without a current version = %v", got)
+	}
+}
+
+// Timeline fixtures explicitly seed semantic outcomes. Reads never classify.
+func (f *featureFixture) resolveFixtureDecisions(repository string, keys []SessionKey) {
+	f.t.Helper()
+	ctx := context.Background()
+	version, err := f.store.LiveVersion(ctx, repository)
+	clean, cleanErr := collect(scanString)(f.store.db.QueryContext(ctx, `SELECT id FROM feature WHERE version_id=? AND summarized_version=membership_version`, version))
+	if cleanErr != nil {
+		f.t.Fatal(cleanErr)
+	}
+	defer func() {
+		for _, id := range clean {
+			f.exec(`UPDATE feature SET summarized_version=membership_version,dirty_since=NULL WHERE id=?`, id)
+		}
+	}()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	current, err := f.store.currentOf(ctx, keys)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	links, err := f.store.sessionLinksOf(ctx, version, repository, keys)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	set, err := f.store.attributionSet(ctx, version, repository, keys, current, links)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, key := range keys {
+		input := set.Inputs[key]
+		resolutions := []decisionResolution{}
+		for _, d := range input.Decisions {
+			attributor := links[key].Attributor()
+			id := attributor.Attribute(d.Files)
+			pull, _ := strconv.Atoi(attributor.PullRequest(id, d.Files))
+			if id != "" {
+				resolutions = append(resolutions, decisionResolution{DecisionID: d.ID, FeatureID: id, Pull: pull, KeyEligible: !d.Superseded, Reason: "Explicit frozen fixture relevance", Hash: attributionHash(input, d)})
+			}
+		}
+		rev, err := f.store.revision(ctx, repository)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		if err = f.store.saveAttribution(ctx, version, repository, resolutions, input, nil, f.clock.now, rev); err != nil {
+			f.t.Fatal(err)
+		}
 	}
 }

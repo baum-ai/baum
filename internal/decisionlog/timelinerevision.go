@@ -43,14 +43,18 @@ const currentVersions = `(SELECT id FROM feature_version WHERE state='current')`
 // read must be added here; the triggers are installed again when this
 // changes (the names carry a hash of their definitions).
 var timelineInputs = []revisionTrigger{
+	{table: "feature_decision", live: true, updates: []string{"input_hash", "context_version", "feature_id", "pull_number", "key_eligible", "reason"}},
+	{table: "feature_scope_target", live: true, updates: []string{"target_id", "state", "reason", "source_json"}},
+	{table: "feature_scope", live: true, updates: []string{"revision", "scope_json"}},
 	{table: "feature_version", updates: []string{"repository", "state"}},
 	{table: "feature", live: true, updates: []string{"version_id", "repository", "title", "description", "digest", "key_decisions_json",
 		"merged_into", "membership_version", "summarized_version"}},
 	{table: "feature_pull", live: true, updates: []string{"feature_id", "assigned_paths_json"}},
 	{table: "feature_session", live: true, updates: []string{"feature_id"}},
-	{table: "pull_request", updates: []string{"title", "state", "head_sha", "author", "draft", "merged_at", "bot", "created_at", "updated_at", "paths_json"}},
+	{table: "pull_request", updates: []string{"title", "state", "head_sha", "body", "author", "draft", "merged_at", "bot", "created_at", "updated_at", "paths_json"}},
 	{table: "pull_commit"},
 	{table: "session_commit"},
+	{table: "capture_source", updates: []string{"source_json"}, repositories: []string{"COALESCE((SELECT repository FROM capture_session WHERE agent=%s.agent AND session_id=%s.session_id), '')"}},
 	{table: "capture_session", updates: []string{"repository", "branch"}, moves: true},
 	// A decision is read through its session's repository, which can differ
 	// from the one it was stored under once the session moved.
@@ -58,6 +62,8 @@ var timelineInputs = []revisionTrigger{
 		"COALESCE((SELECT repository FROM capture_session WHERE agent=%s.agent AND session_id=%s.session_id), '')"},
 		updates: []string{"agent", "session_id", "repository", "ordinal", "title", "summary", "category", "who", "trigger", "rationale",
 			"rejected_alternative", "evidence", "superseded", "turns_json", "decided_turn", "decided_at", "branch", "obsolete_at"}},
+	{table: "decision_source", updates: []string{"source_json"}, repositories: []string{
+		"COALESCE((SELECT cs.repository FROM decision d JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE d.decision_id=%s.decision_id), '')"}},
 	{table: "decision_file", repositories: []string{
 		"COALESCE((SELECT repository FROM decision WHERE decision_id=%s.decision_id), '')",
 		"COALESCE((SELECT cs.repository FROM decision d JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE d.decision_id=%s.decision_id), '')"}},

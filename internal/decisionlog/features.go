@@ -64,6 +64,7 @@ type FeatureWorker struct {
 	once     sync.Once
 	wake     chan struct{}
 	redactor *bundle.Redactor
+	source   func(context.Context, string, string, string, string, config.Config) (repositorySource, error)
 	initErr  error
 	// mu guards windowLinked, each repository's last re-link of the session
 	// window, and retryAt, when a failed repository is tried again: a first
@@ -645,6 +646,9 @@ type FeatureOptions struct {
 	DryRun bool
 	// Limit bounds the items or features taken; zero is the stage's limit.
 	Limit int
+	// AttributionLimit overrides the small semantic backfill quantum independently
+	// of how many feature summaries the pass may write.
+	AttributionLimit int
 	// Manual ignores the activation and the text stage's debounce.
 	Manual bool
 	// Backend and Model, when set, replace the configured ones.

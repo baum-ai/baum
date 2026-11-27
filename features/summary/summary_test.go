@@ -269,7 +269,7 @@ func TestRequestNamesItsVersionAndKind(t *testing.T) {
 	if _, err := testPrompts.Request(PublicVersion, "other", "{}", 0); err == nil {
 		t.Fatal("an unknown kind was accepted")
 	}
-	if !Public.KnownPromptVersion(PublicVersion) || !slices.Equal(Public.PromptVersions(), []string{PublicVersion}) {
+	if !Public.KnownPromptVersion(PublicVersion) || !slices.Equal(Public.PromptVersions(), []string{PublicVersion, RepositoryVersion}) {
 		t.Fatal("the published prompt version is not released")
 	}
 }
@@ -322,5 +322,22 @@ func TestWithCurrentAppendsTheBoundedCurrentText(t *testing.T) {
 		if _, err := WithCurrent(input, "T", "D"); err == nil {
 			t.Fatalf("WithCurrent accepted %q", input)
 		}
+	}
+}
+
+func TestRepositoryVersionRetainsLegacyPullRequestPrompt(t *testing.T) {
+	request, err := Public.Request(RepositoryVersion, PullRequest, `{"title":"Export widgets"}`, MaxOutputTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := Public.Request(PublicVersion, PullRequest, `{"title":"Export widgets"}`, MaxOutputTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.System == "" || request.System != original.System {
+		t.Fatalf("legacy PR summary lost its public system prompt: %q", request.System)
+	}
+	if Public.PullRequestVersion(RepositoryVersion) != PublicVersion {
+		t.Fatal("unchanged public PR prompt lost cache ownership")
 	}
 }

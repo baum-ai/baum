@@ -217,10 +217,14 @@ func TestConsolidationSplit(t *testing.T) {
 		Scan(&from, &at, &checked, &membership); err != nil || from != "A" || at != t0.UnixMilli() || checked != membership {
 		t.Fatalf("new part: from %q at %d, checked %d of %d (%v)", from, at, checked, membership, err)
 	}
+	var keeperTitle string
+	if err := f.store.db.QueryRow(`SELECT title FROM feature WHERE id='A'`).Scan(&keeperTitle); err != nil || keeperTitle != "Large" {
+		t.Fatalf("keeper partition text %q %v", keeperTitle, err)
+	}
 	// Within the hold, merging the part back is dropped.
 	f.backend.merge = func(user string) (string, error) {
 		refs := mergeRefs(t, user)
-		return mergeReply(refs["Feature A"], refs["Small"]), nil
+		return mergeReply(refs["Large"], refs["Small"]), nil
 	}
 	if got := f.consolidate(FeatureOptions{Manual: true}); got.HeldMerges != 1 || got.Merged != 0 {
 		t.Fatalf("held = %+v", got)
@@ -299,7 +303,7 @@ func TestConsolidationSplitSlots(t *testing.T) {
 	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
 	f.backend.split = func(string) (string, error) { return `{"parts":[]}`, nil }
 	got := f.consolidate(FeatureOptions{})
-	if f.backend.calls["split"] != 3 || got.InvalidSplits != 3 || got.KeptWhole != 1 {
+	if f.backend.calls["split"] != 9 || got.InvalidSplits != 3 || got.KeptWhole != 1 {
 		t.Fatalf("split calls %d, report %+v", f.backend.calls["split"], got)
 	}
 }

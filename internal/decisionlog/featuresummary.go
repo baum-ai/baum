@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,13 @@ type SummarizedFeature struct {
 // backend reason stops it until the next run.
 func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o FeatureOptions) (SummaryReport, error) {
 	o.DryRun = false
+	attributed, err := w.AttributeDecisions(ctx, repository, dir, o)
+	if err != nil {
+		return SummaryReport{Repository: repository}, err
+	}
+	if attributed.Stopped != "" {
+		return SummaryReport{Repository: repository, Stopped: attributed.Stopped, Spent: attributed.Spent}, nil
+	}
 	r, err := w.newRun(ctx, repository, dir, o)
 	if err != nil {
 		return SummaryReport{Repository: repository, Features: []SummarizedFeature{}}, err
@@ -72,7 +80,9 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 	if o.Limit > 0 {
 		limit = o.Limit
 	}
-	return r.summarizePending(ctx, quiet, limit)
+	report, err := r.summarizePending(ctx, quiet, limit)
+	report.Spent += attributed.Spent
+	return report, err
 }
 
 // summarizePending writes the text of at most limit of the run's version's
@@ -194,8 +204,8 @@ type featureText struct {
 
 // summaryPull is one of a feature's pull requests, as its text reads it.
 type summaryPull struct {
-	Number             int
-	Title, Body, State string
+	Number                      int
+	Title, Body, State, HeadSHA string
 	// Sessions are the captured sessions linked to its commits.
 	Sessions []SessionKey
 }
@@ -209,8 +219,9 @@ type summarySource struct {
 	Pulls []summaryPull
 	// Decisions are the current decisions attributed to the feature,
 	// superseded ones included, earliest first.
-	Decisions []Decision
-	Paths     []string
+	Decisions   []Decision
+	Paths       []string
+	KeyEligible map[string]bool
 }
 
 // summarySource reads a feature's text input: its pull requests, the
@@ -235,8 +246,8 @@ FROM feature WHERE id=?`, featureID).Scan(&src.Version, &src.Text.Title, &src.Te
 	}
 	pulls, err := collect(func(rows *sql.Rows) (pullRow, error) {
 		var p pullRow
-		return p, rows.Scan(&p.pull.Number, &p.pull.Title, &p.pull.Body, &p.pull.State, &p.current, &p.assigned)
-	})(s.db.QueryContext(ctx, `SELECT p.number, p.title, p.body, CASE WHEN p.merged_at IS NOT NULL THEN 'merged' ELSE p.state END,
+		return p, rows.Scan(&p.pull.Number, &p.pull.Title, &p.pull.Body, &p.pull.State, &p.pull.HeadSHA, &p.current, &p.assigned)
+	})(s.db.QueryContext(ctx, `SELECT p.number, p.title, p.body, CASE WHEN p.merged_at IS NOT NULL THEN 'merged' ELSE p.state END,p.head_sha,
 COALESCE(p.paths_json, '[]'), fp.assigned_paths_json FROM feature_pull fp JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
 WHERE fp.feature_id=? ORDER BY p.created_at, p.number`, featureID))
 	if err != nil {
@@ -282,19 +293,25 @@ WHERE fs.feature_id=?1 ORDER BY 2, 3, 1`, featureID))
 			}
 		}
 	}
+	current, err := s.currentOf(ctx, sessions)
+	if err != nil {
+		return src, err
+	}
+	sessionLinks, err := s.sessionLinksOf(ctx, version, repository, sessions)
+	if err != nil {
+		return src, err
+	}
+	set, err := s.attributionSet(ctx, version, repository, sessions, current, sessionLinks)
+	if err != nil {
+		return src, err
+	}
+	src.KeyEligible = map[string]bool{}
 	for _, key := range sessions {
-		links, err := s.sessionLinks(ctx, version, repository, key.Agent, key.ID)
-		if err != nil {
-			return src, err
-		}
-		attributor := links.Attributor()
-		current, err := s.Current(ctx, key)
-		if err != nil {
-			return src, err
-		}
-		for _, d := range current {
-			if attributor.Attribute(d.Files) == featureID {
+		for _, d := range current[key] {
+			resolution := resolveDecision(d, sessionLinks[key], set.Resolved)
+			if resolution.FeatureID == featureID {
 				src.Decisions = append(src.Decisions, d)
+				src.KeyEligible[d.ID] = resolution.KeyEligible
 				for _, file := range d.Files {
 					paths[file] = true
 				}
@@ -395,7 +412,18 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 		out.PullRequests = append(out.PullRequests, pull.Number)
 		info := summary.PullRequestInfo{Number: int32(pull.Number), State: pull.State, Title: pull.Title, Body: pull.Body,
 			Summary: r.reviewSummary(ctx, pull.Number)}
-		if info.Summary == "" {
+		if info.Summary == "" && generated[pull.Number].Summary != "" {
+			rendered, _, err := summary.RenderPullRequest(pullSummaryInput(src, pull))
+			if err != nil {
+				return out, err
+			}
+			expected := summary.ContentHash(summary.Public.PullRequestVersion(SummaryVersion), rendered)
+			if expected == generated[pull.Number].Hash {
+				info.Summary = generated[pull.Number].Summary
+				out.PullSummariesReused++
+			}
+		}
+		if info.Summary == "" && r.opts.building && !r.opts.adaptive {
 			text, called, skip, err := r.pullSummary(ctx, src, pull, generated[pull.Number], &out)
 			switch {
 			case skip != "":
@@ -428,7 +456,18 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	if err != nil {
 		return out, err
 	}
-	inputHash := featureInputHash(rendered, src.Decisions)
+	eligible := []string{}
+	for i, d := range src.Decisions {
+		if src.KeyEligible[d.ID] {
+			eligible = append(eligible, "D"+strconv.Itoa(i+1))
+		}
+	}
+	eligibility, _ := json.Marshal(eligible)
+	heads := []string{}
+	for _, p := range src.Pulls {
+		heads = append(heads, strconv.Itoa(p.Number)+":"+p.HeadSHA)
+	}
+	inputHash := hash(featureInputHash(rendered, src.Decisions) + attributionVersion + string(eligibility) + strings.Join(heads, ","))
 	out.Decisions, out.InputBytes = len(rendered.Rendered), len(rendered.Input)
 	if hash := featureTextHash(inputHash, src.Text, src.Decisions); pullErr == nil && hash != "" && hash == src.Text.InputHash && src.Text.Title != "" {
 		// Written from this input already: a call would differ only in its
@@ -452,12 +491,33 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	if err != nil {
 		return out, err
 	}
+	var extra map[string]any
+	if err = json.Unmarshal([]byte(callInput), &extra); err != nil {
+		return out, err
+	}
+	extra["key_eligible_decisions"] = eligible
+	// Scope/map provenance is separate from the source selected for this task.
+	scopes, err := s.resolvedScopes(ctx, r.version, r.repository)
+	if err != nil {
+		return out, err
+	}
+	extra["source_scopes"] = slices.DeleteFunc(scopes, func(scope FeatureScope) bool { return scope.FeatureID != featureID })
+	encoded, err := json.Marshal(extra)
+	if err != nil {
+		return out, err
+	}
+	callInput = string(encoded)
 	request, err := summary.Public.Request(SummaryVersion, summary.Feature, callInput, summary.MaxOutputTokens)
 	if err != nil {
 		return out, err
 	}
-	result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
-		Attempt{Repository: r.repository, Stage: StageSummary, Item: kindFeature + ":" + featureID}, request)
+	source, err := r.featureSource(ctx, featureID)
+	if err != nil {
+		return r.featureFailed(ctx, featureID, key, out, 0, err)
+	}
+	defer source.close()
+	result, callErr := r.calls.completeRepository(ctx, r.opts.Backend, r.opts.Model,
+		Attempt{Repository: r.repository, Stage: StageSummary, Item: kindFeature + ":" + featureID}, request, source, func(data []byte) error { _, err := summary.ParseFeatureReply(data, rendered); return err })
 	out.Cost = addCost(out.Cost, result.Cost)
 	switch {
 	case result.Skip != "":
@@ -477,6 +537,9 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	stored := featureText{Title: text.Title, Description: text.Description, Digest: text.Digest}
 	keyed := map[decisionAddress]bool{}
 	for _, index := range text.KeyDecisions {
+		if !src.KeyEligible[src.Decisions[index].ID] {
+			continue
+		}
 		// One key decision per address, the first named.
 		if address := addressOf(src.Decisions[index]); !keyed[address] {
 			keyed[address] = true
@@ -511,15 +574,7 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 // is unchanged, else one call's. One with neither a description nor such a
 // decision gets none. It reports whether it called, or why it could not.
 func (r *featureRun) pullSummary(ctx context.Context, src summarySource, pull summaryPull, stored generatedSummary, out *SummarizedFeature) (string, bool, string, error) {
-	input := summary.PullRequestInput{Title: pull.Title, Body: pull.Body}
-	for _, d := range src.Decisions {
-		if !d.Superseded && slices.Contains(pull.Sessions, SessionKey{Agent: d.Agent, ID: d.SessionID}) {
-			input.Decisions = append(input.Decisions, summary.Decision{
-				Summary: d.Summary, Category: string(d.Category), Who: string(d.Who), Trigger: string(d.Trigger), Rationale: d.Rationale,
-				RejectedAlternative: d.RejectedAlternative, Files: d.Files,
-			})
-		}
-	}
+	input := pullSummaryInput(src, pull)
 	if len(input.Decisions) == 0 && pull.Body == "" {
 		return "", false, "", nil
 	}
@@ -684,4 +739,19 @@ func addCost(total, cost *float64) *float64 {
 		return new(*cost)
 	}
 	return new(*total + *cost)
+}
+
+// pullSummaryInput is shared by legacy generation and live cache verification.
+// Live misses use raw PR evidence and never generate a replacement summary.
+func pullSummaryInput(src summarySource, pull summaryPull) summary.PullRequestInput {
+	input := summary.PullRequestInput{Title: pull.Title, Body: pull.Body}
+	for _, d := range src.Decisions {
+		if !d.Superseded && slices.Contains(pull.Sessions, SessionKey{Agent: d.Agent, ID: d.SessionID}) {
+			input.Decisions = append(input.Decisions, summary.Decision{
+				Summary: d.Summary, Category: string(d.Category), Who: string(d.Who), Trigger: string(d.Trigger), Rationale: d.Rationale,
+				RejectedAlternative: d.RejectedAlternative, Files: d.Files,
+			})
+		}
+	}
+	return input
 }

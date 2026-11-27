@@ -624,7 +624,8 @@ type attributedDecision struct {
 	Decision
 	// pull is the number of the feature's pull request it is shown under,
 	// 0 for its session.
-	pull int
+	pull        int
+	keyEligible bool
 }
 
 // timelineSnapshot is a repository's features of its current version,
@@ -794,16 +795,19 @@ WHERE fs.version_id=?1 AND fs.repository=?2 AND (?3='' OR fs.feature_id=?3) ORDE
 	if err != nil {
 		return nil, err
 	}
+	resolutions, err := t.Store.attributionSet(ctx, version, repository, keys, current, links)
+	if err != nil {
+		return nil, err
+	}
 	for _, key := range keys {
-		attributor := links[key].Attributor()
 		for _, d := range current[key] {
-			id := attributor.Attribute(d.Files)
+			resolution := resolveDecision(d, links[key], resolutions.Resolved)
+			id := resolution.FeatureID
 			f := snap.features[id]
 			if f == nil {
 				continue
 			}
-			pull, _ := strconv.Atoi(attributor.PullRequest(id, d.Files))
-			f.decisions = append(f.decisions, attributedDecision{Decision: d, pull: pull})
+			f.decisions = append(f.decisions, attributedDecision{Decision: d, pull: resolution.Pull, keyEligible: resolution.KeyEligible})
 		}
 	}
 	snap.clone = reader.clone(ctx, repository)
@@ -1091,6 +1095,9 @@ func (f *snapshotFeature) summarize(self *Person) {
 			continue
 		}
 		i := slices.IndexFunc(earliest, func(d Decision) bool { return d.ID == current[0].ID })
+		if !slices.ContainsFunc(f.decisions, func(d attributedDecision) bool { return d.ID == earliest[i].ID && d.keyEligible }) {
+			continue
+		}
 		row := summaryRow(earliest[i], "", nil)
 		f.row.KeyDecisions = append(f.row.KeyDecisions, timelineKeyDecision{ID: row.ID, SessionID: row.SessionID, Turn: row.Turn,
 			Who: row.Who, Category: row.Category, Summary: row.Summary})

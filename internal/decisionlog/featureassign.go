@@ -89,14 +89,17 @@ type AssignReport struct {
 
 // PlacedItem is one item Assign took.
 type PlacedItem struct {
-	Kind    string `json:"kind"`
-	Trigger string `json:"trigger"`
-	Number  int    `json:"number,omitempty"`
-	Title   string `json:"title,omitempty"`
-	Session string `json:"session,omitempty"`
-	Outcome string `json:"outcome"`
-	Reason  string `json:"reason,omitempty"`
-	Feature string `json:"feature,omitempty"`
+	judgment       *placementContext
+	ContextVersion string         `json:"context_version,omitempty"`
+	Source         *SourceContext `json:"source,omitempty"`
+	Kind           string         `json:"kind"`
+	Trigger        string         `json:"trigger"`
+	Number         int            `json:"number,omitempty"`
+	Title          string         `json:"title,omitempty"`
+	Session        string         `json:"session,omitempty"`
+	Outcome        string         `json:"outcome"`
+	Reason         string         `json:"reason,omitempty"`
+	Feature        string         `json:"feature,omitempty"`
 	// FeatureTitle is a new feature's provisional title.
 	FeatureTitle string `json:"feature_title,omitempty"`
 	// Candidates are the candidate features' titles, in the order offered.
@@ -338,7 +341,15 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 		// A session only joins a feature: with none to join, no call.
 		return r.settle(ctx, item, out, "no_candidates")
 	}
-	rendered, err := assign.Public.Render(AssignVersion, input, candidates)
+	rendered, err := assign.Public.Render(LiveAssignVersion, input, candidates)
+	if err != nil {
+		return out, err
+	}
+	ids := make([]string, len(candidates))
+	for i, c := range candidates {
+		ids[i] = c.ID
+	}
+	rendered, scopes, err := r.contextInput(ctx, rendered, ids)
 	if err != nil {
 		return out, err
 	}
@@ -347,12 +358,23 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 		out.Outcome = FeatureDryRun
 		return out, nil
 	}
-	request, err := assign.Public.Request(AssignVersion, rendered, assign.MaxOutputTokens)
+	request, err := assign.Public.Request(LiveAssignVersion, rendered, assign.MaxOutputTokens)
 	if err != nil {
 		return out, err
 	}
-	result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
-		Attempt{Repository: r.repository, Stage: StageAssign, Item: item.Kind + ":" + item.name()}, request)
+	source, sourceErr := r.itemSource(ctx, item, pull)
+	if sourceErr != nil {
+		out.Outcome, err = r.backOff(ctx, item.Kind, item.name(), item.Key, 0, sourceErr)
+		out.Reason = ReasonSourceUnavailable
+		out.Error = sourceErr.Error()
+		return out, err
+	}
+	defer source.close()
+	result, callErr := r.calls.completeRepository(ctx, r.opts.Backend, r.opts.Model,
+		Attempt{Repository: r.repository, Stage: StageAssign, Item: item.Kind + ":" + item.name()}, request, source, func(data []byte) error {
+			_, err := assign.Public.ParseReply(LiveAssignVersion, data, candidates)
+			return err
+		})
 	out.Cost = result.Cost
 	switch {
 	case result.Skip != "":
@@ -366,13 +388,15 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 		out.Error = callErr.Error()
 		return out, err
 	}
-	choice, err := assign.Public.ParseReply(AssignVersion, result.JSON, candidates)
+	choice, err := assign.Public.ParseReply(LiveAssignVersion, result.JSON, candidates)
 	if err != nil {
 		// Paid for, and never written.
 		out.Error = err.Error()
 		out.Outcome, err = r.backOff(ctx, item.Kind, item.name(), item.Key, 1, err)
 		return out, err
 	}
+	out.ContextVersion, out.Source, out.Reason = placementContextVersion, result.Source, choice.Reason
+	out.judgment = &placementContext{Version: placementContextVersion, Reason: choice.Reason, Source: result.Source, Scopes: scopes}
 	if item.Kind == kindSession && (choice.New != nil || choice.Skip) {
 		// A session never starts a feature.
 		return r.settle(ctx, item, out, "no_fit")
@@ -382,21 +406,21 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 		// changes.
 		return r.settle(ctx, item, out, "small_change")
 	}
-	target := placeTarget{FeatureID: choice.FeatureID}
+	target := placeTarget{FeatureID: choice.FeatureID, Context: out.judgment}
 	out.Outcome = FeatureAssigned
 	switch {
 	case choice.Skip:
 		// A pull request already in a feature stays in it.
 		target.FeatureID = pull.Feature
 	case choice.New != nil:
-		target = placeTarget{Title: choice.New.Title, Description: choice.New.Description}
+		target = placeTarget{Title: choice.New.Title, Description: choice.New.Description, Context: out.judgment}
 		out.Outcome, out.FeatureTitle = FeatureCreated, choice.New.Title
 	}
 	write := context.WithoutCancel(ctx)
 	if item.Kind == kindPull {
 		out.Feature, err = r.w.Store.placePull(write, r.version, r.repository, pull, target, r.now)
 	} else {
-		out.Feature, err = r.w.Store.placeSession(write, r.version, r.repository, item.Session, target.FeatureID, r.now)
+		out.Feature, err = r.w.Store.placeSession(write, r.version, r.repository, item.Session, target.FeatureID, r.now, out.judgment)
 	}
 	if errors.Is(err, errVersionRetired) {
 		// A build's switch retired the version: the run stops.
@@ -418,6 +442,13 @@ func (r *featureRun) settle(ctx context.Context, item assignItem, out PlacedItem
 	if r.opts.DryRun {
 		return out, nil
 	}
+	if out.judgment != nil {
+		if err := r.w.Store.inTx(ctx, func(tx *sql.Tx) error {
+			return saveJudgment(ctx, tx, r.version, r.repository, item.Kind, item.name(), out.judgment)
+		}); err != nil {
+			return out, err
+		}
+	}
 	return out, r.w.Store.settleItem(context.WithoutCancel(ctx), r.version, r.repository, item.Kind, item.name(), item.Key, "settled")
 }
 
@@ -438,6 +469,9 @@ type candidateFeature struct {
 	ID, Title, Description, Digest string
 	last                           int64
 	Paths                          []string
+	Scopes                         []FeatureScope
+	relevance                      int
+	materialized                   bool
 	// PullRequests are its pull requests, earliest opened first.
 	PullRequests []candidatePull
 	Links        assign.Links
@@ -484,6 +518,25 @@ func (r *featureRun) scoredCandidates(ctx context.Context, input assign.Item, pu
 			}
 		}
 	}
+	for _, f := range found {
+		f.relevance = scopeRelevance(assign.SearchQuery(input), f.Scopes)
+		for _, scope := range f.Scopes {
+			for _, p := range input.Paths() {
+				for _, prefix := range scope.Paths {
+					if p == prefix || strings.HasPrefix(p, strings.TrimSuffix(prefix, "/")+"/") {
+						f.Paths = append(f.Paths, p)
+					}
+				}
+			}
+			for _, n := range scope.Examples {
+				if slices.Contains(assign.MentionedPullRequests(pull.Title, pull.Body), int32(n)) {
+					f.Links.Mentioned = append(f.Links.Mentioned, int32(n))
+				}
+			}
+		}
+		slices.Sort(f.Paths)
+		f.Paths = slices.Compact(f.Paths)
+	}
 	ranked := rankCandidates(found, input.Paths(), pull.Feature, FeatureCandidates, FeaturePathSlots)
 	out := make([]assign.Candidate, len(ranked))
 	scores := make([]float64, len(ranked))
@@ -501,9 +554,12 @@ func (r *featureRun) scoredCandidates(ctx context.Context, input assign.Item, pu
 			sampled[f.PullRequests[j].Number] = true
 		}
 	}
-	generated, err := s.pullSummaries(ctx, r.repository, slices.Collect(maps.Keys(sampled)))
-	if err != nil {
-		return nil, nil, err
+	var generated map[int]generatedSummary
+	if r.opts.building && !r.opts.adaptive {
+		generated, err = s.pullSummaries(ctx, r.repository, slices.Collect(maps.Keys(sampled)))
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	for i, f := range ranked {
 		for _, j := range assign.SampledPullRequests(len(f.PullRequests)) {
@@ -561,7 +617,7 @@ func rankCandidates(found []*candidateFeature, paths []string, current string, k
 			return 0
 		}
 		return cmp.Or(cmp.Compare(flag(b.current), flag(a.current)), cmp.Compare(flag(b.linked), flag(a.linked)),
-			cmp.Compare(flag(b.byPath), flag(a.byPath)), cmp.Compare(scored(b), scored(a)), byRecency(a, b))
+			cmp.Compare(b.relevance, a.relevance), cmp.Compare(flag(b.byPath), flag(a.byPath)), cmp.Compare(scored(b), scored(a)), byRecency(a, b))
 	})
 	return ranked[:min(len(ranked), k)]
 }
@@ -574,7 +630,7 @@ func rankCandidates(found []*candidateFeature, paths []string, current string, k
 // request) and pull requests.
 func (s *Store) candidateFeatures(ctx context.Context, version int64, repository string, since time.Time, current string) ([]*candidateFeature, error) {
 	found, err := collect(func(rows *sql.Rows) (*candidateFeature, error) {
-		f := &candidateFeature{}
+		f := &candidateFeature{materialized: true}
 		return f, rows.Scan(&f.ID, &f.Title, &f.Description, &f.Digest, &f.last)
 	})(s.db.QueryContext(ctx, `SELECT f.id, f.title, f.description, f.digest,
 MAX(f.updated_at, COALESCE(MAX(MAX(p.created_at, p.updated_at, COALESCE(p.merged_at, 0), COALESCE(p.closed_at, 0), fp.assigned_at)), 0)) AS last
@@ -582,12 +638,33 @@ FROM feature f LEFT JOIN feature_pull fp ON fp.version_id=f.version_id AND fp.fe
 LEFT JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
 WHERE f.version_id=?1 AND f.repository=?2 AND f.merged_into IS NULL GROUP BY f.id HAVING last >= ?3 OR f.id = ?4`,
 		version, repository, since.UnixMilli(), current))
-	if err != nil || len(found) == 0 {
+	if err != nil {
 		return nil, err
 	}
 	byID := map[string]*candidateFeature{}
 	for _, f := range found {
 		byID[f.ID] = f
+	}
+	scopes, err := s.resolvedScopes(ctx, version, repository)
+	if err != nil {
+		return nil, err
+	}
+	for _, scope := range scopes {
+		f := byID[scope.FeatureID]
+		if f == nil {
+			f = &candidateFeature{ID: scope.FeatureID, Title: scope.Title, Description: scope.Purpose, Digest: scope.Digest, last: since.UnixMilli()}
+			// A merged alias uses its surviving feature's visible text.
+			err := s.db.QueryRowContext(ctx, `SELECT title,description,digest FROM feature WHERE id=? AND version_id=? AND repository=?`, f.ID, version, repository).Scan(&f.Title, &f.Description, &f.Digest)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			if err == nil {
+				f.materialized = true
+			}
+			byID[f.ID] = f
+			found = append(found, f)
+		}
+		f.Scopes = append(f.Scopes, scope)
 	}
 	type member struct {
 		feature string
@@ -643,6 +720,11 @@ WHERE fs.version_id=?1 AND fs.repository=?2 AND NOT EXISTS (SELECT 1 FROM sessio
 	}
 	for _, f := range found {
 		f.Paths = slices.Sorted(maps.Keys(paths[f.ID]))
+		for _, scope := range f.Scopes {
+			f.Paths = append(f.Paths, scope.Paths...)
+		}
+		slices.Sort(f.Paths)
+		f.Paths = slices.Compact(f.Paths)
 	}
 	return found, nil
 }
@@ -705,6 +787,7 @@ func (r *featureRun) retired(ctx context.Context) (bool, error) {
 type placeTarget struct {
 	FeatureID          string
 	Title, Description string
+	Context            *placementContext
 }
 
 // target resolves an existing feature, followed to the feature it was
@@ -755,6 +838,9 @@ func (s *Store) placePull(ctx context.Context, version int64, repository string,
 		if id, err = target(ctx, tx, version, repository, t, now); err != nil {
 			return err
 		}
+		if err = saveJudgment(ctx, tx, version, repository, kindPull, strconv.Itoa(pull.Number), t.Context); err != nil {
+			return err
+		}
 		var previous, head, held string
 		err := tx.QueryRowContext(ctx, `SELECT feature_id, assigned_head_sha, assigned_paths_json FROM feature_pull
 WHERE version_id=? AND repository=? AND number=?`, version, repository, pull.Number).Scan(&previous, &head, &held)
@@ -789,7 +875,7 @@ JOIN session_commit sc ON sc.repository=pc.repository AND sc.sha=pc.sha WHERE pc
 
 // placeSession puts a session in no feature's pull request in an existing
 // feature, and marks it.
-func (s *Store) placeSession(ctx context.Context, version int64, repository string, session SessionKey, featureID string, now time.Time) (string, error) {
+func (s *Store) placeSession(ctx context.Context, version int64, repository string, session SessionKey, featureID string, now time.Time, judgments ...*placementContext) (string, error) {
 	var id string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -800,6 +886,11 @@ func (s *Store) placeSession(ctx context.Context, version int64, repository stri
 VALUES (?,?,?,?,?,?) ON CONFLICT(version_id, repository, agent, session_id) DO UPDATE SET feature_id=excluded.feature_id,
 assigned_at=excluded.assigned_at`, version, repository, session.Agent, session.ID, id, now.UnixMilli()); err != nil {
 			return err
+		}
+		if len(judgments) > 0 {
+			if err := saveJudgment(ctx, tx, version, repository, kindSession, session.Agent+"/"+session.ID, judgments[0]); err != nil {
+				return err
+			}
 		}
 		return markFeatures(ctx, tx, []string{id}, now)
 	})
