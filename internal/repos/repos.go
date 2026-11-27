@@ -119,6 +119,11 @@ type AppearancePreferences struct {
 	// ReviewPage is the page a review opens on: "full" (the review's
 	// sections) or "tiles" (its tile document); empty is full.
 	ReviewPage string `json:"review_page,omitempty"`
+	// HowItWorks is how the review page lays out How it works: "pages" (a
+	// page per section, which suits reading with the keys) or "one_page"
+	// (every section on one scrolling page, which suits a mouse); empty is
+	// pages.
+	HowItWorks string `json:"how_it_works,omitempty"`
 	// LightTheme and DarkTheme are the ids of the themes used when Theme
 	// (system, light or dark) selects the light or the dark slot; empty is
 	// a built-in: default-light or default-dark. Any theme may sit in

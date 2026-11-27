@@ -30,6 +30,9 @@ type Preferences = {
   /** Whether the sidebar stays open beside the page or folds to its glyphs,
    *  opening over the page under the pointer. */
   sidebar: SidebarChoice;
+  /** How the review page lays out How it works: a page per section, or
+   *  every section on one scrolling page. */
+  how_it_works: HowItWorksChoice;
   /** The theme of each slot, by id: the `theme` setting picks the slot in use. */
   light_theme: string;
   dark_theme: string;
@@ -54,11 +57,13 @@ function unsaved(queue: QueuedSave[]): Partial<Preferences> {
   );
 }
 export type SidebarChoice = "pinned" | "folded";
+export type HowItWorksChoice = "pages" | "one_page";
 const defaults: Preferences = {
   theme: "system",
   key_hints: true,
   page_modifier: "",
   sidebar: "pinned",
+  how_it_works: "pages",
   light_theme: "default-light",
   dark_theme: "default-dark",
   themes: builtinThemes,
@@ -117,6 +122,7 @@ function normalize(saved: Partial<Preferences>): Preferences {
         ? saved.page_modifier
         : "",
     sidebar: saved.sidebar === "folded" ? "folded" : "pinned",
+    how_it_works: saved.how_it_works === "one_page" ? "one_page" : "pages",
     light_theme: slotId(saved.light_theme, "light"),
     dark_theme: slotId(saved.dark_theme, "dark"),
     themes,
@@ -129,6 +135,7 @@ function samePreferences(a: Preferences, b: Preferences) {
     a.key_hints === b.key_hints &&
     a.page_modifier === b.page_modifier &&
     a.sidebar === b.sidebar &&
+    a.how_it_works === b.how_it_works &&
     a.light_theme === b.light_theme &&
     a.dark_theme === b.dark_theme &&
     JSON.stringify(a.themes) === JSON.stringify(b.themes)

@@ -26,6 +26,21 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
 }
 
+// How it works is a page per section unless the reader chose one scrolling
+// page. Most of these tests read the one page, so it is on unless a test
+// sets the layout back.
+const layout = vi.hoisted(() => ({ howItWorks: "one_page" as "pages" | "one_page" }));
+vi.mock("../preferences", async (original) => {
+  const actual = await original<typeof import("../preferences")>();
+  return {
+    ...actual,
+    usePreferences: () => {
+      const real = actual.usePreferences();
+      return { ...real, preferences: { ...real.preferences, how_it_works: layout.howItWorks } };
+    },
+  };
+});
+
 let root: Root | null = null;
 
 beforeAll(() => {
@@ -61,6 +76,7 @@ afterEach(() => {
   // Forget a grouping held for the page while storage was refused.
   setFileGrouping("type");
   localStorage.clear();
+  layout.howItWorks = "one_page";
 });
 
 let search = new URLSearchParams();
@@ -522,6 +538,22 @@ describe("How it works as one page", () => {
   afterEach(() => {
     delete (Element.prototype as { scrollTo?: unknown }).scrollTo;
     reduced.mockRestore();
+  });
+
+  it("keeps a page per section unless the reader chose one scrolling page", async () => {
+    layout.howItWorks = "pages";
+    const container = await page("pane=section&section=sec_relay");
+    // No one page: the pane holds the one section the address names.
+    expect(pane(container).querySelector("article[data-part]")).toBeNull();
+    const section = pane(container).querySelector<HTMLElement>("#review-view-section")!;
+    expect(section.querySelector("h2")?.textContent).toBe("Relay connection");
+    expect(section.textContent).not.toContain("What a phone can do");
+    // A rail row swaps the page for its section.
+    await click(railRow(container, "What a phone can do"));
+    expect(search.get("section")).toBe("sec_allowlist");
+    const next = pane(container).querySelector<HTMLElement>("#review-view-section")!;
+    expect(next.querySelector("h2")?.textContent).toBe("What a phone can do");
+    expect(next.textContent).not.toContain("Relay connection");
   });
 
   it("draws Where this fits and every section in the rail's order, each with its title", async () => {

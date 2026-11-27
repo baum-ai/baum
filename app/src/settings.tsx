@@ -4,7 +4,7 @@ import { cn } from "@baum/viewer/components/classnames";
 import { DialogDetail, DialogHeader, DialogTitle } from "@baum/viewer/components/dialog-shell";
 import { dialogClassName, fieldClassName } from "@baum/viewer/components/primitive-classes";
 import { ListRow } from "@baum/viewer/components/list-row";
-import { usePreferences, type PageModifier } from "./preferences";
+import { usePreferences, type HowItWorksChoice, type PageModifier } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useCallback,
@@ -3599,7 +3599,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Keyboard and plan usage preferences on this device."
+        detail="Keyboard, review page and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -3641,6 +3641,22 @@ function GeneralSection() {
             checked={preferences.key_hints}
             onChange={(event) => update({ key_hints: event.target.checked })}
           />
+        </SettingRow>
+        <SettingRow
+          label="How it works on a review"
+          htmlFor="how-it-works-layout"
+          detail="A page per section suits reading with the keyboard. One scrolling page suits a mouse."
+        >
+          <select
+            id="how-it-works-layout"
+            disabled={!ready}
+            className={cn(SELECT_FIELD, "settings-select")}
+            value={preferences.how_it_works}
+            onChange={(event) => update({ how_it_works: event.target.value as HowItWorksChoice })}
+          >
+            <option value="pages">A page per section</option>
+            <option value="one_page">One scrolling page</option>
+          </select>
         </SettingRow>
       </div>
       <h3 className="settings-subhead">Plan usage</h3>

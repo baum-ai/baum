@@ -22,6 +22,7 @@ type appearanceSettings struct {
 	PageModifier string `json:"page_modifier"`
 	Sidebar      string `json:"sidebar"`
 	ReviewPage   string `json:"review_page"`
+	HowItWorks   string `json:"how_it_works"`
 	// ArrangedTiles says a version whose tiles were arranged (it has a
 	// composition) opens on the tiles page: tile reviews are on, which turns
 	// it on, and the review page is not tiles already. ?view=full in an
@@ -55,6 +56,10 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 	if reviewPage != "tiles" {
 		reviewPage = "full"
 	}
+	howItWorks := p.Appearance.HowItWorks
+	if howItWorks != "one_page" {
+		howItWorks = "pages"
+	}
 	list := make([]appearanceTheme, 0, len(themes.Builtins)+len(p.Appearance.Themes))
 	for _, t := range themes.Builtins {
 		tokens := map[string]string{}
@@ -80,6 +85,7 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 		PageModifier:  p.Appearance.PageModifier,
 		Sidebar:       sidebar,
 		ReviewPage:    reviewPage,
+		HowItWorks:    howItWorks,
 		ArrangedTiles: p.Labs.TileReviewsOn() && reviewPage != "tiles",
 		LightTheme:    slot(p.Appearance.LightTheme, themes.DefaultLight),
 		DarkTheme:     slot(p.Appearance.DarkTheme, themes.DefaultDark),
@@ -104,6 +110,7 @@ type appearanceInput struct {
 	PageModifier *string `json:"page_modifier,omitempty"`
 	Sidebar      *string `json:"sidebar,omitempty"`
 	ReviewPage   *string `json:"review_page,omitempty"`
+	HowItWorks   *string `json:"how_it_works,omitempty"`
 	LightTheme   *string `json:"light_theme,omitempty"`
 	DarkTheme    *string `json:"dark_theme,omitempty"`
 }
@@ -122,6 +129,9 @@ func (in appearanceInput) check() error {
 	}
 	if in.ReviewPage != nil && *in.ReviewPage != "full" && *in.ReviewPage != "tiles" {
 		return errors.New("review_page must be full or tiles")
+	}
+	if in.HowItWorks != nil && *in.HowItWorks != "pages" && *in.HowItWorks != "one_page" {
+		return errors.New("how_it_works must be pages or one_page")
 	}
 	return nil
 }
@@ -159,6 +169,9 @@ func (in appearanceInput) edit(p repos.Preferences) repos.Preferences {
 	}
 	if in.ReviewPage != nil {
 		p.Appearance.ReviewPage = *in.ReviewPage
+	}
+	if in.HowItWorks != nil {
+		p.Appearance.HowItWorks = *in.HowItWorks
 	}
 	if in.LightTheme != nil {
 		p.Appearance.LightTheme = *in.LightTheme

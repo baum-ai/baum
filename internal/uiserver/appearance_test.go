@@ -50,7 +50,7 @@ func TestAppearanceSurvivesNewDaemonOrigin(t *testing.T) {
 		return saved
 	}
 	server, closeFirst := start()
-	if got := call(server, "GET", "", 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "system", KeyHints: true, Sidebar: "pinned", ReviewPage: "full"}) {
+	if got := call(server, "GET", "", 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "system", KeyHints: true, Sidebar: "pinned", ReviewPage: "full", HowItWorks: "pages"}) {
 		t.Fatalf("defaults: %#v", got)
 	}
 	call(server, "PUT", `{"theme":"dark","key_hints":false,"page_modifier":"alt","sidebar":"folded","review_page":"tiles"}`, 200)
@@ -62,22 +62,30 @@ func TestAppearanceSurvivesNewDaemonOrigin(t *testing.T) {
 	// daemon restart does, with no browser storage or cookies carried over.
 	server, closeSecond := start()
 	defer closeSecond()
-	if got := call(server, "GET", "", 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "dark", KeyHints: false, PageModifier: "alt", Sidebar: "folded", ReviewPage: "tiles"}) {
+	if got := call(server, "GET", "", 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "dark", KeyHints: false, PageModifier: "alt", Sidebar: "folded", ReviewPage: "tiles", HowItWorks: "pages"}) {
 		t.Fatalf("after restart: %#v", got)
 	}
-	if got := call(server, "PUT", `{"theme":"light"}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: false, PageModifier: "alt", Sidebar: "folded", ReviewPage: "tiles"}) {
+	if got := call(server, "PUT", `{"theme":"light"}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: false, PageModifier: "alt", Sidebar: "folded", ReviewPage: "tiles", HowItWorks: "pages"}) {
 		t.Fatalf("partial theme edit: %#v", got)
 	}
-	if got := call(server, "PUT", `{"key_hints":true}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, PageModifier: "alt", Sidebar: "folded", ReviewPage: "tiles"}) {
+	if got := call(server, "PUT", `{"key_hints":true}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, PageModifier: "alt", Sidebar: "folded", ReviewPage: "tiles", HowItWorks: "pages"}) {
 		t.Fatalf("partial hints edit: %#v", got)
 	}
-	if got := call(server, "PUT", `{"page_modifier":""}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, Sidebar: "folded", ReviewPage: "tiles"}) {
+	// How it works is a page per section unless one scrolling page is chosen.
+	if got := call(server, "PUT", `{"how_it_works":"one_page"}`, 200); got.HowItWorks != "one_page" {
+		t.Fatalf("how_it_works = %q, want one_page", got.HowItWorks)
+	}
+	call(server, "PUT", `{"how_it_works":"scroll"}`, 400)
+	if got := call(server, "PUT", `{"how_it_works":"pages"}`, 200); got.HowItWorks != "pages" {
+		t.Fatalf("how_it_works = %q, want pages", got.HowItWorks)
+	}
+	if got := call(server, "PUT", `{"page_modifier":""}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, Sidebar: "folded", ReviewPage: "tiles", HowItWorks: "pages"}) {
 		t.Fatalf("page modifier back to the platform's: %#v", got)
 	}
-	if got := call(server, "PUT", `{"sidebar":"pinned"}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, Sidebar: "pinned", ReviewPage: "tiles"}) {
+	if got := call(server, "PUT", `{"sidebar":"pinned"}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, Sidebar: "pinned", ReviewPage: "tiles", HowItWorks: "pages"}) {
 		t.Fatalf("sidebar pinned again: %#v", got)
 	}
-	if got := call(server, "PUT", `{"review_page":"full"}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, Sidebar: "pinned", ReviewPage: "full"}) {
+	if got := call(server, "PUT", `{"review_page":"full"}`, 200); !reflect.DeepEqual(got, appearanceSettings{LightTheme: "default-light", DarkTheme: "default-dark", Theme: "light", KeyHints: true, Sidebar: "pinned", ReviewPage: "full", HowItWorks: "pages"}) {
 		t.Fatalf("review page back to the full review: %#v", got)
 	}
 }

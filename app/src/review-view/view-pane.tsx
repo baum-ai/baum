@@ -4,6 +4,7 @@ import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { reviewRefs, type ReviewDocument } from "@baum/viewer/review-document";
 import { tileSourceOf, type TileContext } from "../tiles/types";
 import { CodeTab } from "./code-tab";
+import { usePreferences } from "../preferences";
 import { HowItWorks } from "./how-it-works";
 import {
   listedSections,
@@ -68,6 +69,8 @@ export function ViewPane({
   // diff's file name) opens the file in Files changed rather than the viewer's
   // Files pane.
   const { select } = context;
+  // One scrolling page is the reader's choice (Settings, General).
+  const onePage = usePreferences().preferences.how_it_works === "one_page";
   const reviewFiles = useMemo(
     () => ({
       has: (path: string) => files.some((each) => each.path === path),
@@ -102,7 +105,7 @@ export function ViewPane({
             historical={historical}
             context={context}
           />
-        ) : place.tab === "sections" && !context.comparing ? (
+        ) : place.tab === "sections" && onePage && !context.comparing ? (
           // How it works is one scrolling page; two versions compared keep
           // a page per section, so the two panes stay side by side.
           <HowItWorks

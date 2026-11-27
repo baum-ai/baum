@@ -14,6 +14,7 @@ import {
   type RiskScoreLevel,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
+import { usePreferences } from "../preferences";
 import { useReadMarks } from "./read-marks";
 import {
   CODE_PLACE,
@@ -53,6 +54,9 @@ export function useViewPlaces(): ReviewPlaces {
   // The latest document the viewer named, for the chips of its prose, which
   // are resolved without a context.
   const latest = useRef<ReviewDocument | null>(null);
+  // How it works as one scrolling page is the reader's choice (Settings,
+  // General); otherwise each section is a page of its own.
+  const onePage = usePreferences().preferences.how_it_works === "one_page";
   return useMemo<ReviewPlaces>(
     () => ({
       flatRail: true,
@@ -78,12 +82,12 @@ export function useViewPlaces(): ReviewPlaces {
           return { kind: "risk", section, id: item };
         return { kind: "section", id: section };
       },
-      // How it works is one scrolling page: moving between its sections
+      // When How it works is one scrolling page, moving between its sections
       // keeps the page (and its scroll), which scrolls to the section
       // itself. Two compared versions keep a page per section.
       paneKey: (selection, context) => {
         const document = context.document;
-        if (context.comparing || !document || !servedReview(document)) return null;
+        if (!onePage || context.comparing || !document || !servedReview(document)) return null;
         if (!["section", "risk", "changes", "tile"].includes(selection.kind)) return null;
         return placeOf(selection, reviewOf(document)).tab === "sections" ? "how-it-works" : null;
       },
@@ -93,7 +97,7 @@ export function useViewPlaces(): ReviewPlaces {
       sidePaneFolded: onPage,
       quietHistory: true,
     }),
-    [],
+    [onePage],
   );
 }
 
