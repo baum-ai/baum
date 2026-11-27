@@ -2149,7 +2149,7 @@ sentences and 320 characters, the area required), `CheckTile` (title within
 80, caption within 200, native data within `tiles/view`'s limits through
 `view.CheckNative`, a code tile's hunk and lines on its new side, and its
 focus lines within them) and
-`CheckOverview` (summary text, verdict line within 120 and at most three
+`CheckOverview` (summary text, verdict line within 120 characters and two sentences and at most three
 points within 200, `risk_why` within two sentences and 260 characters,
 screenshots and intent that the pull request has, videos that are its
 video clips, a main diagram that is a tile). Every model text is refused the word "evidence" and hunk IDs, and

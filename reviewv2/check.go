@@ -29,6 +29,7 @@ const (
 	MaxContextSentences = 2
 	MaxContextFiles     = 8
 	MaxVerdictText      = 120
+	MaxVerdictSentences = 2
 	MaxVerdictPoints    = 3
 	MaxPointText        = 200
 	MaxRiskWhy          = 260
@@ -531,8 +532,9 @@ func collectStrings(raw json.RawMessage, out *[]string) {
 }
 
 // CheckOverview checks what the overview call wrote: the summary's text
-// (two or three sentences), the verdict (its decision, one line and at most
-// three points, each naming a section of the document when it names one),
+// (two or three sentences), the verdict (its decision, one line of at most
+// two sentences, and at most three points, each naming a section of the
+// document when it names one),
 // why the risk is what it is, and the overview's screenshots and videos
 // (attachments of the pull request), main diagram (a tile of the document)
 // and intent (asks of a linked session's prompts).
@@ -545,7 +547,7 @@ func CheckOverview(summary Summary, overview Overview, sections []Section, tiles
 		if !slices.Contains(Decisions, v.Decision) {
 			f.add("verdict.decision", "%q is not one of %s", v.Decision, strings.Join(Decisions, ", "))
 		}
-		f.text("verdict.text", v.Text, textRule{limit: MaxVerdictText, sentences: 1, required: true, line: true})
+		f.text("verdict.text", v.Text, textRule{limit: MaxVerdictText, sentences: MaxVerdictSentences, required: true, line: true})
 		if len(v.Points) > MaxVerdictPoints {
 			f.add("verdict.points", "there are %d; give at most %d, only what blocks the merge", len(v.Points), MaxVerdictPoints)
 		}
